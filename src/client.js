@@ -468,6 +468,13 @@ window.__ModuleLoader__.load({
       })
     }
 
-    return { apply, inject: ['slots'] }
+    // `__internals` exists for the unit tests: the host only reads `apply` and
+    // `inject`. Keeping the pure pieces reachable is cheaper than a build step
+    // that would have to split this file.
+    return {
+      apply,
+      inject: ['slots'],
+      __internals: { humanBytes, getJson, MemoryPanel, MemoryIcon, SettingsCard, PANEL, API, NS, ENTRY },
+    }
   },
 })

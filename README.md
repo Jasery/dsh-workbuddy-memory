@@ -68,6 +68,19 @@ Data comes from two read-only host routes, `/workbuddy-memory/state` and `/workb
 
 "Current project" is the working directory the last prompt assembly saw, so the panel only knows which project to show after a session has talked to it once.
 
+## Tests
+
+```bash
+npm test               # 105 cases
+npm run test:coverage  # with coverage
+```
+
+Current: **90.5% lines / 77.9% branches / 76.2% functions** (all 20 files under `src/` are counted).
+
+What the suite pins down: the path resolution chain and the six-step capability matrix, byte-stable markdown edits, the write chain (lock, revision fence, backups, `read_only`), the real-path classification behind the bare-write guard, section ordering and truncation (no half surrogate pairs), the refresh modes and cache keys, all five tools including conflict and idempotent replay, the panel routes' JSON shape and 405/403 edges, and the config card rendered through a four-hook React stand-in — which is what catches a host dropping a snapshot field.
+
+Not covered automatically: real browser focus and drag behaviour, and cross-process contention (only half of `fslock`'s wait and timeout paths run).
+
 ## Boundaries
 
 - Read failures degrade to "inject nothing"; they never break a turn.

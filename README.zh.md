@@ -80,6 +80,29 @@ node scripts/dev-install.mjs web
 
 「当前项目」取的是最近一次 prompt 装配看到的工作目录，所以要先和一个会话说一句话，面板才知道该显示哪个项目。
 
+## 测试
+
+```bash
+npm test               # 105 个用例
+npm run test:coverage  # 带覆盖率
+```
+
+当前：**行 90.5% / 分支 77.9% / 函数 76.2%**（`src/` 全部 20 个文件都进统计）。
+
+| 覆盖面 | 用例锁定的是 |
+|---|---|
+| `paths` / `env` | 路径解析链、六种环境矩阵、画像歧义不猜 |
+| `markdown` | 追加与替换逐字节稳定、围栏内标题不算小节、匹配不唯一拒绝 |
+| `write/store` | 锁内复检、revision 栅栏、备份、`read_only` / `write_disabled` |
+| `write/guard` | 真路径分类、兄弟目录不误伤、只读时让行、非写入器放行 |
+| `render` | 四块顺序、开关只关一块、超限截断、代理对不切半、home 脱敏 |
+| `inject` / `cache` | 同一次装配只读一次盘、`first-turn` 冻结、provider 异常不炸 turn |
+| `tools/*` | 五个工具的正常路径 + 冲突 + 幂等重放 + 歧义拒绝 |
+| `host/routes` | JSON 形状、枚举 target、非法日期、405/403 |
+| `client` | 用四钩子的假 React 渲染，锁住「宿主 snapshot 没有 `mode` 时控件仍可编辑」 |
+
+没有自动化覆盖的部分：真实浏览器里的拖拽/焦点行为，以及跨进程并发写（`fslock` 的等待与超时分支只测到一半）。
+
 ## 边界
 
 - 只读侧失败一律降级为「不注入」，不会阻断一轮对话。
