@@ -72,6 +72,12 @@ export const Config = z.object({
     enabled: z.boolean().default(true).volatile(),
   }),
 
+  ui: z.object({
+    enabled: z.boolean().default(true).volatile(),
+    allowWriteActions: z.boolean().default(false).volatile(),
+    allowFullTextEdit: z.boolean().default(false).volatile(),
+  }),
+
   search: z
     .object({
       enabled: z.boolean().default(true).volatile(),
@@ -114,6 +120,7 @@ export function normalizeConfig(raw) {
   const write = input.write && typeof input.write === 'object' ? input.write : {}
   const search = input.search && typeof input.search === 'object' ? input.search : {}
   const guard = input.guard && typeof input.guard === 'object' ? input.guard : {}
+  const ui = input.ui && typeof input.ui === 'object' ? input.ui : {}
   const limits = inject.limits && typeof inject.limits === 'object' ? inject.limits : {}
 
   return {
@@ -152,6 +159,12 @@ export function normalizeConfig(raw) {
 
     guard: {
       enabled: bool(guard.enabled, true),
+    },
+
+    ui: {
+      enabled: bool(ui.enabled, true),
+      allowWriteActions: bool(ui.allowWriteActions, false),
+      allowFullTextEdit: bool(ui.allowFullTextEdit, false),
     },
 
     search: {

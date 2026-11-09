@@ -42,7 +42,7 @@ export function resolveCwd(context) {
  * @param {object} deps
  * @param {object} deps.cfg
  * @param {(key: string, vars?: Record<string, string|number>) => string} deps.t
- * @param {(key: string) => void} [deps.onProbe]
+ * @param {(probe: object, cwd: string|null) => void} [deps.onProbe]
  */
 export function registerSections(ctx, deps) {
   const { cfg, t, onProbe } = deps
@@ -56,7 +56,7 @@ export function registerSections(ctx, deps) {
   const build = (context) => {
     const cwd = resolveCwd(context)
     const probe = probeEnvironment({ cfg, cwd, detail: false })
-    if (typeof onProbe === 'function') onProbe(probe)
+    if (typeof onProbe === 'function') onProbe(probe, cwd)
     return { cwd, probe, sections: renderSections({ cfg, probe, t }) }
   }
 

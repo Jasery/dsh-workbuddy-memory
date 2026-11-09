@@ -13,7 +13,8 @@
 | 写入工具（`memory_append` / `memory_edit`）与裸写守卫 | 已实现 |
 | revision 栅栏、备份、操作账本 | 已实现 |
 | 插件页配置卡 | 已实现 |
-| 侧栏记忆面板（浏览与编辑） | 未开始 |
+| 侧栏记忆面板（浏览现有记忆） | 已实现 |
+| 面板内编辑条目 | 未开始 |
 | `memory_consolidate`（跨天蒸馏） | 未开始 |
 
 设计文档见 [`docs/2026-11-09-dsh-workbuddy-memory-design.html`](docs/2026-11-09-dsh-workbuddy-memory-design.html)。
@@ -67,8 +68,17 @@ node scripts/dev-install.mjs web
 | `inject.refresh` | `on-change` | `first-turn` 会话内冻结以省 token |
 | `inject.limits.*` | 10000 / 4000 / 2000 | 按字符截断 |
 | `stateDir` | `''` | 索引与备份根，留空用 `~/.dsh/workbuddy-memory` |
+| `ui.enabled` | `true` | 关掉后侧栏面板读不到数据（`/workbuddy-memory` 路由不注册） |
 
 可在插件页直接改的键都标了 `.volatile()`；`stateDir` 与 `locale` 需要重载插件，只以 YAML 为准。
+
+## 侧栏面板
+
+左侧栏底部的「记忆」图标打开：顶部一行状态（home、当前项目、只读/可写、备份数），左边是文件树（项目 MEMORY.md、日期笔记、用户 MEMORY.md、画像），右边是选中文件的原文与各小节条目数，3 秒轮询。
+
+数据来自宿主上的只读路由 `/workbuddy-memory/state` 与 `/workbuddy-memory/content`。目标只接受枚举（`project-memory` / `project-daily` / `user-memory` / `profile`），日期只接受 `YYYY-MM-DD`，不收路径，所以它不能当文件浏览器用；POST 一律 405，跨源请求 403。
+
+「当前项目」取的是最近一次 prompt 装配看到的工作目录，所以要先和一个会话说一句话，面板才知道该显示哪个项目。
 
 ## 边界
 

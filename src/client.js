@@ -105,7 +105,10 @@ window.__ModuleLoader__.load({
       const write = value.write ?? {}
       const search = value.search ?? {}
       const uiGuard = value.guard ?? {}
-      const writable = snap.writable && snap.mode === 'host'
+      // 0.2.2 dropped `mode` from the snapshot: `writable` is now the only
+      // signal, and requiring `mode === 'host'` left every control disabled on
+      // hosts that no longer send it.
+      const writable = Boolean(snap.writable)
 
       const commit = React.useCallback(
         async (field, next) => {
@@ -201,12 +204,244 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: S.status },
-          `revision ${snap.revision ?? '—'} · ${snap.writable ? '可写' : '只读'} · ${snap.mode === 'host' ? '跟随宿主配置' : '仅本进程'}`,
+          `revision ${snap.revision ?? '—'} · ${snap.writable ? '可写' : '只读'} · ${snap.user ? '有本机覆盖' : '跟随默认'}`,
+        ),
+      )
+    }
+
+    /** Sidebar icon: a small stack of cards, the shape of a memory store. */
+    function MemoryIcon() {
+      return h(
+        'svg',
+        { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6 },
+        h('path', { d: 'M5 4.5h11a3 3 0 0 1 3 3v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1z', strokeLinejoin: 'round' }),
+        h('path', { d: 'M9 8.5h6M9 12h6M9 15.5h4', strokeLinecap: 'round' }),
+      )
+    }
+
+    const PANEL = 'workbuddy-memory-panel'
+    const API = '/workbuddy-memory'
+
+    function humanBytes(n) {
+      if (!Number.isFinite(n)) return '—'
+      if (n < 1024) return `${n} B`
+      if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+      return `${(n / 1024 / 1024).toFixed(1)} MB`
+    }
+
+    async function getJson(url) {
+      const response = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+      const body = await response.json().catch(() => ({ ok: false, code: 'bad_json' }))
+      if (!response.ok) throw new Error(body?.code ?? `http_${response.status}`)
+      return body
+    }
+
+    const P = {
+      wrap: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, fontSize: '12.5px' },
+      bar: {
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '10px',
+        alignItems: 'center',
+        padding: '8px 12px',
+        borderBottom: '1px solid rgba(127,127,127,0.18)',
+        fontSize: '11.5px',
+        opacity: 0.8,
+      },
+      body: { display: 'flex', flex: 1, minHeight: 0 },
+      tree: {
+        width: '240px',
+        flexShrink: 0,
+        overflowY: 'auto',
+        borderRight: '1px solid rgba(127,127,127,0.18)',
+        padding: '8px 6px',
+      },
+      detail: { flex: 1, minWidth: 0, overflowY: 'auto', padding: '10px 14px' },
+      group: { fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.04em', opacity: 0.5, padding: '8px 8px 4px' },
+      item: {
+        display: 'block',
+        width: '100%',
+        textAlign: 'left',
+        border: 'none',
+        background: 'transparent',
+        color: 'inherit',
+        font: 'inherit',
+        padding: '5px 8px',
+        borderRadius: '6px',
+        cursor: 'pointer',
+      },
+      itemActive: { background: 'rgba(127,127,127,0.16)' },
+      chip: {
+        display: 'inline-block',
+        padding: '1px 6px',
+        margin: '0 6px 6px 0',
+        borderRadius: '4px',
+        background: 'rgba(127,127,127,0.14)',
+        fontSize: '11px',
+      },
+      pre: {
+        margin: '10px 0 0',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        fontSize: '12px',
+        lineHeight: 1.6,
+      },
+      note: { fontSize: '11.5px', opacity: 0.6, lineHeight: 1.6 },
+      err: { fontSize: '11.5px', color: '#e06c75' },
+    }
+
+    function Row({ label, active, onClick }) {
+      return h('button', { type: 'button', style: { ...P.item, ...(active ? P.itemActive : null) }, onClick }, label)
+    }
+
+    function MemoryPanel() {
+      const [state, setState] = React.useState(null)
+      const [doc, setDoc] = React.useState(null)
+      const [selected, setSelected] = React.useState(null)
+      const [error, setError] = React.useState('')
+
+      const refresh = React.useCallback(async () => {
+        try {
+          const next = await getJson(`${API}/state`)
+          setState(next)
+          setError('')
+          return next
+        } catch (cause) {
+          const code = String(cause?.message ?? cause)
+          setError(
+            code.includes('404') || code === 'no_route'
+              ? '面板接口没有注册：确认插件配置里的「界面」是打开的，且宿主是 web profile。'
+              : code,
+          )
+          return null
+        }
+      }, [])
+
+      React.useEffect(() => {
+        refresh()
+        const timer = setInterval(() => {
+          if (!document.hidden) refresh()
+        }, 3000)
+        return () => clearInterval(timer)
+      }, [refresh])
+
+      const open = React.useCallback(async (target, date) => {
+        setSelected({ target, date })
+        setDoc(null)
+        try {
+          const query = new URLSearchParams({ target })
+          if (date) query.set('date', date)
+          setDoc(await getJson(`${API}/content?${query.toString()}`))
+          setError('')
+        } catch (cause) {
+          setError(String(cause?.message ?? cause))
+        }
+      }, [])
+
+      const project = state?.stores?.project
+      const user = state?.stores?.user
+      const profile = state?.stores?.profile
+
+      const dailyRows = (project?.daily ?? []).map((file) =>
+        h(Row, {
+          key: `daily-${file.date}`,
+          label: `${file.date} · ${humanBytes(file.bytes)}${file.ageDays > 30 ? ' · 建议合并' : ''}`,
+          active: selected?.target === 'project-daily' && selected?.date === file.date,
+          onClick: () => open('project-daily', file.date),
+        }),
+      )
+
+      return h(
+        'div',
+        { style: P.wrap },
+        h(
+          'div',
+          { style: P.bar },
+          h('span', null, `home ${state?.home?.path ? state.home.path.replace(/^.*[\\/]/, '…/') : '—'}`),
+          h('span', null, `项目 ${state?.cwd ? state.cwd.replace(/^.*[\\/]/, '…/') : '未确定'}`),
+          h('span', null, state?.readOnly ? '只读模式' : state?.writeEnabled ? '可写' : '写入已关'),
+          h('span', null, `备份 ${state?.backups?.length ?? 0}`),
+          h('button', { type: 'button', style: { ...P.item, width: 'auto', padding: '2px 8px' }, onClick: refresh }, '刷新'),
+        ),
+        h(
+          'div',
+          { style: P.body },
+          h(
+            'div',
+            { style: P.tree },
+            h('div', { style: P.group }, '项目记忆'),
+            project?.memoryExists
+              ? h(Row, {
+                  label: `MEMORY.md · ${humanBytes(project.bytes)}`,
+                  active: selected?.target === 'project-memory',
+                  onClick: () => open('project-memory'),
+                })
+              : h('div', { style: P.note }, '这个项目还没有 MEMORY.md'),
+            dailyRows.length > 0 ? h('div', { style: P.group }, `日期笔记 ${dailyRows.length}`) : null,
+            dailyRows,
+            h('div', { style: P.group }, '全局'),
+            user?.memoryExists
+              ? h(Row, { label: `用户 MEMORY.md · ${humanBytes(user.bytes)}`, active: selected?.target === 'user-memory', onClick: () => open('user-memory') })
+              : h('div', { style: P.note }, '  没有'),
+            profile?.exists
+              ? h(Row, {
+                  label: `画像 ${profile.ambiguous ? '（多个候选，未使用）' : `· ${humanBytes(profile.bytes)}`}`,
+                  active: selected?.target === 'profile',
+                  onClick: () => open('profile'),
+                })
+              : null,
+          ),
+          h(
+            'div',
+            { style: P.detail },
+            error ? h('div', { style: P.err }, error) : null,
+            !selected
+              ? h(
+                  'div',
+                  { style: P.note },
+                  '从左边选一个文件查看内容。这里只读——要改记忆，让对话里的智能体调用 memory_append / memory_edit，或直接编辑文件。',
+                )
+              : doc
+                ? h(
+                    'div',
+                    null,
+                    h('div', { style: { fontWeight: 600, fontSize: '13px' } }, selected.date ?? selected.target),
+                    h(
+                      'div',
+                      { style: P.note },
+                      `${doc.path} · ${humanBytes(doc.bytes)} · revision ${doc.revision}${doc.truncated ? ' · 已截断' : ''}`,
+                    ),
+                    (doc.sections ?? []).map((section) =>
+                      h('span', { key: `${section.line}-${section.heading}`, style: P.chip }, `${section.heading} ${section.entries}`),
+                    ),
+                    h('pre', { style: P.pre }, doc.text),
+                  )
+                : h('div', { style: P.note }, '读取中…'),
+          ),
         ),
       )
     }
 
     function apply(ctx) {
+      // The panel is independent of settings: it only needs the sidebar and the
+      // host routes, so it survives a host without configForms.
+      if (typeof ctx.slots?.register === 'function') {
+        ctx.effect(() =>
+          ctx.slots.inject('sidebar.panellist', () =>
+            ctx.slots.register(
+              { name: 'sidebar.panellist', id: PANEL, order: 26, locale: NS, label: () => '记忆' },
+              MemoryIcon,
+            ),
+          ),
+        )
+        ctx.effect(() =>
+          ctx.slots.inject('main', () =>
+            ctx.slots.register({ name: 'main', key: PANEL, locale: NS }, MemoryPanel),
+          ),
+        )
+      }
+
       // configForms is not guaranteed on every host version; registering the
       // card inside a child scope keeps the plugin alive when it is missing.
       ctx.inject(['configForms'], (scoped) => {

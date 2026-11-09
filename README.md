@@ -13,7 +13,8 @@ Share one set of memory files between DSH and WorkBuddy: the `MEMORY.md`, daily 
 | Write tools (`memory_append` / `memory_edit`) and the bare-write guard | done |
 | Revision fence, backups, operation log | done |
 | Config card on the Plugins page | done |
-| Sidebar memory panel (browse and edit) | not started |
+| Sidebar memory panel (browse) | done |
+| Editing entries from the panel | not started |
 | `memory_consolidate` (fold old daily notes) | not started |
 
 See [`docs/2026-11-09-dsh-workbuddy-memory-design.html`](docs/2026-11-09-dsh-workbuddy-memory-design.html) for the design (Chinese).
@@ -55,8 +56,17 @@ An empty `workbuddyHome` follows WorkBuddy's own order: `WORKBUDDY_CONFIG_DIR` �
 | `inject.refresh` | `on-change` | `first-turn` freezes within a session to save tokens |
 | `inject.limits.*` | 10000 / 4000 / 2000 | character limits per block |
 | `stateDir` | `''` | index and backups root; defaults to `~/.dsh/workbuddy-memory` |
+| `ui.enabled` | `true` | when off, the sidebar panel gets no data (the `/workbuddy-memory` routes stay unregistered) |
 
 Keys editable from the plugin page carry `.volatile()`; `stateDir` and `locale` need a reload and stay YAML-only.
+
+## Sidebar panel
+
+The `记忆` icon at the bottom of the sidebar opens it: a status line (home, current project, read-only or not, backup count), a file tree on the left (project `MEMORY.md`, daily notes, user `MEMORY.md`, profile), and the selected file's text with per-section entry counts on the right. It polls every 3 seconds.
+
+Data comes from two read-only host routes, `/workbuddy-memory/state` and `/workbuddy-memory/content`. Targets are an enum (`project-memory` / `project-daily` / `user-memory` / `profile`) and dates must be `YYYY-MM-DD`; no path is ever accepted, so it cannot serve as a file browser. `POST` is 405 everywhere and a cross-origin `Origin` is 403.
+
+"Current project" is the working directory the last prompt assembly saw, so the panel only knows which project to show after a session has talked to it once.
 
 ## Boundaries
 
