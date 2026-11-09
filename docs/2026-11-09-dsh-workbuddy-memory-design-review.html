@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dsh-workbuddy-memory 设计评审 · 2026-11-09</title>
+<style>
+:root{color-scheme:light;--ink:#17212b;--muted:#526170;--paper:#f4f6f8;--surface:#fff;--line:#d7dee5;--blue:#145b83;--blue-soft:#e7f1f7;--red:#a32e28;--red-soft:#fff0ed;--orange:#855208;--orange-soft:#fff6e5;--green:#176044;--green-soft:#e8f5ef;--code:#edf1f4}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.7 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}main{max-width:1040px;margin:0 auto;padding:36px 24px 80px}header{border-bottom:1px solid var(--line);padding:14px 0 24px;margin-bottom:26px}h1{font-size:30px;line-height:1.25;margin:0 0 10px}h2{font-size:21px;margin:38px 0 12px;border-bottom:1px solid var(--line);padding-bottom:8px}h3{font-size:17px;line-height:1.45;margin:0 0 8px}p{margin:8px 0}a{color:var(--blue);text-decoration-thickness:1px;text-underline-offset:3px}.subtitle,.meta,.note{color:var(--muted)}.meta{font-size:13px}.summary{background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--red);padding:18px 20px;margin:20px 0}.summary strong{color:var(--red)}.counts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:18px 0}.count{background:var(--surface);border:1px solid var(--line);padding:14px}.count b{display:block;font-size:24px;line-height:1.2}.count small{color:var(--muted)}.finding{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:17px 19px;margin:12px 0}.finding p{margin:7px 0}.severity{display:inline-block;font-size:12px;font-weight:700;padding:1px 7px;border-radius:3px;margin-right:7px}.p0{color:var(--red);background:var(--red-soft)}.p1{color:var(--orange);background:var(--orange-soft)}.p2{color:var(--blue);background:var(--blue-soft)}.loc{font-size:12px;color:var(--muted);font-weight:500}.fix{border-left:3px solid var(--line);padding-left:12px;color:#334351}.section-note{color:var(--muted);font-size:13px}.code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--code);padding:1px 4px;border-radius:3px;font-size:.92em}ol{padding-left:24px}li{margin:7px 0}footer{border-top:1px solid var(--line);margin-top:42px;padding-top:16px;color:var(--muted);font-size:13px}
+@media(max-width:620px){main{padding:22px 14px 54px}h1{font-size:25px}.counts{grid-template-columns:1fr}.finding{padding:14px}}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>dsh-workbuddy-memory 设计评审</h1>
+  <p class="subtitle">评审结论：<strong>REQUEST_CHANGES</strong> · 2026-11-09</p>
+  <p class="meta">主审材料：<a href="2026-11-09-dsh-workbuddy-memory-design.html">插件设计方案</a>；参考同目录 WorkBuddy 记忆系统逆向报告及本机 DSH 服务契约。</p>
+</header>
+
+<div class="summary"><strong>总评</strong><p>方案目标清晰，围绕共享 Markdown、会话注入、受控写入和本地检索形成闭环；但当前的“锁 + 二次哈希 + 原子替换”不能对不遵守该锁的 WorkBuddy 写者提供无覆盖保证。此外，写入/幂等状态机、批量整理恢复、面板路由授权和会话级工作区选择等协议尚未闭合。建议先修订数据正确性和安全边界，再进入 M2 写入实现。</p></div>
+<div class="counts">
+  <div class="count"><b>1</b><small>P0 · 数据完整性阻断</small></div>
+  <div class="count"><b>13</b><small>P1 · 应先修订/核实</small></div>
+  <div class="count"><b>4</b><small>P2 · 明确边界或跟进</small></div>
+</div>
+<p class="section-note">范围说明：这是对设计文本的评审，不是对插件源码的 review。工作区目前只有方案和逆向报告，没有插件实现；因此未声称测试已复现任何实现行为。P1 标记表示设计按当前契约落地时会产生高风险，或发布/权限契约尚未满足。</p>
+
+<h2>阻断项</h2>
+<article class="finding">
+  <h3><span class="severity p0">P0</span>跨客户端写入仍存在不可消除的 TOCTOU 窗口 <span class="loc">方案 687–704、719–723 行</span></h3>
+  <p>文档明确指出 WorkBuddy Edit 不认插件的 <span class="code">.lock</span>。DSH 锁内复检哈希通过后，到 temp 文件 rename 替换目标之前，WorkBuddy 仍可写入；随后 DSH 会用基于旧版计算的结果覆盖该写入。复检并没有锁住外部写者，备份若早于外部写入也救不回被覆盖的内容。因而 <span class="code">conflictPolicy: fail</span> 当前并不能保证“冲突不覆盖”。</p>
+  <p class="fix"><strong>建议：</strong>明确选择一种可兑现的保证：让 WorkBuddy 写入也遵守共同的锁/版本协议；或限制为单写者；或只使用可证明不覆盖的追加/冲突队列。若维持不受控的 WorkBuddy 写入，撤回“默认 fail 可防丢数据”的承诺。写后检测只能发现部分覆盖，不能替代写前的原子条件提交。</p>
+</article>
+
+<h2>高优先级问题</h2>
+<article class="finding"><h3><span class="severity p1">P1</span>revision 与幂等重放状态机定义矛盾 <span class="loc">方案 726–747 行</span></h3>
+<p>第 737 行把 <span class="code">expected === current</span> 定义成幂等重放并跳过；但首次正常写入时，调用方刚读到的 expected revision 也必然等于当前版本。文档没有规定如何先以 operation key 区分首次请求和重放，因此可能跳过合法首次写入，也可能放行重试并产生重复，需由契约明确，不能靠实现者猜测。</p>
+<p class="fix"><strong>建议：</strong>把内容 revision 仅用于乐观并发校验，把稳定 <span class="code">operationId</span> 用于重放识别，并定义“未见该 ID / 已提交 / 进行中 / 失败”的返回语义。revision 相等本身不等于重放。</p></article>
+
+<article class="finding"><h3><span class="severity p1">P1</span>三秒“自写放行”可能掩盖其后的外部版本 <span class="loc">方案 745–747 行</span></h3>
+<p>文档只说按 scope 记录最近三秒内本插件提交的 revision，命中即放行，未说明是否绑定具体文件、具体操作及当前磁盘哈希。若 DSH 写出 B 后，WorkBuddy 在该时间窗写成 C，下一次 DSH 请求若仅凭旧的“自写”标记绕过复检，就可能覆盖 C。</p>
+<p class="fix"><strong>建议：</strong>删除时间窗式栅栏旁路。每次写入都在有效同步机制下核对同一文件当前版本；若要支持连续写，使用 per-file 的成功 revision/链式操作 ID，并仍校验磁盘状态。</p></article>
+
+<article class="finding"><h3><span class="severity p1">P1</span>幂等键缺少目标文件与日期身份 <span class="loc">方案 726–730、779–784 行</span></h3>
+<p>公式只使用 target、section 和规范化文本，没有规范化文件路径、每日文件日期或操作类型。同一条文本写进不同项目/小节，或在不同日期的 daily 文件追加，可能复用同一键，被错误当作重复。表是否按工作区隔离也未定义。</p>
+<p class="fix"><strong>建议：</strong>以 canonical file identity + date + target operation 构造资源作用域，并采用调用方在重试间保持不变的独立 operation ID。定义幂等记录的隔离范围、有效期与冲突行为。</p></article>
+
+<article class="finding"><h3><span class="severity p1">P1</span>幂等账本不与正文文件提交原子化 <span class="loc">方案 698–708、726–730 行</span></h3>
+<p>写链在目标文件原子替换后才刷新快照/base/幂等表。进程可能在正文已提交、幂等记录未落盘时崩溃；重试若没有稳定 operation ID 的持久化提交记录，可能再次写入。JSONL 的并发追加、裁剪、部分行和启动恢复也未定义。</p>
+<p class="fix"><strong>建议：</strong>用持久 journal/原子账本保存 operation ID 与提交状态，并定义崩溃恢复过程，使“正文已提交但未记账”的请求可识别。明确 flush/fsync 的必要范围，写失败时返回可诊断且可安全重试的状态。</p></article>
+
+<article class="finding"><h3><span class="severity p1">P1</span>整理跨文件不是事务，盲目回滚可能抹掉并发写入 <span class="loc">方案 789、951–952 行</span></h3>
+<p><span class="code">memory_consolidate</span> 逐条写入目标，全部成功后再删除源；任一步失败则以备份回滚。若进程在部分提交后崩溃，重启无法判断已处理到哪一步；若恢复时其他写者已改过目标，直接还原旧备份会覆盖新内容。部分源删除与回滚再次中断也可能造成重复或遗漏。</p>
+<p class="fix"><strong>建议：</strong>为每次整理写 durable journal 和稳定 operation ID；源/目标操作都带 revision 条件，支持幂等重放。回滚只可在目标 revision 仍是本事务产物时执行，否则保留现状并报告冲突，禁止盲目恢复旧快照。</p></article>
+
+<article class="finding"><h3><span class="severity p1">P1</span>重复标题下的小节三方合并身份不明确 <span class="loc">方案 755–771、1264 行</span></h3>
+<p>算法以 <span class="code">## 标题</span> 分块并逐节比较，但测试清单同时包含重复小节名。标题相同的两个节点无法仅靠标题唯一配对；插入、删除或重排也会影响序号匹配。若实现采用标题 map 或简单顺序 zip，可能把修改配错节或漏掉节点。文档用 SHA-1 前 8 位作比较值，也不适合作为唯一结构身份。</p>
+<p class="fix"><strong>建议：</strong>定义节点匹配和结构变更规则；出现重复标题或无法唯一匹配时 fail-closed，不自动合并。保留全部节点，测试重复标题、插入/删除/重排与多行内容；摘要用完整强散列或直接比较内容。</p></article>
+
+<article class="finding"><h3><span class="severity p1">P1</span>UI HTTP 路由未定义认证和请求来源校验 <span class="loc">方案 1010–1036 行</span></h3>
+<p>面板通过 GET <span class="code">/content</span> 读取原文、POST <span class="code">/action</span> 修改文件。设计没有说明如何认证 Peer、校验 Host/Origin 或防止跨站请求伪造。本机当前 <span class="code">webServer</span> 契约提供路由注册，但自定义路由需要接入 Connection 的 admission/rejection 边界；不能假设注册路由即自动获得授权。</p>
+<p class="fix"><strong>建议：</strong>明确认证模型，优先使用与宿主已认证 Peer 绑定的通道；按需要验证来源并防 CSRF。对未认证 GET 与 POST 都做拒绝测试，并检查部署允许非 loopback 访问时的行为。</p></article>
+
+<article class="finding"><h3><span class="severity p1">P1</span>项目记忆未按会话工作目录选择 <span class="loc">方案 314、441–446、544–549、629–642 行</span></h3>
+<p>环境探测和目录选择主要发生在插件 apply 阶段；<span class="code">process.cwd()</span> 是进程级目录而非每个会话的有效工作目录。当前 systemPrompt AssembleContext 提供 scope/signal，但并不存在文档所假设的 <span class="code">assembly.variables.cwd</span>。当一个 Host 同时服务多个工作区，会话可能读到或写入别的项目记忆。</p>
+<p class="fix"><strong>建议：</strong>从宿主 working-directory 服务按 Agent/Session 取得有效目录；快照、索引、锁与目标路径均按该目录隔离。测试同一 Host 上两个不同 cwd 的会话，确保注入、搜索和写入不串区。</p></article>
+
+<article class="finding"><h3><span class="severity p1">P1</span>画像的 WorkBuddy UID/账户绑定未定义 <span class="loc">方案 581–582、1074–1090 行</span></h3>
+<p>路径使用 <span class="code">&lt;uid&gt;_memory.md</span>，但设计未说明如何取得当前 WorkBuddy 用户 UID、账号切换后如何失效，或 UID 不可得时是否必须停止读取。多账号场景可能把上一个账号的画像带入当前会话。</p>
+<p class="fix"><strong>建议：</strong>把活动身份解析定义为可信依赖；无法确认 UID 时不注入用户画像。账号变化时清掉快照并重新解析来源，状态与诊断中避免泄漏身份或路径。</p></article>
+
+<article class="finding"><h3><span class="severity p1">P1</span>路径守卫既不覆盖旁路工具，也未定义 canonical path 检查 <span class="loc">方案 552–570 行</span></h3>
+<p>守卫只识别少数工具名以及 <span class="code">file_path/path</span> 字段；shell 或其他文件工具可能不使用该形态。<span class="code">env.isMemoryPath()</span> 的规范化契约未说明：大小写、UNC、8.3 路径、符号链接和 Windows junction 都可能让字符串路径与实际目标不一致。不能把此守卫作为强制授权边界。</p>
+<p class="fix"><strong>建议：</strong>按 canonicalized root/target 校验真实路径；明确 symlink/junction 策略，必要时拒绝链接目标。对 shell、别名路径及所有配置的文件写工具做测试。把 guard 定位为防误操作；真正授权需由受控工具集或宿主文件系统策略保证。</p></article>
+
+<article class="finding"><h3><span class="severity p1">P1</span>记忆内容的指令信任边界缺失 <span class="loc">方案 580–602、1311 行</span></h3>
+<p>项目、用户和画像 Markdown 原文直接进入模型的 system prompt；文件也可能被 WorkBuddy、仓库内容或外部工具写入。记忆内若出现要求忽略规则或调用敏感工具的内容，提示词里的“不要记录某些内容”并不能阻止它影响模型。</p>
+<p class="fix"><strong>建议：</strong>明确记忆是数据，不具有覆盖系统/开发者规则或 Host 授权的能力；区分用户有意保存的偏好与项目事实，并在工具层执行最小权限。加入恶意记忆、跨项目注入和工具越权测试。分隔符只是辅助，不是安全边界。</p></article>
+
+<article class="finding"><h3><span class="severity p1">P1</span>当前 Host 预发布版本不在设计的 engines 范围内 <span class="loc">方案 198、1115–1118 行</span></h3>
+<p>评审时本机 Host 版本为 <span class="code">0.2.2-rc.1</span>，设计 engines 约束为 <span class="code">&gt;=0.2.0-rc.2 &lt;0.2.1-0 || &gt;=0.2.1-rc.1 &lt;0.3.0-0</span>。按 semver 预发布匹配规则，第二段引入的是 0.2.1 这一预发布基线，不自动包含 0.2.2-rc.1；当前插件管理器会阻止不满足 DSH 版本条件的安装/激活。</p>
+<p class="fix"><strong>建议：</strong>明确产品要支持的预发布版本并更新 engines 范围；在发布前对每个声明支持的 Host 版本执行实际安装与启动验证，同时对未来不兼容版本继续保持拒绝。</p></article>
+
+<article class="finding"><h3><span class="severity p1">P1</span>npm 发布白名单未包含 Client bundle <span class="loc">方案 1043–1058、1113–1128 行</span></h3>
+<p>exports 与 <span class="code">dsh.client</span> 指向 <span class="code">lib/client.js</span>，但 package <span class="code">files</span> 白名单没有 <span class="code">lib</span>。发布的 npm 包将缺少声明的入口，安装后的 UI 加载失败。</p>
+<p class="fix"><strong>建议：</strong>将构建产物明确纳入 files/exports，并把 <span class="code">npm pack --dry-run</span> 实际文件清单纳入发布门禁。</p></article>
+
+<h2>中优先级问题</h2>
+<article class="finding"><h3><span class="severity p2">P2</span>配置卡引用的契约与当前宿主不符 <span class="loc">方案 828–837、846–872 行</span></h3>
+<p>客户端代码使用 <span class="code">configForms.get()/whileServed()</span>，但本机 DSH 当前服务目录中没有 <span class="code">configForms</span> 服务；当前 Settings 表单只面向 volatile 配置，普通配置的修改通常走配置编辑/Loader 生命周期，可能重载插件。文档宣称的普通项“立即生效”因此需要重新验证。</p>
+<p class="fix"><strong>建议：</strong>按 engines 中每个受支持版本核对可用服务及可编辑 Config 字段；确定缺少 Settings/Config Editor 时的降级；让生效说明与实际生命周期一致。</p></article>
+
+<article class="finding"><h3><span class="severity p2">P2</span>动态记忆 section 应明确关闭变量插值 <span class="loc">方案 576–584 行</span></h3>
+<p>systemPrompt section 默认进行 <span class="code">{{variable}}</span> 插值；设计没有要求带用户正文的 section 设 <span class="code">interpolate: false</span>。若正文出现未知或格式不完整的插值标记，可能使 prompt assembly 失败，与“读侧故障不阻断 turn”相冲突。</p>
+<p class="fix"><strong>建议：</strong>对记忆正文使用字面文本模式，并用包含大括号、未知变量名和畸形标记的 fixture 验证注入正常。</p></article>
+
+<article class="finding"><h3><span class="severity p2">P2</span>索引和备份扩大敏感正文留存面 <span class="loc">方案 698–704、779–785、1185 行</span></h3>
+<p>索引条目包含完整 text，备份又保存原文；目前没有规定 stateDir ACL、备份/索引的删除与保留策略。即使记忆源条目被删除，派生副本仍可能继续可读。</p>
+<p class="fix"><strong>建议：</strong>评估索引是否只需保存定位信息；对私有目录权限作明确约束，权限不得弱于源文件；定义备份轮转、过期索引回收、卸载后的处理和敏感数据诊断输出边界。</p></article>
+
+<article class="finding"><h3><span class="severity p2">P2</span>原子替换不代表断电后已持久 <span class="loc">方案 274、698–704 行</span></h3>
+<p>fallback 描述 temp + rename，但没有文件与父目录 fsync/flush 的持久性契约。rename 能提供原子可见性，不等于掉电后数据必然留存；跨平台 API 的保证亦待验证。</p>
+<p class="fix"><strong>建议：</strong>明确 durability 层级；若承诺断电持久，补齐平台实现并做 power-loss/崩溃注入测试；否则将产品文案限定为进程运行期的原子可见性与最佳努力恢复。</p></article>
+
+<h2>建议验收顺序</h2>
+<ol>
+<li><strong>先定写入协议：</strong>明确外部 WorkBuddy 写者不遵守锁时的产品保证；完成 revision/operationId 状态机，再实现写工具。</li>
+<li><strong>先证明恢复正确：</strong>对正文提交、记账、整理每个阶段注入崩溃；重启后重试不得重复写、漏写或覆盖后续修改。</li>
+<li><strong>验证隔离和授权：</strong>测试双工作区、账号切换、匿名/跨站 HTTP、shell 与路径别名，并测试恶意记忆内容不改变 Host 的工具授权。</li>
+<li><strong>验证发布契约：</strong>在声明支持的 DSH 版本矩阵逐个安装；核对 npm 包确实包含 client bundle 与所有运行时文件。</li>
+<li><strong>验证跨平台持久性：</strong>Windows/macOS/Linux 覆盖并发写、链接路径、CRLF/LF、进程终止及平台支持范围内的 durability。</li>
+</ol>
+
+<footer>
+<p><strong>评审依据：</strong>方案文档、同目录 WorkBuddy 记忆系统逆向报告，以及评审时本机 DSH 0.2.2-rc.1 的 Service/Config 契约。Host 的 live contract 查询确认 systemPrompt AssembleContext 提供 scope/signal、webServer 自定义路由可接 Connection admission/rejection，且当前目录没有 configForms。上述接口检查不代表插件实现或其测试已完成。</p>
+<p>报告日期：2026-11-09。此次仅新增本报告，没有修改设计原文或插件实现。</p>
+</footer>
+</main>
+</body>
+</html>
