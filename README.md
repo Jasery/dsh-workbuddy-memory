@@ -9,10 +9,12 @@ Share one set of memory files between DSH and WorkBuddy: the `MEMORY.md`, daily 
 | Capability | State |
 |---|---|
 | Injection (project / rules / user / profile sections) | done |
-| `memory_status` | done |
-| Write tools (`memory_read` / `append` / `edit`) | in progress |
-| Conflict fence, backups, operation log | in progress |
-| Sidebar panel and config card (client bundle) | not started |
+| `memory_status` / `memory_read` / `memory_search` | done |
+| Write tools (`memory_append` / `memory_edit`) and the bare-write guard | done |
+| Revision fence, backups, operation log | done |
+| Config card on the Plugins page | done |
+| Sidebar memory panel (browse and edit) | not started |
+| `memory_consolidate` (fold old daily notes) | not started |
 
 See [`docs/2026-11-09-dsh-workbuddy-memory-design.html`](docs/2026-11-09-dsh-workbuddy-memory-design.html) for the design (Chinese).
 

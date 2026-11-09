@@ -9,10 +9,12 @@
 | 能力 | 状态 |
 |---|---|
 | 注入（项目 / 规则 / 用户 / 画像 四块） | 已实现 |
-| `memory_status` | 已实现 |
-| 写入工具（`memory_read` / `append` / `edit`） | 开发中 |
-| 冲突栅栏、备份、操作账本 | 开发中 |
-| 侧栏面板与配置卡（client bundle） | 未开始 |
+| `memory_status` / `memory_read` / `memory_search` | 已实现 |
+| 写入工具（`memory_append` / `memory_edit`）与裸写守卫 | 已实现 |
+| revision 栅栏、备份、操作账本 | 已实现 |
+| 插件页配置卡 | 已实现 |
+| 侧栏记忆面板（浏览与编辑） | 未开始 |
+| `memory_consolidate`（跨天蒸馏） | 未开始 |
 
 设计文档见 [`docs/2026-11-09-dsh-workbuddy-memory-design.html`](docs/2026-11-09-dsh-workbuddy-memory-design.html)。
 
@@ -35,6 +37,18 @@ node scripts/dev-install.mjs web
     - id: workbuddy-memory
       name: dsh-workbuddy-memory
 ```
+
+## 工具
+
+| 工具 | 作用 |
+|---|---|
+| `memory_status` | 解析后的 home、各存储文件、字节数、可写性、画像解析结果与生效配置 |
+| `memory_read` | 读一个目标（项目 MEMORY.md / 日期文件 / 用户 MEMORY.md），返回 revision 与小节列表 |
+| `memory_search` | 按字面量搜索所有记忆文件，返回文件 + 小节 + 行号 |
+| `memory_append` | 往指定小节追加一条，或往当天笔记追加一行 |
+| `memory_edit` | 替换或删除一条；匹配不唯一时拒绝而不是猜 |
+
+写入链：跨进程锁 → 锁内重读 → revision 比对 → 备份 → 原子替换。`write` / `edit` 直接改记忆文件会被守卫拒绝。
 
 ## 它读哪些文件
 
