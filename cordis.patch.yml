@@ -1,0 +1,5 @@
+# DSH bundle patch: inserts this plugin into a profile.
+# `dsh plugin add` writes the same entry into the profile's own patch.
+- insert:
+    - id: workbuddy-memory
+      name: dsh-workbuddy-memory

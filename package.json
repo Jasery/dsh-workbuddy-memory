@@ -1,0 +1,45 @@
+{
+  "name": "dsh-workbuddy-memory",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Read and write WorkBuddy memory files from DSH: one set of Markdown files, two clients.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "workbuddy",
+    "memory"
+  ],
+  "license": "MIT",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": ">=20",
+    "dsh": ">=0.2.0-0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-tools": ">=0.1.5-rc.2"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.4"
+  },
+  "files": [
+    "src",
+    "locale",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  }
+}
