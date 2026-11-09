@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dsh-workbuddy-memory 通用插件方案 · 2026-11-09</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --bg-soft: #141922;
+    --panel: #171d27;
+    --panel-2: #1c232f;
+    --border: #242c3a;
+    --border-soft: #1d242f;
+    --text: #e4e8ef;
+    --text-dim: #a3adbd;
+    --text-faint: #747e8e;
+    --blue: #6ea8fe;
+    --green: #7dd3a0;
+    --amber: #e8b96a;
+    --red: #ef8080;
+    --purple: #b39ddb;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { display: flex; max-width: 1460px; margin: 0 auto; }
+  nav {
+    width: 260px; flex: 0 0 260px;
+    padding: 36px 18px 60px 26px;
+    position: sticky; top: 0; align-self: flex-start;
+    max-height: 100vh; overflow-y: auto;
+    border-right: 1px solid var(--border-soft);
+  }
+  nav .nav-title { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 14px; }
+  nav a {
+    display: block; padding: 5px 0 5px 11px;
+    color: var(--text-dim); text-decoration: none; font-size: 13px;
+    border-left: 2px solid transparent; line-height: 1.5;
+  }
+  nav a:hover { color: var(--text); border-left-color: var(--border); }
+  nav a.sub { padding-left: 24px; font-size: 12.5px; color: var(--text-faint); }
+  main { flex: 1; min-width: 0; padding: 36px 52px 120px 52px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 26px; margin-bottom: 34px; }
+  h1 { font-size: 26px; font-weight: 600; margin: 0 0 10px; letter-spacing: -.01em; }
+  .subtitle { color: var(--text-dim); font-size: 13.5px; margin: 0; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+  .chip {
+    font-size: 11.5px; padding: 3px 9px; border-radius: 5px;
+    background: var(--panel); border: 1px solid var(--border); color: var(--text-dim);
+    font-family: var(--mono);
+  }
+  .chip.on { color: var(--green); border-color: #2c4438; background: #121e19; }
+  .chip.warn { color: var(--amber); border-color: #3a3220; background: #1f1c16; }
+  h2 {
+    font-size: 19px; font-weight: 600; margin: 54px 0 6px;
+    padding-bottom: 9px; border-bottom: 1px solid var(--border-soft);
+    letter-spacing: -.005em;
+  }
+  h2 .num { color: var(--blue); font-family: var(--mono); font-size: 15px; margin-right: 9px; font-weight: 400; }
+  h3 { font-size: 15px; font-weight: 600; margin: 28px 0 8px; color: #d6dbe4; }
+  h4 { font-size: 13.5px; font-weight: 600; margin: 20px 0 6px; color: var(--text-dim); }
+  p { margin: 10px 0; }
+  ul, ol { margin: 10px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+  code {
+    font-family: var(--mono); font-size: 12.5px;
+    background: var(--panel-2); padding: 1.5px 5px; border-radius: 4px;
+    color: #c9d3e2; border: 1px solid var(--border-soft);
+  }
+  pre {
+    background: var(--bg-soft); border: 1px solid var(--border);
+    border-radius: 8px; padding: 15px 17px; overflow-x: auto;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
+    margin: 12px 0; color: #c2ccdb;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: inherit; color: inherit; }
+  .cmt { color: #5f6b7e; }
+  .kw { color: var(--purple); }
+  .str { color: var(--green); }
+  .fn { color: var(--blue); }
+  .num2 { color: var(--amber); }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  th { color: var(--text-faint); font-weight: 500; font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; background: var(--bg-soft); }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #131821; }
+  td code { font-size: 11.8px; }
+  .lead {
+    background: var(--panel); border: 1px solid var(--border);
+    border-left: 3px solid var(--blue);
+    border-radius: 8px; padding: 16px 20px; margin: 20px 0;
+  }
+  .lead p { margin: 6px 0; }
+  .warn-box {
+    background: #1c1614; border: 1px solid #3a2a20; border-left: 3px solid var(--amber);
+    border-radius: 8px; padding: 14px 18px; margin: 16px 0; font-size: 13px;
+  }
+  .warn-box .t { color: var(--amber); font-weight: 600; }
+  .ok-box {
+    background: #121e19; border: 1px solid #2c4438; border-left: 3px solid var(--green);
+    border-radius: 8px; padding: 14px 18px; margin: 16px 0; font-size: 13px;
+  }
+  .ok-box .t { color: var(--green); font-weight: 600; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(205px, 1fr)); gap: 12px; margin: 18px 0; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .card .k { font-size: 11.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 5px; }
+  .card .v { font-size: 19px; font-weight: 600; font-family: var(--mono); color: var(--text); }
+  .card .n { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
+  .figure { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin: 22px 0; }
+  .figure .cap { font-size: 12px; color: var(--text-faint); text-align: center; margin-top: 12px; }
+  details { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; margin: 12px 0; }
+  details summary { cursor: pointer; font-size: 13px; color: var(--text-dim); outline: none; }
+  details summary:hover { color: var(--text); }
+  details[open] summary { margin-bottom: 10px; color: var(--text); }
+  details pre { margin: 8px 0 4px; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 4px; font-family: var(--mono); white-space: nowrap; }
+  .tag.copy { background: #1e2530; color: var(--blue); border: 1px solid #2a3a52; }
+  .tag.borrow { background: #1f1c16; color: var(--amber); border: 1px solid #3a3220; }
+  .tag.better { background: #1a2419; color: var(--green); border: 1px solid #2c4438; }
+  .tag.no { background: #231818; color: var(--red); border: 1px solid #3d2626; }
+  .flow-step { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px dashed var(--border-soft); }
+  .flow-step:last-child { border-bottom: none; }
+  .flow-num {
+    flex: 0 0 26px; height: 26px; border-radius: 50%;
+    background: var(--panel-2); border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 12px; color: var(--blue);
+  }
+  .flow-body { flex: 1; min-width: 0; }
+  .flow-body .t { font-weight: 600; font-size: 13.5px; margin-bottom: 3px; }
+  .flow-body .d { font-size: 12.8px; color: var(--text-dim); }
+  .flow-body .d code { font-size: 11.8px; }
+  footer { margin-top: 70px; padding-top: 22px; border-top: 1px solid var(--border); color: var(--text-faint); font-size: 12px; }
+  .kpi { display: grid; grid-template-columns: 30px 1fr; gap: 10px; padding: 11px 0; border-bottom: 1px dashed var(--border-soft); }
+  .kpi:last-child { border-bottom: none; }
+  .kpi .i { font-family: var(--mono); font-size: 12px; color: var(--blue); padding-top: 2px; }
+  .kpi .t { font-weight: 600; font-size: 13.5px; }
+  .kpi .d { font-size: 12.8px; color: var(--text-dim); }
+  @media (max-width: 1040px) {
+    nav { display: none; }
+    main { padding: 26px 20px 80px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <div class="nav-title">目录</div>
+  <a href="#s0">核心结论</a>
+  <a href="#s1">一、定位</a>
+  <a href="#s1-1" class="sub">是什么 / 不是什么</a>
+  <a href="#s1-2" class="sub">自包含设计</a>
+  <a href="#s1-3" class="sub">能力全景</a>
+  <a href="#s2">二、通用性设计</a>
+  <a href="#s3">三、「打通」的语义</a>
+  <a href="#s3-3" class="sub">一致性与时间窗</a>
+  <a href="#s3-4" class="sub">三档冲突策略</a>
+  <a href="#s4">四、架构总览</a>
+  <a href="#s5">五、接线点</a>
+  <a href="#s5-3" class="sub">工具守卫</a>
+  <a href="#s6">六、注入管线</a>
+  <a href="#s6-2" class="sub">限额与冻结</a>
+  <a href="#s7">七、写入管线</a>
+  <a href="#s7-2" class="sub">安全链</a>
+  <a href="#s7-4" class="sub">小节级合并</a>
+  <a href="#s8">八、检索与整理</a>
+  <a href="#s9">九、交互界面</a>
+  <a href="#s9-2" class="sub">配置卡</a>
+  <a href="#s9-3" class="sub">记忆面板</a>
+  <a href="#s9-4" class="sub">直接编辑</a>
+  <a href="#s9-5" class="sub">数据通道</a>
+  <a href="#s10">十、能力探测与降级</a>
+  <a href="#s11">十一、依赖与发布</a>
+  <a href="#s12">十二、配置</a>
+  <a href="#s13">十三、失败模式</a>
+  <a href="#s14">十四、测试</a>
+  <a href="#s15">十五、里程碑</a>
+  <a href="#s16">十六、风险</a>
+</nav>
+<main>
+
+<header>
+  <h1>dsh-workbuddy-memory · 通用插件方案</h1>
+  <p class="subtitle">WorkBuddy 与 DSH 共用一套记忆文件：文件即真相，两侧都能读能写，谁都不产生第二份副本。</p>
+  <div class="meta">
+    <span class="chip on">通用插件 · 可发布</span>
+    <span class="chip">零第三方记忆依赖</span>
+    <span class="chip">装完即用</span>
+    <span class="chip">engines.dsh &gt;=0.2.0-rc.2</span>
+    <span class="chip on">零运行时依赖</span>
+    <span class="chip on">含 Web 界面</span>
+    <span class="chip">2026-11-09</span>
+  </div>
+</header>
+
+<div class="lead">
+  <p><strong>一句话：</strong>这是一个<strong>独立记忆层</strong>，不是某个记忆框架的适配器。它把 WorkBuddy 的三层记忆文件当成唯一真相，往 DSH 的 system prompt 里注入，用自带工具往里面写，用跨进程锁和内容哈希保证两个客户端不会互相覆盖。</p>
+  <p>它不建立在任何记忆框架之上：不引入外部记忆存储，不需要额外的策略配置，不依赖第二套索引或加密服务。注入、写入、检索、整理、诊断五件事全部由插件自己实现，只使用宿主提供的 <code>systemPrompt</code> 与 <code>tools</code> 两个服务。</p>
+</div>
+
+<h2 id="s0">核心结论</h2>
+
+<div class="cards">
+  <div class="card">
+    <div class="k">运行时依赖</div>
+    <div class="v">0</div>
+    <div class="n">peer 只有 cordis / dsh-tools</div>
+  </div>
+  <div class="card">
+    <div class="k">能力闭环</div>
+    <div class="v">5 类</div>
+    <div class="n">注入 · 写入 · 检索 · 整理 · 诊断</div>
+  </div>
+  <div class="card">
+    <div class="k">冲突策略</div>
+    <div class="v">3 档</div>
+    <div class="n">fail · merge · overwrite</div>
+  </div>
+  <div class="card">
+    <div class="k">界面入口</div>
+    <div class="v">3</div>
+    <div class="n">配置卡 · 记忆面板 · 面板操作</div>
+  </div>
+  <div class="card">
+    <div class="k">代码量</div>
+    <div class="v">~3,600 行</div>
+    <div class="n">Host 2,400 + Client 1,200（esbuild 打包）</div>
+  </div>
+</div>
+
+<ol>
+  <li><strong>格式不改，位置不改，语义不改。</strong>一旦改了文件布局，WorkBuddy 就读不到这些记忆，「打通」立刻退化成「各写各的」。插件的所有自由度都在「怎么读写」上，不在「存在哪、长什么样」上。</li>
+  <li><strong>不制造第二份真相。</strong>正文永远只存在 <code>.workbuddy/memory/</code>；插件私有目录只放索引、备份、幂等表、小节基线这类派生数据。删掉 <code>~/.dsh/workbuddy-memory</code> 不丢任何记忆。</li>
+  <li><strong>写侧失败优先于写侧成功。</strong>两侧可能同时改同一个文件，冲突时宁可让模型重读重试，也不能覆盖对方刚写的内容。默认 <code>conflictPolicy: fail</code>，合并是显式选项。</li>
+  <li><strong>读侧永不阻断。</strong>没有 WorkBuddy、没有目录、文件损坏、权限不足，一律降级为空注入，宿主照常跑完这一轮。</li>
+  <li><strong>通用插件的验收标准是「别人装得上、跑得动、出错能自查」，不是「我这儿能用」。</strong>所以有跨平台路径、能力探测、<code>memory_status</code> 自检、中英 locale、完整 npm 元数据。</li>
+  <li><strong>注入走 section，不走 runtime context。</strong>DSH 的 <code>ctx.systemPrompt.context()</code> 会物化成 user 角色快照写进历史；记忆是稳定前缀，放那里会随每次变化重复消耗 token。</li>
+  <li><strong>界面是入口，不是第二条写入路径。</strong>面板里的编辑、整理与回滚，和会话里调用工具走同一个 <code>write()</code>——同一把锁、同一套栅栏、同一份备份、同一张幂等表。UI 只负责把参数填好；人比模型多出的权限只有两项：不受幂等表约束、可以选择先备份再覆盖。</li>
+</ol>
+
+<h2 id="s1">一、定位</h2>
+
+<h3 id="s1-1">1.1 是什么 / 不是什么</h3>
+
+<table>
+<thead><tr><th>维度</th><th>是</th><th>不是</th></tr></thead>
+<tbody>
+<tr><td>角色</td><td>DSH 的<strong>一等记忆层</strong>：装完就有记忆，不需要再配策略、Provider、图数据库</td><td>不是任何记忆框架的适配器，也不是某个上层功能的附属组件</td></tr>
+<tr><td>数据</td><td>WorkBuddy 的三层 Markdown 文件（项目 / 用户 / 画像）</td><td>不是自建数据库、不是向量库、不是云端 API</td></tr>
+<tr><td>写入</td><td>工具化写入，带幂等、栅栏、合并、备份</td><td>不靠提示词让模型「自觉调 Edit」</td></tr>
+<tr><td>生命周期</td><td>会话首轮注入，会话内冻结</td><td>不是每轮 recall，不是语义检索驱动</td></tr>
+<tr><td>边界</td><td>只管「WorkBuddy 这套文件怎么被 DSH 读写」</td><td>不管自动提炼、跨会话图谱、skill 自进化</td></tr>
+</tbody>
+</table>
+
+<h3 id="s1-2">1.2 自包含设计</h3>
+
+<p>插件的每一项能力都必须能自己解释来源。除了宿主必然提供的两个服务，其余全部用 Node 标准库实现，不引入记忆框架、数据库、向量库或任何第三方运行时依赖：</p>
+
+<table>
+<thead><tr><th>能力</th><th>由谁提供</th><th>为什么这样选</th></tr></thead>
+<tbody>
+<tr><td>注入</td><td><code>ctx.systemPrompt.section</code></td><td>宿主唯一稳定的前缀入口，不必自己拼提示词</td></tr>
+<tr><td>工具与守卫</td><td><code>ctx.tools.register</code> / <code>.guard</code></td><td>schema 自动进入 prompt 组装，守卫是不可绕过的写入闸门</td></tr>
+<tr><td>原子写 / 文件锁</td><td><code>node:fs</code> + 自带 fallback</td><td>temp + rename 与 <code>wx</code> 锁各 30 行，自己写比引库更可控</td></tr>
+<tr><td>版本与幂等</td><td><code>node:crypto</code> sha256</td><td>内容哈希即可表达「是不是同一版」，不需要版本号服务</td></tr>
+<tr><td>检索</td><td>自带增量索引（JSON）</td><td>记忆体量在 MB 以内，子串检索足够</td></tr>
+<tr><td>配置</td><td><code>schemastery</code></td><td>DSH 官方 schema 库，配置可校验、可给默认值</td></tr>
+<tr><td>界面（可选）</td><td><code>ctx.slots</code> + 宿主的 React</td><td>组件必须与宿主同一 React 实例，所以 React 走 peer，不自带、不打包</td></tr>
+</tbody>
+</table>
+
+<div class="ok-box">
+  <span class="t">验收方式：</span>CI 加一条「最小化环境」用例——在只装官方核心包的 profile 上加载本插件，跑完整读写流程。任何未声明的隐式依赖都会在这条用例里暴露。
+</div>
+
+<h3 id="s1-3">1.3 能力全景</h3>
+
+<p>五类能力 + 一道防护，装完即用，不需要额外配置第二个组件：</p>
+
+<table>
+<thead><tr><th>能力</th><th>入口</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>注入</td><td>4 个 section</td><td>规则 / 项目记忆 / 用户记忆 / 画像，会话首次装配即生效</td></tr>
+<tr><td>读取</td><td><code>memory_read</code></td><td>按 target、日期、小节读，返回 revision 与截断标记</td></tr>
+<tr><td>检索</td><td><code>memory_search</code></td><td>跨日期文件与小节，支持时间区间与作用域过滤</td></tr>
+<tr><td>写入</td><td><code>memory_append</code> / <code>memory_edit</code></td><td>小节级定位 + 幂等键 + 内容栅栏 + 写前备份</td></tr>
+<tr><td>整理</td><td><code>memory_consolidate</code></td><td>30 天前流水按主题合并进长期笔记，默认 dry-run</td></tr>
+<tr><td>自检</td><td><code>memory_status</code></td><td>环境探测、限额占比、最近冲突、备份列表</td></tr>
+<tr><td>防护</td><td><code>ctx.tools.guard</code></td><td>拦截 <code>write</code>/<code>edit</code> 直接改记忆文件，强制走工具</td></tr>
+<tr><td>界面</td><td>配置卡 + 记忆面板</td><td>改配置、看结构、直接编辑条目、整理与回滚（可整体关闭）</td></tr>
+</tbody>
+</table>
+
+<p>八项之间没有强耦合：任意一项被配置关掉，其余七项照常工作。</p>
+
+<h2 id="s2">二、通用性设计</h2>
+
+<p>「通用」不是形容词，是 8 条可验收的硬指标。每条都对应具体代码位置，做不到就不叫通用：</p>
+
+<div class="kpi"><div class="i">01</div><div><div class="t">零硬依赖</div><div class="d"><code>peerDependencies</code> 只有 <code>@deepseek-ai/cordis</code> 与 <code>@deepseek-ai/dsh-tools</code>（宿主必然提供）。<code>schemastery</code> 走 dependencies 自带一份；<code>dsh-atomic-write</code> 动态 import，拿不到就用自带 60 行 fallback，不报错。</div></div></div>
+
+<div class="kpi"><div class="i">02</div><div><div class="t">能力自足</div><div class="d">注入 / 写入 / 检索 / 整理 / 诊断五件套闭环。任何一个能力被关掉，其余四个照常工作；全开时也不依赖外部插件补齐。</div></div></div>
+
+<div class="kpi"><div class="i">03</div><div><div class="t">环境自适应</div><div class="d">启动时探测 WorkBuddy 的存在形态（完整 / 只有全局 / 只有项目 / 没有），按结果决定注入哪些块、开放哪些写入目标。<code>memory_status</code> 把探测结果原样吐给用户，排障不用猜。</div></div></div>
+
+<div class="kpi"><div class="i">04</div><div><div class="t">跨平台</div><div class="d">路径全走 <code>os.homedir()</code> + <code>path.join</code>，不出现盘符字面量；EOL 按文件探测并原样写回；原子写在 Windows 上重试 EBUSY/EACCES；锁用 <code>wx</code> + PID 存活检测，不依赖 POSIX <code>flock</code>。</div></div></div>
+
+<div class="kpi"><div class="i">05</div><div><div class="t">不制造第二份真相</div><div class="d">正文只写 <code>.workbuddy/</code>。私有目录放索引、备份、幂等表、小节基线；删掉它只影响性能，不影响数据完整性。</div></div></div>
+
+<div class="kpi"><div class="i">06</div><div><div class="t">可发布</div><div class="d">完整 npm 元数据（<code>engines.node</code> / <code>engines.dsh</code> / <code>files</code> 白名单 / <code>dsh.bundle.patch</code>）、中英 locale、MIT LICENSE、README 双语、无个人路径与凭据。</div></div></div>
+
+<div class="kpi"><div class="i">07</div><div><div class="t">可配置可关闭</div><div class="d">每个能力独立开关（<code>inject</code> / <code>write</code> / <code>search</code> / <code>guard</code> / <code>ui</code>），而且都能在界面里改，不必手编 YAML。关了 UI 只剩工具链，功能不缺。</div></div></div>
+
+<div class="kpi"><div class="i">08</div><div><div class="t">失败不阻断宿主</div><div class="d">读侧任何异常→空注入；写侧任何不确定→失败并给出下一步；插件 <code>apply()</code> 本身不抛错（配置非法时降级为默认值 + 警告日志）。</div></div></div>
+
+<h2 id="s3">三、「打通」的语义</h2>
+
+<h3>3.1 文件即唯一真相</h3>
+
+<p>两侧之间不存在「同步」。它们读写的是同一批文件，所以「打通」= 同一份数据被两个客户端看见。这意味着：</p>
+<ul>
+  <li>不需要同步服务、后台任务、冲突队列；</li>
+  <li>不需要迁移脚本，DSH 装上当天就能看到 WorkBuddy 里全部历史记忆；</li>
+  <li>不会有「两边不一致」的状态，只会有「谁先谁后」的时间问题。</li>
+</ul>
+
+<h3>3.2 三个方向的流动</h3>
+
+<div class="figure">
+<svg viewBox="0 0 880 400" width="100%" role="img" xmlns="http://www.w3.org/2000/svg" style="font-family: inherit;">
+<title>WorkBuddy 与 DSH 的记忆流向</title>
+<desc>三条路径：WorkBuddy 写入被 DSH 读取；DSH 工具写入被 WorkBuddy 下个会话读取；WorkBuddy 蒸馏器吸收记忆生成画像。</desc>
+<defs>
+<marker id="f1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<rect x="40" y="46" width="230" height="76" rx="9" fill="#1a2130" stroke="#2a3a52" stroke-width="0.9"/>
+<text x="56" y="70" font-size="13" fill="#d6dbe4" font-weight="500">WorkBuddy 客户端</text>
+<text x="56" y="90" font-size="11.5" fill="#8b95a6">Edit 工具 · 零点任务</text>
+<text x="56" y="108" font-size="11.5" fill="#8b95a6">无锁 · 无栅栏</text>
+
+<rect x="325" y="46" width="230" height="76" rx="9" fill="#16211c" stroke="#2c4438" stroke-width="0.9"/>
+<text x="341" y="70" font-size="13" fill="#cfe6d8" font-weight="500">记忆文件（唯一真相）</text>
+<text x="341" y="90" font-size="11.5" fill="#8fae9c" font-family="ui-monospace, monospace">.workbuddy/memory/*.md</text>
+<text x="341" y="108" font-size="11.5" fill="#8fae9c">纯 Markdown · 可 git 版本化</text>
+
+<rect x="610" y="46" width="230" height="76" rx="9" fill="#1c1a16" stroke="#3a3220" stroke-width="0.9"/>
+<text x="626" y="70" font-size="13" fill="#e3d5b8" font-weight="500">DSH · 本插件</text>
+<text x="626" y="90" font-size="11.5" fill="#a3967c">memory_* 工具 · 锁 · 栅栏</text>
+<text x="626" y="108" font-size="11.5" fill="#a3967c">首轮注入 system prompt</text>
+
+<path d="M270 74L319 74" fill="none" stroke="#4a5b73" stroke-width="1.4" marker-end="url(#f1)"/>
+<text x="262" y="64" font-size="10.5" fill="#7c8a9e" text-anchor="end">写</text>
+<path d="M319 100L270 100" fill="none" stroke="#4a5b73" stroke-width="1.4" marker-end="url(#f1)"/>
+<text x="330" y="120" font-size="10.5" fill="#7c8a9e">读</text>
+
+<path d="M555 74L604 74" fill="none" stroke="#4a5b73" stroke-width="1.4" marker-end="url(#f1)"/>
+<text x="556" y="64" font-size="10.5" fill="#7c8a9e">写（锁 + 栅栏）</text>
+<path d="M604 100L555 100" fill="none" stroke="#4a5b73" stroke-width="1.4" marker-end="url(#f1)"/>
+<text x="556" y="120" font-size="10.5" fill="#7c8a9e">读（注入 / 工具）</text>
+
+<rect x="325" y="196" width="230" height="70" rx="9" fill="#1a2130" stroke="#2a3a52" stroke-width="0.9"/>
+<text x="341" y="220" font-size="12.5" fill="#d6dbe4">WorkBuddy 蒸馏器</text>
+<text x="341" y="240" font-size="11.5" fill="#8b95a6">→ &lt;uid&gt;_memory.md</text>
+<text x="341" y="256" font-size="11" fill="#66707f">吸收 MEMORY.md，生成画像</text>
+
+<path d="M440 126L440 190" fill="none" stroke="#4a5b73" stroke-width="1.4" marker-end="url(#f1)"/>
+<path d="M440 270L440 300" fill="none" stroke="#4a5b73" stroke-width="1.4" marker-end="url(#f1)"/>
+
+<rect x="325" y="306" width="230" height="62" rx="9" fill="#1a2130" stroke="#2a3a52" stroke-width="0.9"/>
+<text x="341" y="328" font-size="12.5" fill="#d6dbe4">下一轮注入（画像只读）</text>
+<text x="341" y="346" font-size="11.5" fill="#8b95a6">插件不写画像，只消费</text>
+
+<text x="40" y="368" font-size="11.5" fill="#747e8e">闭合点在下方：DSH 写进 MEMORY.md 的事实，会被 WorkBuddy 的蒸馏器吸收成画像，再回到注入里。</text>
+<text x="40" y="386" font-size="11.5" fill="#747e8e">插件不需要做任何搬运，这正是共享同一批文件的价值。</text>
+</svg>
+<div class="cap">图 1 · 三条路径全部落在文件上。插件唯一需要工程化的是右侧那条「写」路径。</div>
+</div>
+
+<h3 id="s3-3">3.3 一致性与时间窗</h3>
+
+<p>「打通」是最终一致，不是实时一致。不同方向的时间窗差得很远，必须写进 README，否则用户会以为坏了：</p>
+
+<table>
+<thead><tr><th>路径</th><th>可见延迟</th><th>原因</th></tr></thead>
+<tbody>
+<tr><td>WorkBuddy 写 → DSH 读</td><td>下一次装配（<code>on-change</code>）或下一个会话（<code>first-turn</code>）</td><td>取决于冻结策略</td></tr>
+<tr><td>DSH 写 → 本会话读</td><td>立即</td><td>工具写完主动刷新快照</td></tr>
+<tr><td>DSH 写 → WorkBuddy 读</td><td>WorkBuddy 下一个会话</td><td>WorkBuddy 也是首轮注入，已加载的会话不重读</td></tr>
+<tr><td>DSH 写 → 画像</td><td>WorkBuddy 下次蒸馏（小时到天）</td><td>蒸馏器是独立任务，插件不触发</td></tr>
+<tr><td>DSH 写 → 另一个 DSH 会话</td><td>那个会话的下一轮</td><td>各自持有快照，不共享内存状态</td></tr>
+</tbody>
+</table>
+
+<h3 id="s3-4">3.4 三档冲突策略</h3>
+
+<p>冲突的定义：写入前重读文件，发现内容哈希与调用方提供的 <code>expectedRevision</code> 不一致。按 <code>conflictPolicy</code> 处理：</p>
+
+<table>
+<thead><tr><th>策略</th><th>行为</th><th>适用</th></tr></thead>
+<tbody>
+<tr><td><code>fail</code>（默认）</td><td>不写。返回 <code>conflict</code> + 当前 revision + 变化小节清单，模型重读后重试一次</td><td>通用默认。安全，代价是多一次往返</td></tr>
+<tr><td><code>merge</code></td><td>小节级三方合并（见 7.4）。只在「双方改的不是同一个小节」时成功，否则仍返回 <code>conflict</code></td><td>两侧频繁交替写入时开</td></tr>
+<tr><td><code>overwrite</code></td><td>先备份，然后覆盖</td><td>只在脚本化批量导入时用，默认禁用</td></tr>
+</tbody>
+</table>
+
+<div class="warn-box">
+  <span class="t">为什么默认不是 merge：</span>合并需要 base（上一次读到的版本），而 base 只对「本插件读过的文件」存在。用户刚在 WorkBuddy 里改过、DSH 侧还没读过，此时 base 已经过期，强行合并会得出错误结论。所以只有 base 能链到磁盘的上一个已知版本时才允许合并，否则退回 <code>fail</code>。
+</div>
+
+<h2 id="s4">四、架构总览</h2>
+
+<div class="figure">
+<svg viewBox="0 0 940 420" width="100%" role="img" xmlns="http://www.w3.org/2000/svg" style="font-family: inherit;">
+<title>插件模块架构</title>
+<desc>左侧 WorkBuddy 记忆文件，中间五个模块组，右侧 DSH 宿主能力。</desc>
+<defs>
+<marker id="a1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<text x="24" y="22" font-size="11" fill="#747e8e" letter-spacing="1">磁盘</text>
+<text x="300" y="22" font-size="11" fill="#747e8e" letter-spacing="1">插件</text>
+<text x="700" y="22" font-size="11" fill="#747e8e" letter-spacing="1">宿主</text>
+
+<rect x="24" y="40" width="238" height="52" rx="7" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="38" y="61" font-size="12" fill="#d6dbe4">&lt;cwd&gt;/.workbuddy/</text>
+<text x="38" y="78" font-size="11" fill="#8b95a6">memory/MEMORY.md + 日期文件</text>
+
+<rect x="24" y="100" width="238" height="52" rx="7" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="38" y="121" font-size="12" fill="#d6dbe4">~/.workbuddy/</text>
+<text x="38" y="138" font-size="11" fill="#8b95a6">MEMORY.md · USER.md · memory/</text>
+
+<rect x="24" y="160" width="238" height="52" rx="7" fill="#1c1a16" stroke="#3a3220" stroke-width="0.8"/>
+<text x="38" y="181" font-size="12" fill="#e3d5b8">~/.dsh/workbuddy-memory/</text>
+<text x="38" y="198" font-size="11" fill="#a3967c">index · base · backups · idem</text>
+
+<rect x="300" y="40" width="360" height="58" rx="7" fill="#16211c" stroke="#2c4438" stroke-width="0.8"/>
+<text x="314" y="60" font-size="12.5" fill="#cfe6d8" font-weight="500">env/ 探测与定位</text>
+<text x="314" y="79" font-size="11" fill="#8fae9c">locate.js · capabilities.js → 决定注入哪些块、开放哪些写目标</text>
+
+<rect x="300" y="110" width="360" height="58" rx="7" fill="#16211c" stroke="#2c4438" stroke-width="0.8"/>
+<text x="314" y="130" font-size="12.5" fill="#cfe6d8" font-weight="500">inject/ 注入</text>
+<text x="314" y="149" font-size="11" fill="#8fae9c">blocks · budget · sanitize · snapshot → 4 个 section</text>
+
+<rect x="300" y="180" width="360" height="58" rx="7" fill="#16211c" stroke="#2c4438" stroke-width="0.8"/>
+<text x="314" y="200" font-size="12.5" fill="#cfe6d8" font-weight="500">store/ 文件模型</text>
+<text x="314" y="219" font-size="11" fill="#8fae9c">markdown · daily · profile → 标题树 / 围栏 / EOL / round-trip</text>
+
+<rect x="300" y="250" width="360" height="58" rx="7" fill="#1c1a16" stroke="#3a3220" stroke-width="0.8"/>
+<text x="314" y="270" font-size="12.5" fill="#e3d5b8" font-weight="500">write/ 写入</text>
+<text x="314" y="289" font-size="11" fill="#a3967c">guard · lock · idempotency · merge · backup</text>
+
+<rect x="300" y="320" width="360" height="58" rx="7" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="314" y="340" font-size="12.5" fill="#9fb6d4" font-weight="500">search/ · distill/ · tools/ · ui/</text>
+<text x="314" y="359" font-size="11" fill="#8b95a6">索引 · 检索 · 30 天蒸馏 · 6 个工具 · 路由与面板（可选）</text>
+
+<rect x="700" y="40" width="214" height="58" rx="7" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="714" y="60" font-size="12.5" fill="#9fb6d4" font-family="ui-monospace, monospace">ctx.systemPrompt</text>
+<text x="714" y="79" font-size="11" fill="#8b95a6">.section({ order, text })</text>
+
+<rect x="700" y="110" width="214" height="58" rx="7" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="714" y="130" font-size="12.5" fill="#9fb6d4" font-family="ui-monospace, monospace">ctx.tools</text>
+<text x="714" y="149" font-size="11" fill="#8b95a6">.register · .guard</text>
+
+<rect x="700" y="180" width="214" height="58" rx="7" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="714" y="200" font-size="12.5" fill="#9fb6d4" font-family="ui-monospace, monospace">dsh-atomic-write</text>
+<text x="714" y="219" font-size="11" fill="#8b95a6">可选，缺失走自带 fallback</text>
+
+<rect x="700" y="250" width="214" height="58" rx="7" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="714" y="270" font-size="12.5" fill="#9fb6d4" font-family="ui-monospace, monospace">node:fs · node:crypto</text>
+<text x="714" y="289" font-size="11" fill="#8b95a6">statSync · readFileSync · sha256</text>
+
+<path d="M262 66L294 70" fill="none" stroke="#3f4b5e" stroke-width="1.2" marker-end="url(#a1)"/>
+<path d="M262 126L294 136" fill="none" stroke="#3f4b5e" stroke-width="1.2" marker-end="url(#a1)"/>
+<path d="M262 186L294 210" fill="none" stroke="#3f4b5e" stroke-width="1.2" marker-end="url(#a1)"/>
+
+<path d="M660 70L694 70" fill="none" stroke="#3f4b5e" stroke-width="1.2" marker-end="url(#a1)"/>
+<path d="M660 290L694 140" fill="none" stroke="#3f4b5e" stroke-width="1.2" marker-end="url(#a1)"/>
+<path d="M660 279L694 209" fill="none" stroke="#3f4b5e" stroke-width="1.2" marker-end="url(#a1)"/>
+<path d="M660 330L694 279" fill="none" stroke="#3f4b5e" stroke-width="1.2" marker-end="url(#a1)"/>
+</svg>
+<div class="cap">图 2 · 五个模块组，右列全部是宿主能力，没有一个来自第三方记忆插件；<code>ui/</code> 是可选层，关掉不影响其余四组。</div>
+</div>
+
+<h2 id="s5">五、接线点</h2>
+
+<h3>5.1 DSH API 清单</h3>
+
+<p>全部签名从本机 <code>@deepseek-ai/dsh</code> 的 <code>.d.ts</code> 核对：</p>
+
+<table>
+<thead><tr><th>用途</th><th>接口</th><th>关键约束</th></tr></thead>
+<tbody>
+<tr><td>插件入口</td><td><code>export function apply(ctx, config)</code></td><td><code>export const inject = ['systemPrompt','tools']</code>，不声明任何第三方服务依赖</td></tr>
+<tr><td>配置</td><td><code>export const Config = z.object({...})</code></td><td><code>@deepseek-ai/schemastery</code> 自带依赖</td></tr>
+<tr><td>注入</td><td><code>ctx.systemPrompt.section({ name, order, text, interpolate })</code></td><td><strong>text 必须同步</strong>，返回 disposer</td></tr>
+<tr><td>工具</td><td><code>ctx.tools.register(defineTool({...}))</code></td><td><code>defineTool</code> 来自 peer <code>@deepseek-ai/dsh-tools</code></td></tr>
+<tr><td>裸写拦截</td><td><code>ctx.tools.guard((exec) =&gt; string | undefined)</code></td><td>返回字符串即拒绝，单调不可被后续监听器放行</td></tr>
+<tr><td>原子写</td><td><code>writeFileAtomic(path, content, { mode })</code></td><td>可选依赖，动态 import</td></tr>
+<tr><td>文件锁</td><td><code>withFileLock(path, op, { waitMs })</code></td><td>可选依赖，缺失走自带实现</td></tr>
+<tr><td>生命周期</td><td><code>ctx.effect(() =&gt; disposer)</code></td><td>注册与撤销成对，卸载不留 section / tool</td></tr>
+</tbody>
+</table>
+
+<h3>5.2 插件骨架</h3>
+
+<pre><code><span class="cmt">// src/index.js</span>
+<span class="kw">import</span> z <span class="kw">from</span> <span class="str">'@deepseek-ai/schemastery'</span>
+<span class="kw">import</span> { resolveConfig } <span class="kw">from</span> <span class="str">'./config.js'</span>
+<span class="kw">import</span> { detectEnvironment } <span class="kw">from</span> <span class="str">'./env/capabilities.js'</span>
+<span class="kw">import</span> { createSnapshotStore } <span class="kw">from</span> <span class="str">'./inject/snapshot.js'</span>
+<span class="kw">import</span> { registerSections } <span class="kw">from</span> <span class="str">'./inject/sections.js'</span>
+<span class="kw">import</span> { registerTools } <span class="kw">from</span> <span class="str">'./tools/index.js'</span>
+<span class="kw">import</span> { registerWriteGuard } <span class="kw">from</span> <span class="str">'./write/guard-tool.js'</span>
+
+<span class="kw">export const</span> name = <span class="str">'dsh-workbuddy-memory'</span>
+<span class="kw">export const</span> inject = [<span class="str">'systemPrompt'</span>, <span class="str">'tools'</span>]
+<span class="kw">export const</span> Config = z.object({ <span class="cmt">/* 见第十二节 */</span> })
+
+<span class="kw">export function</span> <span class="fn">apply</span>(ctx, config) {
+  <span class="kw">let</span> cfg
+  <span class="kw">try</span> { cfg = resolveConfig(config) }
+  <span class="kw">catch</span> (error) {
+    <span class="cmt">// 配置非法也不打断宿主：降级为只读默认值</span>
+    ctx.logger?.warn?.(<span class="str">'[workbuddy-memory] bad config, fallback to read-only'</span>, error)
+    cfg = resolveConfig({})
+  }
+
+  <span class="kw">const</span> env = detectEnvironment(cfg)          <span class="cmt">// 同步探测，不抛错</span>
+  <span class="kw">const</span> store = createSnapshotStore(cfg, env)
+
+  <span class="kw">if</span> (cfg.inject.enabled &amp;&amp; env.hasAnyMemory) registerSections(ctx, cfg, store)
+  <span class="kw">if</span> (cfg.write.enabled &amp;&amp; env.writable.length &gt; 0) registerTools(ctx, cfg, store, env)
+  <span class="kw">if</span> (cfg.guard.enabled) registerWriteGuard(ctx, cfg, env)
+}</code></pre>
+
+<h3 id="s5-3">5.3 工具守卫：拦住裸写</h3>
+
+<p>DSH 自带的 <code>write</code> / <code>edit</code> 能直接改 <code>.workbuddy/memory/MEMORY.md</code>，绕过所有栅栏。通用插件必须堵住这条旁路，否则安全链是纸做的：</p>
+
+<pre><code><span class="cmt">// src/write/guard-tool.js</span>
+<span class="kw">const</span> BARE_WRITERS = <span class="kw">new</span> Set([<span class="str">'write'</span>, <span class="str">'edit'</span>, <span class="str">'str_replace_editor'</span>])
+
+<span class="kw">export function</span> <span class="fn">registerWriteGuard</span>(ctx, cfg, env) {
+  ctx.effect(() =&gt; ctx.tools.guard((exec) =&gt; {
+    <span class="kw">if</span> (!BARE_WRITERS.has(exec.name)) <span class="kw">return</span>
+    <span class="kw">const</span> target = exec.arguments?.file_path ?? exec.arguments?.path
+    <span class="kw">if</span> (<span class="kw">typeof</span> target !== <span class="str">'string'</span>) <span class="kw">return</span>
+    <span class="kw">if</span> (!env.isMemoryPath(target)) <span class="kw">return</span>
+    <span class="kw">return</span> <span class="str">`${target} 是 WorkBuddy 记忆文件，请改用 memory_append / memory_edit；`</span> +
+           <span class="str">`直接写入会绕过版本栅栏与备份，可能覆盖另一个客户端刚写的内容。`</span>
+  }))
+}</code></pre>
+
+<p>守卫只拦「记忆目录内的写入」，不拦读取，也不拦 <code>memory_*</code> 自己的写入路径。确实要手工改，可以关掉 <code>guard.enabled</code>。</p>
+
+<h2 id="s6">六、注入管线</h2>
+
+<h3>6.1 四个块</h3>
+
+<table>
+<thead><tr><th>#</th><th>order</th><th>section</th><th>内容</th><th>来源</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>200</td><td><code>workbuddy-memory:rules</code></td><td>使用规则（何时写、写哪里、限额、禁止事项、冲突怎么处理）</td><td>内联，按 <code>env</code> 动态生成路径</td></tr>
+<tr><td>2</td><td>210</td><td><code>workbuddy-memory:project</code></td><td><code>&lt;working_memory_content&gt;</code> 项目 MEMORY.md</td><td><code>&lt;cwd&gt;/.workbuddy/memory/MEMORY.md</code></td></tr>
+<tr><td>3</td><td>220</td><td><code>workbuddy-memory:user</code></td><td><code>&lt;user_memory&gt;</code> 用户长期记忆</td><td><code>~/.workbuddy/MEMORY.md</code></td></tr>
+<tr><td>4</td><td>230</td><td><code>workbuddy-memory:profile</code></td><td><code>&lt;memory&gt;</code> 蒸馏画像（已脱敏）</td><td><code>~/.workbuddy/memory/&lt;uid&gt;_memory.md</code></td></tr>
+</tbody>
+</table>
+
+<p>order 落在 <code>DEPLOYMENT_PERSONA_PREFIX(0)</code> 之后、<code>PLAN_POLICY(500)</code> 之前：记忆比工具指导更早被读到。</p>
+
+<p>规则块的路径是<strong>动态生成</strong>的——不能假设用户在哪个盘、用哪个数据目录名。规则块里出现真实绝对路径，模型才知道往哪写：</p>
+
+<pre><code><span class="cmt">// 规则块骨架（最终 1.2 KB 以内）</span>
+## 记忆写入规则（WorkBuddy 兼容层）
+
+- 项目长期笔记：`{projectMemoryPath}` —— 用 `memory_edit` 改小节，用 `memory_append` 追加条目。
+- 每日流水：`{dailyPath}`（当天日期）—— append-only，永不覆盖。
+- 用户级长期记忆：`{userMemoryPath}` —— 仅当用户明确要求跨项目长期记住时写。
+- 蒸馏画像：只读。`USER.md` / `SOUL.md`：不写。
+
+写什么：建改应用、修 bug、写报告、重构、选定技术方案、用户分享项目约定。
+不写什么：搜索结果、临时路径、工具报错、命令清单、原始输出、任何密钥。
+
+写失败返回 `conflict` 表示文件被另一个客户端改过：`memory_read` 重读后重试一次，
+仍失败就如实报告，不要用 write/edit 强行覆盖。</code></pre>
+
+<h3 id="s6-2">6.2 限额与冻结</h3>
+
+<table>
+<thead><tr><th>块</th><th>默认上限（字符）</th><th>超限处理</th></tr></thead>
+<tbody>
+<tr><td>项目</td><td>10,000</td><td>截断 + <code>**ACTION REQUIRED**</code>：先读全文，再用 <code>memory_consolidate</code> 合并过期条目</td></tr>
+<tr><td>用户</td><td>4,000</td><td>截断 + 提示</td></tr>
+<tr><td>画像</td><td>2,000</td><td>截断 + 提示</td></tr>
+<tr><td>规则</td><td>1,200</td><td>内容固定，不会超</td></tr>
+</tbody>
+</table>
+
+<p>截断按 UTF-16 处理，末位落在代理对中间时回退一位——否则切出半个 emoji，部分模型网关直接 400：</p>
+
+<pre><code><span class="kw">export function</span> <span class="fn">truncateUtf16</span>(text, limit) {
+  <span class="kw">if</span> (text.length &lt;= limit) <span class="kw">return</span> { text, truncated: <span class="kw">false</span> }
+  <span class="kw">let</span> end = limit
+  <span class="kw">const</span> code = text.charCodeAt(end - <span class="num2">1</span>)
+  <span class="kw">if</span> (code &gt;= <span class="num2">0xd800</span> &amp;&amp; code &lt;= <span class="num2">0xdbff</span>) end -= <span class="num2">1</span>   <span class="cmt">// 高位代理，切开会坏</span>
+  <span class="kw">return</span> { text: text.slice(<span class="num2">0</span>, end), truncated: <span class="kw">true</span> }
+}</code></pre>
+
+<h4>冻结策略</h4>
+
+<div class="flow-step">
+  <div class="flow-num">1</div>
+  <div class="flow-body"><div class="t">key = <code>assembly.scope</code></div><div class="d">WeakMap 按会话隔离，会话结束自动回收，不写清理逻辑。</div></div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">2</div>
+  <div class="flow-body"><div class="t"><code>first-turn</code></div><div class="d">首次装配读盘并冻结，之后直接返回缓存字符串。文本逐字节不变 → system 节点不动 → 前缀缓存全命中。适合只用 DSH 的场景。</div></div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">3</div>
+  <div class="flow-body"><div class="t"><code>on-change</code>（默认）</div><div class="d">每次装配比对 <code>mtimeMs + size</code>，变了重建。代价是一次前缀失效，收益是 WorkBuddy 刚写的记忆下一轮就能看到——跨客户端协作场景需要这个。</div></div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">4</div>
+  <div class="flow-body"><div class="t">写后主动失效</div><div class="d">本插件工具写完立即刷新快照，不依赖策略，保证「同 turn 写完即可读」。</div></div>
+</div>
+
+<h2 id="s7">七、写入管线</h2>
+
+<h3>7.1 工具集</h3>
+
+<table>
+<thead><tr><th>工具</th><th>参数要点</th><th>返回</th></tr></thead>
+<tbody>
+<tr><td><code>memory_read</code></td><td><code>target: project|user|daily|identity|profile</code>、<code>date?</code>、<code>section?</code>、<code>sectionsOnly?</code>、<code>maxChars?</code></td><td>正文 + <code>revision</code> + 小节清单 + <code>truncated</code></td></tr>
+<tr><td><code>memory_search</code></td><td><code>query</code>、<code>scope?</code>、<code>from?</code>、<code>to?</code>、<code>limit?</code></td><td>命中片段，每条带 <code>path:line</code> 与小节名</td></tr>
+<tr><td><code>memory_append</code></td><td><code>target</code>、<code>section?</code>、<code>text</code>、<code>idempotencyKey?</code>、<code>expectedRevision?</code></td><td><code>{ ok, revision, bytes, duplicate? }</code></td></tr>
+<tr><td><code>memory_edit</code></td><td><code>target</code>、<code>section</code>、<code>match</code>、<code>replacement?</code>、<code>mode: replace|remove</code>、<code>expectedRevision</code></td><td><code>{ ok, revision, replaced }</code></td></tr>
+<tr><td><code>memory_consolidate</code></td><td><code>beforeDays=30</code>、<code>dryRun=true</code>、<code>targets?</code></td><td>合并计划（哪些条目落到哪），默认不落盘</td></tr>
+<tr><td><code>memory_status</code></td><td><code>verbose?</code></td><td>环境探测 + 各文件字节/占比 + 索引状态 + 最近冲突 + 备份列表</td></tr>
+</tbody>
+</table>
+
+<p><code>target</code> 是枚举不是路径字符串——不接受任意路径，直接堵死 <code>../</code> 与 <code>_memory.md</code>。</p>
+
+<h3 id="s7-2">7.2 安全链</h3>
+
+<div class="figure">
+<svg viewBox="0 0 880 392" width="100%" role="img" xmlns="http://www.w3.org/2000/svg" style="font-family: inherit;">
+<title>写入安全链</title>
+<desc>九个步骤：白名单、幂等、取版本、加锁、锁内复检、定位、备份、原子写、刷新状态。</desc>
+<defs>
+<marker id="a2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+<rect x="30" y="30" width="240" height="52" rx="8" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="44" y="52" font-size="12.5" fill="#d6dbe4">1 · 白名单解析</text>
+<text x="44" y="69" font-size="11" fill="#8b95a6">target 枚举 → 绝对路径</text>
+
+<rect x="320" y="30" width="240" height="52" rx="8" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="334" y="52" font-size="12.5" fill="#d6dbe4">2 · 幂等键</text>
+<text x="334" y="69" font-size="11" fill="#8b95a6">sha256(target+section+text)</text>
+
+<rect x="610" y="30" width="240" height="52" rx="8" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="624" y="52" font-size="12.5" fill="#d6dbe4">3 · 取 revision</text>
+<text x="624" y="69" font-size="11" fill="#8b95a6">sha256(当前内容)</text>
+
+<rect x="610" y="126" width="240" height="52" rx="8" fill="#1f1c16" stroke="#3a3220" stroke-width="0.8"/>
+<text x="624" y="148" font-size="12.5" fill="#e3d5b8">4 · withFileLock</text>
+<text x="624" y="165" font-size="11" fill="#a3967c">&lt;file&gt;.lock · waitMs 3000</text>
+
+<rect x="320" y="126" width="240" height="52" rx="8" fill="#231818" stroke="#3d2626" stroke-width="0.8"/>
+<text x="334" y="148" font-size="12.5" fill="#e8b6b6">5 · 锁内二次哈希</text>
+<text x="334" y="165" font-size="11" fill="#b08a8a">不符 → 按 conflictPolicy</text>
+
+<rect x="30" y="126" width="240" height="52" rx="8" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="44" y="148" font-size="12.5" fill="#d6dbe4">6 · 结构定位</text>
+<text x="44" y="165" font-size="11" fill="#8b95a6">标题树 · 围栏感知</text>
+
+<rect x="30" y="222" width="240" height="52" rx="8" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="44" y="244" font-size="12.5" fill="#d6dbe4">7 · 备份</text>
+<text x="44" y="261" font-size="11" fill="#8b95a6">保留 5 份，目录在 memory 之外</text>
+
+<rect x="320" y="222" width="240" height="52" rx="8" fill="#16211c" stroke="#2c4438" stroke-width="0.8"/>
+<text x="334" y="244" font-size="12.5" fill="#cfe6d8">8 · writeFileAtomic</text>
+<text x="334" y="261" font-size="11" fill="#8fae9c">temp + rename · 保留 EOL</text>
+
+<rect x="610" y="222" width="240" height="52" rx="8" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="624" y="244" font-size="12.5" fill="#d6dbe4">9 · 刷新快照 / base / 幂等表</text>
+<text x="624" y="261" font-size="11" fill="#8b95a6">下一轮注入立刻可见</text>
+
+<path d="M270 56L314 56" fill="none" stroke="#3f4b5e" stroke-width="1.3" marker-end="url(#a2)"/>
+<path d="M560 56L604 56" fill="none" stroke="#3f4b5e" stroke-width="1.3" marker-end="url(#a2)"/>
+<path d="M730 82L730 120" fill="none" stroke="#3f4b5e" stroke-width="1.3" marker-end="url(#a2)"/>
+<path d="M610 152L566 152" fill="none" stroke="#3f4b5e" stroke-width="1.3" marker-end="url(#a2)"/>
+<path d="M320 152L276 152" fill="none" stroke="#3f4b5e" stroke-width="1.3" marker-end="url(#a2)"/>
+<path d="M150 178L150 216" fill="none" stroke="#3f4b5e" stroke-width="1.3" marker-end="url(#a2)"/>
+<path d="M270 248L314 248" fill="none" stroke="#3f4b5e" stroke-width="1.3" marker-end="url(#a2)"/>
+<path d="M560 248L604 248" fill="none" stroke="#3f4b5e" stroke-width="1.3" marker-end="url(#a2)"/>
+
+<text x="30" y="316" font-size="11.5" fill="#747e8e">第 5 步是唯一「拿到锁也可能写坏」的位置：锁只挡住 DSH 自己，WorkBuddy 的 Edit 不认 .lock，</text>
+<text x="30" y="336" font-size="11.5" fill="#747e8e">所以锁内必须重读重算哈希。第 7 步的备份目录必须在 memory 之外，否则 .bak 会被当成记忆读进去。</text>
+<text x="30" y="362" font-size="11.5" fill="#747e8e">第 8 步保留原文件的 EOL 与末尾换行形态——CRLF 与 LF 混存，统一会污染 git diff。</text>
+</svg>
+<div class="cap">图 3 · 4→5 的顺序不能颠倒：先取锁再复检，否则复检与提交之间存在窗口。界面发起的写入走的是同一条链，只是调用方从工具变成 <code>/action</code>。</div>
+</div>
+
+<h3>7.3 幂等与栅栏</h3>
+
+<p><strong>幂等键</strong> = <code>sha256(target + '\0' + section + '\0' + normalize(text))</code>，<code>normalize</code> 只做去首尾空白、空白折叠、全角标点转半角。命中返回 <code>{ ok: true, duplicate: true }</code>——对模型来说「本来就在里面」就是成功。</p>
+
+<p>幂等表是 append-only JSONL，超过 5,000 行裁剪到 2,000 行，只服务短窗口去重，不做永久账本。</p>
+
+<p><strong>栅栏</strong>用内容哈希，因为项目文件没有版本号：</p>
+
+<table>
+<thead><tr><th>比较</th><th>含义</th><th>动作</th></tr></thead>
+<tbody>
+<tr><td><code>expected === current</code></td><td>幂等重放</td><td><code>ok: true, skipped: true</code>，不写</td></tr>
+<tr><td><code>expected !== current</code></td><td>被别的写入者改过</td><td>走 <code>conflictPolicy</code></td></tr>
+<tr><td>未传 <code>expected</code></td><td><code>requireExpectedRevision: false</code> 才允许</td><td>直接写（后写者胜），默认拒绝</td></tr>
+</tbody>
+</table>
+
+<p>与 WorkBuddy 的 <code>Version: N</code> 单调版本不同，内容哈希只表达「是不是同一版」，不表达先后。这个语义差异必须写进 README。</p>
+
+<h4>同 turn 放行</h4>
+
+<p>一个 turn 内连续两次写会改变 revision，第二次若拿旧值提交会误判冲突。处理：按 scope 记录「最近 3 秒内本插件自己提交的 revision」，提交时命中即放行。不用 hook、不依赖 turn 边界事件。</p>
+
+<h3 id="s7-4">7.4 小节级合并</h3>
+
+<p><code>conflictPolicy: merge</code> 时的算法，粒度是小节而不是整文件：</p>
+
+<div class="flow-step">
+  <div class="flow-num">1</div>
+  <div class="flow-body"><div class="t">取三份</div><div class="d"><code>base</code>（上次见到的版本，存在 <code>base/&lt;hash&gt;.json</code>）、<code>ours</code>（本次准备写的结果）、<code>theirs</code>（磁盘当前内容）。</div></div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">2</div>
+  <div class="flow-body"><div class="t">按小节比哈希</div><div class="d">每个 <code>## 标题</code> 一段，各自算 sha1 前 8 位。</div></div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">3</div>
+  <div class="flow-body"><div class="t">三方判定</div><div class="d"><code>theirs == base</code> → 用 ours（只有我们改了）；<code>ours == base</code> → 用 theirs（只有对方改了）；<code>ours == theirs</code> → 无所谓；三者互不相等 → <strong>冲突</strong>。</div></div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">4</div>
+  <div class="flow-body"><div class="t">任一小节冲突则整体失败</div><div class="d">返回冲突小节名，让模型决定放弃还是重读。不做「自动择一」——那等于替用户删内容。</div></div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">5</div>
+  <div class="flow-body"><div class="t">顺序</div><div class="d">保留 theirs 的小节顺序，新增小节追加到末尾，不重排、不格式化、不动空行。</div></div>
+</div>
+
+<h2 id="s8">八、检索与整理</h2>
+
+<table>
+<thead><tr><th>项</th><th>设计</th></tr></thead>
+<tbody>
+<tr><td>索引位置</td><td><code>~/.dsh/workbuddy-memory/index/&lt;sha256(cwd)[:16]&gt;.json</code>，按工作区隔离</td></tr>
+<tr><td>条目</td><td><code>{ path, date, section, heading, text, mtime, size }</code>，一个小节一条</td></tr>
+<tr><td>增量</td><td>扫目录比对 <code>mtime+size</code>，只重解析变化的文件</td></tr>
+<tr><td>大文件</td><td>超过 256 KB 只索引标题与首 64 KB</td></tr>
+<tr><td>匹配</td><td>子串（大小写不敏感）优先；中文按 2-gram OR 命中排序</td></tr>
+<tr><td>过滤</td><td><code>scope</code>（project / user）、<code>from</code>/<code>to</code>（按日期文件名）、<code>section</code></td></tr>
+<tr><td>返回</td><td>top N（默认 8），正文永远从磁盘现读，索引只用于定位</td></tr>
+</tbody>
+</table>
+
+<p><strong>整理</strong>（<code>memory_consolidate</code>）：把 <code>beforeDays</code> 之前的日期文件按主题聚成候选条目，默认 <code>dryRun</code> 只出计划。执行时走同一套安全链逐条 <code>memory_append</code>，全部成功后才删除源日期条目；任一条失败则用备份回滚。</p>
+
+<h2 id="s9">九、交互界面</h2>
+
+<p>工具链解决「模型怎么读写」，界面解决「人怎么看、怎么调」。三块界面各自绑定一个 DSH 已有的插槽，全部可关：关掉之后工具链完整可用，只是少了可视入口。</p>
+
+<h3>9.1 三个入口</h3>
+
+<table>
+<thead><tr><th>界面</th><th>宿主插槽</th><th>解决什么</th><th>只读降级</th></tr></thead>
+<tbody>
+<tr><td><strong>配置卡</strong></td><td><code>plugins.bundle.config</code>（key = <code>dsh-workbuddy-memory</code>）</td><td>改限额、开关、冲突策略，不用手编 <code>cordis.patch.yml</code></td><td>关掉后只能改 YAML</td></tr>
+<tr><td><strong>记忆面板</strong></td><td><code>sidebar.panellist</code> + <code>main</code>（keyed）</td><td>看有哪些记忆、多大、哪条过期、有没有冲突与备份</td><td>关掉后用 <code>memory_status</code> / <code>memory_search</code></td></tr>
+<tr><td><strong>面板内操作</strong></td><td>面板内的按钮与内联编辑</td><td>改条目、加条目、删条目、整理、回滚、跳到源文件</td><td><code>ui.readOnly: true</code> 隐藏全部写操作</td></tr>
+</tbody>
+</table>
+
+<p>注册形态参考宿主自带的上下文面板（同样的 <code>inject</code> 声明感知写法，替换包先加载后加载都生效）：</p>
+
+<pre><code><span class="cmt">// src/client/index.js —— 客户端入口</span>
+<span class="kw">export const</span> name = <span class="str">'dsh-workbuddy-memory'</span>
+<span class="kw">export const</span> inject = [<span class="str">'slots'</span>, <span class="str">'locale'</span>]
+
+<span class="kw">export function</span> <span class="fn">apply</span>(ctx) {
+  <span class="kw">const</span> t = ctx.locale.<span class="fn">bind</span>(<span class="str">'dsh-workbuddy-memory'</span>)
+  <span class="kw">const</span> id = <span class="str">'dsh-workbuddy-memory'</span>
+
+  <span class="cmt">// 主面板：keyed slot，key 与侧栏条目的 id 相同</span>
+  ctx.<span class="fn">effect</span>(() =&gt; ctx.slots.<span class="fn">inject</span>(<span class="str">'main'</span>, () =&gt; ctx.slots.<span class="fn">register</span>(
+    { name: <span class="str">'main'</span>, key: id, locale: id },
+    MemoryPanel,
+  )))
+
+  <span class="cmt">// 侧栏图标入口：list slot，id / order / label</span>
+  ctx.slots.<span class="fn">inject</span>(<span class="str">'sidebar.panellist'</span>, () =&gt; ctx.slots.<span class="fn">register</span>(
+    { name: <span class="str">'sidebar.panellist'</span>, id, order: <span class="num2">24</span>, label: () =&gt; <span class="fn">t</span>(<span class="str">'panel.title'</span>), locale: id },
+    SidebarIcon,
+  ))
+
+  <span class="cmt">// 插件配置卡：只有 Host 真的服务该命名空间时才出现，避免空壳页面</span>
+  ctx.<span class="fn">inject</span>([<span class="str">'configForms'</span>], (scoped) =&gt; {
+    <span class="kw">const</span> forms = scoped.configForms
+    <span class="kw">if</span> (<span class="kw">typeof</span> forms?.get !== <span class="str">'function'</span>) <span class="kw">return</span>
+    scoped.<span class="fn">effect</span>(() =&gt; forms.<span class="fn">whileServed</span>([id], () =&gt;
+      scoped.slots.<span class="fn">inject</span>(<span class="str">'plugins.bundle.config'</span>, () =&gt; scoped.slots.<span class="fn">register</span>(
+        { name: <span class="str">'plugins.bundle.config'</span>, key: id, locale: id, inject: { form: forms.<span class="fn">get</span>(id) } },
+        SettingsCard,
+      ))))
+  })
+}</code></pre>
+
+<div class="ok-box">
+  <span class="t">界面不是第二条写入路径。</span>面板里的「整理」「回滚」和在会话里调用工具，最终都进同一个 <code>write()</code> 函数——同一把锁、同一套内容栅栏、同一份备份、同一张幂等表。UI 只是把参数填好，不绕过任何一步。
+</div>
+
+<h3 id="s9-2">9.2 配置卡：改配置不用编 YAML</h3>
+
+<p>配置卡直接绑定 Host 的条目配置（<code>ctx.configForms.get('dsh-workbuddy-memory')</code>），改完写回 <code>cordis.patch.yml</code> 的 <code>config</code>。表单分五组，每组只暴露有意义的键，路径类放在「高级」并默认折叠。</p>
+
+<table>
+<thead><tr><th>分组</th><th>控件</th><th>键</th></tr></thead>
+<tbody>
+<tr><td>注入</td><td>开关 + 三档下拉 + 三个数字</td><td><code>inject.enabled</code>、<code>refresh</code>、<code>limits.{project,user,profile}</code></td></tr>
+<tr><td>写入</td><td>开关 + 策略下拉 + 两个数字</td><td><code>write.enabled</code>、<code>conflictPolicy</code>、<code>backupKeep</code>、<code>lockWaitMs</code></td></tr>
+<tr><td>检索</td><td>开关 + 数字</td><td><code>search.enabled</code>、<code>maxResults</code></td></tr>
+<tr><td>界面</td><td>开关 + 三档</td><td><code>ui.enabled</code>、<code>ui.panel</code>（sidebar / settings-only / off）</td></tr>
+<tr><td>高级</td><td>只读展示 + 覆盖按钮</td><td><code>globalDir</code>、<code>dataFolderName</code>、<code>stateDir</code>、<code>ensureLayout</code></td></tr>
+</tbody>
+</table>
+
+<p>每一项都显示四件事：<strong>当前值、默认值、来源、生效方式</strong>。第四项是本设计刻意加的——用户改完最常问的就是「现在生效了吗」：</p>
+
+<table>
+<thead><tr><th>配置</th><th>生效方式</th><th>原因</th></tr></thead>
+<tbody>
+<tr><td><code>inject.enabled</code> / 各块开关</td><td><strong>立即</strong></td><td>section 常驻注册，provider 内部判定开关，返回空字符串时段落被宿主丢弃</td></tr>
+<tr><td><code>inject.refresh</code> / <code>limits</code> / <code>sanitizePaths</code></td><td><strong>立即</strong></td><td>provider 每次装配读当前配置</td></tr>
+<tr><td><code>write.*</code> / <code>search.*</code></td><td><strong>立即</strong></td><td>工具执行期读配置</td></tr>
+<tr><td><code>ui.*</code></td><td><strong>刷新页面</strong></td><td>客户端组件生命周期，改完由配置卡提示「刷新生效」</td></tr>
+<tr><td><code>globalDir</code> / <code>dataFolderName</code></td><td><strong>重载插件</strong></td><td>路径在 <code>apply()</code> 期解析并缓存，改动后需要重新探测</td></tr>
+</tbody>
+</table>
+
+<p>写入用 <code>mutate</code> 一次提交一组改动，避免「改三个字段产生三次 revision 冲突」。表单带草稿：Host 侧 revision 变了，草稿保留并提示「磁盘上的配置已被其他窗口修改」，由用户决定覆盖还是丢弃。恢复默认走 <code>unset</code>，删除覆盖值而不是写入默认值——这样以后升级默认值仍能跟随。</p>
+
+<h3 id="s9-3">9.3 记忆面板：看和整理</h3>
+
+<div class="figure">
+<svg viewBox="0 0 860 372" width="100%" role="img" xmlns="http://www.w3.org/2000/svg" style="font-family: inherit;">
+<title>记忆面板布局</title>
+<desc>三段式：顶部状态条显示三个来源的限额占比，中部树形列出项目记忆、用户记忆与画像，右侧详情显示选中条目与操作按钮。</desc>
+<rect x="20" y="16" width="820" height="340" rx="10" fill="#12171f" stroke="#242c3a" stroke-width="1"/>
+
+<text x="38" y="42" font-size="12.5" fill="#d6dbe4" font-weight="500">记忆</text>
+<text x="700" y="42" font-size="11" fill="#747e8e" text-anchor="end">刷新 · 设置</text>
+
+<rect x="38" y="56" width="784" height="52" rx="6" fill="#171d27" stroke="#1d242f" stroke-width="0.8"/>
+<text x="50" y="74" font-size="10.5" fill="#8b95a6">项目 6.2/10 KB</text>
+<rect x="50" y="80" width="200" height="8" rx="3" fill="#10151d" stroke="#1d242f" stroke-width="0.5"/>
+<rect x="50" y="80" width="124" height="8" rx="3" fill="#6ea8fe"/>
+<text x="264" y="74" font-size="10.5" fill="#8b95a6">用户 2.4/4 KB</text>
+<rect x="264" y="80" width="160" height="8" rx="3" fill="#10151d" stroke="#1d242f" stroke-width="0.5"/>
+<rect x="264" y="80" width="96" height="8" rx="3" fill="#e8b96a"/>
+<text x="438" y="74" font-size="10.5" fill="#8b95a6">画像 1.8/2 KB</text>
+<rect x="438" y="80" width="140" height="8" rx="3" fill="#10151d" stroke="#1d242f" stroke-width="0.5"/>
+<rect x="438" y="80" width="126" height="8" rx="3" fill="#b39ddb"/>
+<text x="596" y="74" font-size="10.5" fill="#8b95a6">冲突 0 · 备份 5 · 23 个日期文件</text>
+<rect x="596" y="80" width="210" height="8" rx="3" fill="#10151d" stroke="#1d242f" stroke-width="0.5"/>
+<rect x="596" y="80" width="18" height="8" rx="3" fill="#7dd3a0"/>
+
+<rect x="38" y="120" width="384" height="220" rx="6" fill="#141922" stroke="#1d242f" stroke-width="0.8"/>
+<text x="50" y="140" font-size="11.5" fill="#9fb6d4">▾ 项目记忆</text>
+<text x="66" y="160" font-size="11.5" fill="#d6dbe4">MEMORY.md</text>
+<text x="340" y="160" font-size="10.5" fill="#747e8e" text-anchor="end">8 条 · 6.2 KB</text>
+<text x="66" y="182" font-size="11.5" fill="#d6dbe4">▾ 每日流水 (23)</text>
+<text x="82" y="204" font-size="11.5" fill="#a3adbd">2026-11-09</text>
+<text x="340" y="204" font-size="10.5" fill="#747e8e" text-anchor="end">3 条 · 1.1 KB</text>
+<text x="82" y="226" font-size="11.5" fill="#a3adbd">2026-11-08</text>
+<text x="340" y="226" font-size="10.5" fill="#747e8e" text-anchor="end">5 条 · 1.6 KB</text>
+<text x="82" y="248" font-size="11.5" fill="#66707f">2026-10-09（35 天前，建议合并）</text>
+<text x="50" y="276" font-size="11.5" fill="#9fb6d4">▾ 用户记忆</text>
+<text x="66" y="298" font-size="11.5" fill="#d6dbe4">MEMORY.md</text>
+<text x="340" y="298" font-size="10.5" fill="#747e8e" text-anchor="end">12 条 · 2.4 KB</text>
+<text x="50" y="324" font-size="11.5" fill="#9fb6d4">▾ 画像（只读）</text>
+
+<rect x="436" y="120" width="386" height="220" rx="6" fill="#141922" stroke="#1d242f" stroke-width="0.8"/>
+<text x="450" y="142" font-size="11.5" fill="#d6dbe4">## 工具环境坑</text>
+<text x="450" y="164" font-size="11" fill="#8b95a6">- PowerShell 的 stdout 不回传，改用写文件再读</text>
+<text x="450" y="182" font-size="11" fill="#8b95a6">- Bash 用 /c/Users 会失败，必须 C:/Users</text>
+<text x="450" y="200" font-size="11" fill="#8b95a6">- 从 Bash 调 powershell 会被安全策略拒绝</text>
+<text x="450" y="226" font-size="10.5" fill="#66707f">第 12–14 行 · 项目记忆 · 2026-11-09 14:07</text>
+
+<rect x="450" y="246" width="60" height="26" rx="5" fill="#1b2a1f" stroke="#2c4438" stroke-width="0.8"/>
+<text x="466" y="263" font-size="10.5" fill="#9cd0b0">编辑</text>
+<rect x="520" y="246" width="70" height="26" rx="5" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="534" y="263" font-size="10.5" fill="#9fb6d4">整理</text>
+<rect x="600" y="246" width="60" height="26" rx="5" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="614" y="263" font-size="10.5" fill="#9fb6d4">回滚</text>
+<rect x="670" y="246" width="84" height="26" rx="5" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="682" y="263" font-size="10.5" fill="#9fb6d4">源文件</text>
+<text x="450" y="300" font-size="10.5" fill="#66707f">编辑 = 点条目直接改，改完自动存备份点；整理 = 先出计划再执行；</text>
+<text x="450" y="320" font-size="10.5" fill="#66707f">回滚 = 选备份看 diff 再恢复。三者都走同一条写入安全链。</text>
+</svg>
+<div class="cap">图 4 · 面板三段式：状态条看占比，树看结构，详情看条目。整与回滚都走预览确认。</div>
+</div>
+
+<h4>状态条</h4>
+<ul>
+  <li>三个来源的字节 / 限额占比条，超 80% 变琥珀色、超 100% 变红并显示「下次注入会截断」；</li>
+  <li>条目总数、日期文件数、最早未合并的日期文件（超过 30 天标「建议合并」）；</li>
+  <li>最近一次冲突时间与次数、备份份数与最新备份时间。</li>
+</ul>
+
+<h4>树</h4>
+<p>按 <code>## 小节</code> 展开，节点右侧显示条目数与字节。项目记忆 / 用户记忆 / 画像三棵，画像只有只读标记——点击只给看，不给改，和工具的边界一致。日期文件按倒序排列，超过 30 天的行尾加提示。</p>
+
+<h4>详情与操作</h4>
+<table>
+<thead><tr><th>操作</th><th>流程</th><th>落到哪</th></tr></thead>
+<tbody>
+<tr><td>搜索</td><td>输入关键词 → 实时过滤树，命中片段高亮</td><td><code>memory_search</code> 同一套索引</td></tr>
+<tr><td>编辑 / 新增 / 删除</td><td>点条目直接改，见 <a href="#s9-4" style="color:#6ea8fe;text-decoration:none;">9.4 直接编辑</a></td><td>写链第 1→9 步，与工具同一入口</td></tr>
+<tr><td>整理</td><td>点「整理」→ 出计划（N 条候选、从哪个文件到哪个小节）→ 勾选 → 执行</td><td><code>memory_consolidate</code>，执行前自动备份</td></tr>
+<tr><td>回滚</td><td>选备份 → 看 diff（仅变更行）→ 确认</td><td>写链第 7→8 步，同样加锁与栅栏</td></tr>
+<tr><td>打开源文件</td><td>跳转到宿主已有的文件预览面板</td><td>不改内容，只定位</td></tr>
+</tbody>
+</table>
+
+<h3 id="s9-4">9.4 直接编辑记忆</h3>
+
+<p>模型写错了措辞、记了一条不该记的、或者用户自己想起来一件事要补上——这些都不该逼人去命令行改文件。编辑能力按「改动范围」分三层，默认只开最安全的一层：</p>
+
+<table>
+<thead><tr><th>层</th><th>交互</th><th>改动范围</th><th>默认</th><th>落到哪个动作</th></tr></thead>
+<tbody>
+<tr><td><strong>L1 条目</strong></td><td>点一行变成输入框，Enter 保存 / Esc 取消；行尾出现删除图标</td><td>单条 <code>- …</code>，其他行逐字节不动</td><td><span style="color:#7dd3a0;">开</span></td><td><code>memory_edit</code>（replace / remove）</td></tr>
+<tr><td><strong>L2 小节</strong></td><td>小节标题右侧「编辑小节」→ 整段 textarea → 保存</td><td>该 <code>## 小节</code> 内全部条目</td><td><span style="color:#7dd3a0;">开</span></td><td>小节级替换，其余小节不动</td></tr>
+<tr><td><strong>L3 全文</strong></td><td>工具栏「源码模式」→ 整文件 textarea + 行号</td><td>整个文件</td><td><span style="color:#e8b96a;">关</span>（<code>ui.allowFullTextEdit</code>）</td><td>整文件写，保存前做结构校验</td></tr>
+</tbody>
+</table>
+
+<h4>一次编辑的完整流程</h4>
+
+<div class="flow-step">
+  <div class="flow-num">1</div>
+  <div class="flow-body"><div class="t">进入编辑态时锁定 revision</div><div class="d">面板记住当前文件的 <code>revision</code>（内容 sha256）与该条目的行号范围。不锁文件，只记下「我看到的是这一版」。</div></div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">2</div>
+  <div class="flow-body"><div class="t">本地草稿</div><div class="d">输入即草稿，<strong>不自动保存</strong>。失焦不提交，避免误触改坏。未保存时切换节点会提示「有未保存的修改」。</div></div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">3</div>
+  <div class="flow-body"><div class="t">保存：<code>POST /action {type:'edit', …}</code></div><div class="d">带 <code>expectedRevision</code>、<code>target</code>、<code>section</code>、<code>from</code>（原文本）、<code>to</code>（新文本）。进同一个 <code>write()</code>：加锁 → 锁内二次哈希 → 备份 → 原子写。</div></div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">4</div>
+  <div class="flow-body"><div class="t">成功</div><div class="d">行闪一次高亮、状态条刷新、生成一个备份点，右上角出现「撤销」入口（保 10 秒）。提示「已保存，下一轮对话生效」。</div></div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">5</div>
+  <div class="flow-body"><div class="t">冲突</div><div class="d">二次哈希不符：不写。弹三选一 —— <strong>重新加载</strong>（丢弃草稿）/ <strong>看差异</strong>（我的 vs 磁盘）/ <strong>覆盖</strong>（先备份再写）。默认聚焦「重新加载」。</div></div>
+</div>
+
+<h4>三个边界</h4>
+
+<table>
+<thead><tr><th>边界</th><th>规则</th><th>为什么</th></tr></thead>
+<tbody>
+<tr><td>画像不可编辑</td><td>只读，但提供「复制到项目记忆」——把画像里某条搬进 <code>MEMORY.md</code></td><td>画像是 WorkBuddy 蒸馏产物，外部写入会被下一次蒸馏覆盖，改了也留不住</td></tr>
+<tr><td>限额不阻止人</td><td>保存成功后若超限额，显示红条 + 「注入会截断」，允许保存</td><td>工具是「模型建议」，拦得住；人是「决定」，只能提示不能替人否决</td></tr>
+<tr><td>结构必须合法</td><td>L3 保存前校验：标题树完整、代码围栏成对、无 <code>_memory.md</code> 重名</td><td>非法结构会让 WorkBuddy 解析器掉进退化分支，整份记忆失效</td></tr>
+</tbody>
+</table>
+
+<div class="warn-box">
+  <span class="t">人工编辑与工具写入的差异，只有两点：</span>一是人工编辑不受幂等表约束（同一个词被有意写两次也允许），二是人工编辑可以选择「先备份再覆盖」越过栅栏。其余全部相同——同锁、同备份、同原子写、同日志。不要为 UI 另开一条写路径，那等于给自己留后门。
+</div>
+
+<h3 id="s9-5">9.5 数据通道</h3>
+
+<p>面板的数据来自宿主进程，客户端通过插件自己注册的 HTTP 路由取，不碰内部 RPC 协议（它需要构建期生成绑定，第三方插件用不了）：</p>
+
+<pre><code><span class="cmt">// src/ui/routes.js —— Host 侧</span>
+<span class="kw">const</span> BASE = <span class="str">'/dsh-workbuddy-memory'</span>
+
+<span class="kw">export function</span> <span class="fn">registerRoutes</span>(ctx, cfg, store, env) {
+  <span class="kw">const</span> off = [
+    ctx.webServer.<span class="fn">register</span>({ kind: <span class="str">'exact'</span>, path: <span class="str">`${BASE}/state`</span>, handler: stateHandler }),
+    ctx.webServer.<span class="fn">register</span>({ kind: <span class="str">'exact'</span>, path: <span class="str">`${BASE}/content`</span>, handler: contentHandler }),
+    ctx.webServer.<span class="fn">register</span>({ kind: <span class="str">'exact'</span>, path: <span class="str">`${BASE}/action`</span>, handler: actionHandler }),
+  ]
+  <span class="kw">return</span> () =&gt; off.<span class="fn">forEach</span>((dispose) =&gt; <span class="fn">dispose</span>())
+}</code></pre>
+
+<table>
+<thead><tr><th>路由</th><th>方法</th><th>返回 / 入参</th><th>约束</th></tr></thead>
+<tbody>
+<tr><td><code>/state</code></td><td>GET</td><td>环境探测结果、三来源字节与限额、条目数、冲突、备份列表、生效配置</td><td>只读；响应上限 64 KB</td></tr>
+<tr><td><code>/content</code></td><td>GET</td><td><code>target</code> / <code>date</code> / <code>section</code>（全部枚举，不接受路径）</td><td>只读；单文件上限 512 KB，超出返回头部 + 截断标记</td></tr>
+<tr><td><code>/action</code></td><td>POST</td><td><code>{ type: 'edit' | 'consolidate' | 'restore', expectedRevision, dryRun, ... }</code></td><td>必须带 revision；进同一个 <code>write()</code>；只有 <code>dryRun</code> 可免 revision</td></tr>
+</tbody>
+</table>
+
+<p>刷新策略：面板可见时 3 秒轮询 <code>/state</code>，<code>document.hidden</code> 时暂停，任何写操作完成后立即拉一次。<strong>不用推送</strong>——宿主的广播接口不在已公开的类型里，靠它会把可用性押在未承诺的行为上。</p>
+
+<div class="warn-box">
+  <span class="t">路由安全边界：</span><code>/action</code> 只接受枚举动作，不接受任意路径、不接受 shell、不接受「删除文件」。<code>edit</code> 的 <code>from</code> / <code>to</code> 只是小节内的文本片段，永远不参与路径拼接。它是 Git 意义上的「写」，不是「执行」——不提供任何能跑命令的入口。所有动作写日志，来源标记为 <code>ui</code>，与会话内工具调用可区分。
+</div>
+
+<h3 id="s9-6">9.6 构建与依赖</h3>
+
+<p>Host 侧仍是纯 JS 零构建；Client 侧必须打包（JSX + React 外置），用 esbuild 打成一个文件，跟宿主已有的第三方插件做法一致：</p>
+
+<pre><code><span class="cmt"># package.json 片段</span>
+<span class="str">"exports"</span>: {
+  <span class="str">"."</span>: <span class="str">"./src/index.js"</span>,
+  <span class="str">"./client"</span>: <span class="str">"./lib/client.js"</span>
+},
+<span class="str">"scripts"</span>: { <span class="str">"build:client"</span>: <span class="str">"esbuild src/client/index.js --bundle --format=esm --external:react --external:react-dom --outfile=lib/client.js"</span> },
+<span class="str">"dsh"</span>: {
+  <span class="str">"bundle"</span>: { <span class="str">"patch"</span>: <span class="str">"./cordis.patch.yml"</span> },
+  <span class="str">"client"</span>: {
+    <span class="str">"platform"</span>: <span class="str">"web"</span>,
+    <span class="str">"inject"</span>: [<span class="str">"@deepseek-ai/dsh-client-locale"</span>, <span class="str">"@deepseek-ai/dsh-client-ui-slots"</span>,
+               <span class="str">"@deepseek-ai/dsh-client-ui-sidebar"</span>, <span class="str">"@deepseek-ai/dsh-client-ui-settings"</span>]
+  }
+}</code></pre>
+
+<p><code>lib/client.js</code> 作为构建产物提交进仓库（宿主不做构建，用户 <code>dsh plugin add</code> 后直接可用）。这条是硬要求：插件市场只装包，不会跑 <code>npm run build</code>。</p>
+
+<h3 id="s9-7">9.7 界面部分怎么分期</h3>
+
+<table>
+<thead><tr><th>期</th><th>内容</th><th>验收</th></tr></thead>
+<tbody>
+<tr><td>M4a 配置卡</td><td>五组表单 + 来源与生效方式展示 + 草稿冲突</td><td>改限额后不重启，下一次装配即按新值截断</td></tr>
+<tr><td>M4b 只读面板</td><td>状态条 + 树 + 详情 + 搜索，全部只读</td><td>面板显示的字节数与 <code>memory_status</code> 一致</td></tr>
+<tr><td>M4c 直接编辑</td><td>L1 条目 + L2 小节 + 撤销 + 冲突三选一</td><td>改一条只动那一行；冲突时草稿不丢；保存后下一轮对话生效</td></tr>
+<tr><td>M4d 整理与高级编辑</td><td>整理（预览→确认）、回滚（diff→确认）、L3 全文 + 结构校验</td><td>与工具走同一条安全链；并发测试覆盖 UI 发起写入</td></tr>
+</tbody>
+</table>
+
+<p>顺序不能颠倒：配置卡先上，因为它是纯读写配置、没有数据风险；只读面板其次，用户得先看见才能改；直接编辑第三，它是高频低风险的那层；整理与全文编辑最后，前者会批量删内容，后者能一次毁掉整个文件的结构。</p>
+
+<h2 id="s10">十、能力探测与降级</h2>
+
+<p>通用插件不能假设「用户已经装好 WorkBuddy 并且配置正确」。启动时做一次同步探测，结果决定行为：</p>
+
+<table>
+<thead><tr><th>探测结果</th><th>注入</th><th>写入目标</th><th>用户看到</th></tr></thead>
+<tbody>
+<tr><td>项目 + 全局都存在</td><td>四块</td><td>项目 / 全局 / 日期</td><td>完整能力</td></tr>
+<tr><td>只有全局（<code>~/.workbuddy</code>）</td><td>用户 + 画像 + 规则</td><td>全局 / 日期（需 <code>ensureLayout</code>）</td><td>项目块为空，其余正常</td></tr>
+<tr><td>只有项目目录</td><td>项目 + 规则</td><td>项目 / 日期</td><td>用户块为空</td></tr>
+<tr><td>都没有</td><td>不注册任何 section</td><td>拒绝，除非 <code>ensureLayout: true</code></td><td>插件静默待命，<code>memory_status</code> 说明原因</td></tr>
+<tr><td>目录存在但不可写</td><td>正常注入</td><td>只读模式，写工具返回 <code>read_only</code></td><td>能读不能写，原因写在返回值里</td></tr>
+<tr><td>文件损坏 / 非法 UTF-8</td><td>该块降级或跳过</td><td>写入前先备份，用合法内容替换</td><td><code>memory_status</code> 标红该文件</td></tr>
+</tbody>
+</table>
+
+<p><code>ensureLayout</code> 默认 <code>false</code>：不主动创建 <code>.workbuddy</code> 目录。凭空多出一个隐藏目录会让用户困惑，也可能与 WorkBuddy 自己的工作区初始化撞车。真要在纯 DSH 环境里用这套记忆，显式打开即可。</p>
+
+<h2 id="s11">十一、依赖与发布</h2>
+
+<h3>10.1 依赖策略</h3>
+
+<table>
+<thead><tr><th>包</th><th>类型</th><th>理由</th></tr></thead>
+<tbody>
+<tr><td><code>@deepseek-ai/cordis</code></td><td>peer <code>^4.0.4</code></td><td>Context 必须与宿主同实例，重复安装会导致服务解析失败</td></tr>
+<tr><td><code>@deepseek-ai/dsh-tools</code></td><td>peer <code>&gt;=0.1.5-rc.2</code></td><td><code>defineTool</code> 与注册表契约由宿主提供（已发布插件同款做法）</td></tr>
+<tr><td><code>@deepseek-ai/schemastery</code></td><td>dependency</td><td>纯 schema 工具，自带一份不会冲突</td></tr>
+<tr><td><code>@deepseek-ai/dsh-client-ui-slots</code><br><code>@deepseek-ai/dsh-client-locale</code></td><td>client peer，可选</td><td>只在 UI 启用时需要；缺失时 client 入口不注册任何 slot，Host 侧不受影响</td></tr>
+<tr><td><code>react</code> / <code>react-dom</code></td><td>client peer <code>^18</code></td><td>由宿主提供单实例，打包时 external，绝不重复打包</td></tr>
+<tr><td><code>@deepseek-ai/dsh-atomic-write</code></td><td>可选（动态 import）</td><td>拿不到就用自带 60 行实现（temp + rename + wx 锁 + PID 存活检测）</td></tr>
+<tr><td>其他</td><td>无</td><td>Host 侧零运行时依赖；Client 侧只有构建期 devDependency（esbuild）</td></tr>
+</tbody>
+</table>
+
+<pre><code>{
+  <span class="str">"name"</span>: <span class="str">"dsh-workbuddy-memory"</span>,
+  <span class="str">"version"</span>: <span class="str">"0.1.0"</span>,
+  <span class="str">"type"</span>: <span class="str">"module"</span>,
+  <span class="str">"main"</span>: <span class="str">"./src/index.js"</span>,
+  <span class="str">"exports"</span>: { <span class="str">"."</span>: <span class="str">"./src/index.js"</span>, <span class="str">"./client"</span>: <span class="str">"./lib/client.js"</span>, <span class="str">"./package.json"</span>: <span class="str">"./package.json"</span> },
+  <span class="str">"engines"</span>: {
+    <span class="str">"node"</span>: <span class="str">"&gt;=20"</span>,
+    <span class="str">"dsh"</span>: <span class="str">"&gt;=0.2.0-rc.2 &lt;0.2.1-0 || &gt;=0.2.1-rc.1 &lt;0.3.0-0"</span>
+  },
+  <span class="str">"dsh"</span>: {
+    <span class="str">"bundle"</span>: { <span class="str">"patch"</span>: <span class="str">"./cordis.patch.yml"</span> },
+    <span class="str">"client"</span>: { <span class="str">"platform"</span>: <span class="str">"web"</span>, <span class="str">"inject"</span>: [<span class="str">"@deepseek-ai/dsh-client-locale"</span>, <span class="str">"@deepseek-ai/dsh-client-ui-slots"</span>, <span class="str">"@deepseek-ai/dsh-client-ui-sidebar"</span>, <span class="str">"@deepseek-ai/dsh-client-ui-settings"</span>] }
+  },
+  <span class="str">"peerDependencies"</span>: {
+    <span class="str">"@deepseek-ai/cordis"</span>: <span class="str">"^4.0.4"</span>,
+    <span class="str">"@deepseek-ai/dsh-tools"</span>: <span class="str">"&gt;=0.1.5-rc.2"</span>
+  },
+  <span class="str">"dependencies"</span>: { <span class="str">"@deepseek-ai/schemastery"</span>: <span class="str">"^3.18.4"</span> },
+  <span class="str">"files"</span>: [<span class="str">"src"</span>, <span class="str">"locale"</span>, <span class="str">"cordis.patch.yml"</span>, <span class="str">"README.md"</span>, <span class="str">"README.zh.md"</span>, <span class="str">"LICENSE"</span>]
+}</code></pre>
+
+<h3>10.2 安装</h3>
+
+<pre><code><span class="cmt"># 本地开发</span>
+dsh plugin --profile desktop add D:/git/dsh-workbuddy-memory
+
+<span class="cmt"># 发布后</span>
+dsh plugin --profile desktop add dsh-workbuddy-memory</code></pre>
+
+<p><code>cordis.patch.yml</code> 只做一件事，把自己 insert 进去。不覆盖任何已有 Entry，不需要用户改别的插件配置：</p>
+
+<pre><code>- insert:
+    - id: workbuddy-memory
+      name: dsh-workbuddy-memory</code></pre>
+
+<h3>10.3 发布前检查清单</h3>
+
+<table>
+<thead><tr><th>项</th><th>要求</th></tr></thead>
+<tbody>
+<tr><td>源码</td><td>无硬编码用户路径、无 token、无内网地址</td></tr>
+<tr><td>locale</td><td><code>locale/zh.json</code> + <code>locale/en.json</code>，键一一对应</td></tr>
+<tr><td>README</td><td>中英双语，含「一致性时间窗」「冲突策略」「关闭方式」三节</td></tr>
+<tr><td>纯净环境</td><td>只装 <code>@deepseek-ai/dsh</code> 的 profile 上加载并跑通读写</td></tr>
+<tr><td>无 WorkBuddy 环境</td><td>加载不报错，<code>memory_status</code> 给出明确原因</td></tr>
+<tr><td>三平台</td><td>Windows / macOS / Linux 至少各跑一次写入 round-trip</td></tr>
+<tr><td>client bundle</td><td><code>lib/client.js</code> 已构建并提交；<code>ui.enabled: false</code> 时宿主不依赖它</td></tr>
+<tr><td>界面可读性</td><td>浅色 / 深色主题下都检查一遍；窄侧栏（56px 轨道）下图标不糊</td></tr>
+<tr><td>打包体积</td><td>&lt; 200 KB（不含 devDependencies 与测试）</td></tr>
+</tbody>
+</table>
+
+<h2 id="s12">十二、配置</h2>
+
+<pre><code>- insert:
+    - id: workbuddy-memory
+      name: dsh-workbuddy-memory
+      config:
+        globalDir: <span class="str">'~/.workbuddy'</span>          <span class="cmt"># WORKBUDDY_CONFIG_DIR 可覆盖</span>
+        dataFolderName: <span class="str">'.workbuddy'</span>          <span class="cmt"># WORKBUDDY_DATA_FOLDER_NAME 可覆盖</span>
+        stateDir: <span class="str">'~/.dsh/workbuddy-memory'</span>
+        ensureLayout: <span class="kw">false</span>                    <span class="cmt"># 目录不存在时是否自动创建</span>
+        inject:
+          enabled: <span class="kw">true</span>
+          refresh: on-change                   <span class="cmt"># first-turn | on-change | every-turn</span>
+          rules: <span class="kw">true</span>
+          profile: <span class="kw">true</span>
+          sanitizePaths: <span class="kw">true</span>
+          limits: { project: <span class="num2">10000</span>, user: <span class="num2">4000</span>, profile: <span class="num2">2000</span> }
+        write:
+          enabled: <span class="kw">true</span>
+          targets: [project-memory, project-daily, global-memory]
+          conflictPolicy: fail                 <span class="cmt"># fail | merge | overwrite</span>
+          requireExpectedRevision: <span class="kw">true</span>
+          lockWaitMs: <span class="num2">3000</span>
+          backupKeep: <span class="num2">5</span>
+          idempotency: <span class="kw">true</span>
+        guard:
+          enabled: <span class="kw">true</span>                         <span class="cmt"># 拦截 write/edit 裸写记忆文件</span>
+        search:
+          enabled: <span class="kw">true</span>
+          maxResults: <span class="num2">8</span>
+          indexMaxFileBytes: <span class="num2">262144</span>
+        ui:
+          enabled: <span class="kw">true</span>
+          panel: sidebar                       <span class="cmt"># sidebar | settings-only | off</span>
+          readOnly: <span class="kw">false</span>                      <span class="cmt"># 隐藏编辑 / 整理 / 回滚</span>
+          allowFullTextEdit: <span class="kw">false</span>             <span class="cmt"># L3 全文编辑，默认关</span>
+          pollMs: <span class="num2">3000</span>
+        locale: auto</code></pre>
+
+<table>
+<thead><tr><th>键</th><th>默认</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td><code>inject.refresh</code></td><td><code>on-change</code></td><td>通用默认跟随文件变化；单客户端独占时可改 <code>first-turn</code> 省 token</td></tr>
+<tr><td><code>write.conflictPolicy</code></td><td><code>fail</code></td><td>安全优先；<code>overwrite</code> 需显式开启且会先备份</td></tr>
+<tr><td><code>write.requireExpectedRevision</code></td><td><code>true</code></td><td>关掉等于放弃栅栏，只在脚本化导入时考虑</td></tr>
+<tr><td><code>guard.enabled</code></td><td><code>true</code></td><td>关掉后允许 <code>write</code>/<code>edit</code> 直接改记忆文件</td></tr>
+<tr><td><code>ensureLayout</code></td><td><code>false</code></td><td>不主动创建 WorkBuddy 目录</td></tr>
+<tr><td><code>ui.enabled</code></td><td><code>true</code></td><td>关掉后不加载 client bundle，侧栏无入口</td></tr>
+<tr><td><code>ui.panel</code></td><td><code>sidebar</code></td><td><code>settings-only</code> 只在插件配置卡出现；<code>off</code> 等同 <code>ui.enabled: false</code></td></tr>
+<tr><td><code>ui.readOnly</code></td><td><code>false</code></td><td>面板可见但隐藏编辑 / 整理 / 回滚，适合多人共用的机器</td></tr>
+<tr><td><code>ui.allowFullTextEdit</code></td><td><code>false</code></td><td>开 L3 全文编辑；打开后保存前强制结构校验</td></tr>
+</tbody>
+</table>
+
+<h3>12.1 配置只有一个真相</h3>
+
+<p>界面配置卡不维护自己的存储——它写回的就是 <code>cordis.patch.yml</code> 里的那份 <code>config</code>。理由和记忆文件一样：两份配置一定会漂移，最后没人知道哪份在生效。</p>
+
+<table>
+<thead><tr><th>层</th><th>来源</th><th>UI 能改吗</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>代码内置默认值</td><td>不能（改它是改代码）</td></tr>
+<tr><td>2</td><td>环境变量 <code>WORKBUDDY_CONFIG_DIR</code> / <code>WORKBUDDY_DATA_FOLDER_NAME</code></td><td>不能（只影响两个路径键，优先级高于配置文件）</td></tr>
+<tr><td>3</td><td>profile 的 <code>cordis.patch.yml</code> → <code>config</code></td><td><strong>能</strong>，配置卡写的就是这层</td></tr>
+</tbody>
+</table>
+
+<p><code>memory_status</code> 与面板的状态条都会输出「当前值 + 来源」，四个来源分别标 <code>default</code> / <code>env</code> / <code>config</code> / <code>ui</code>。用户排查「为什么设置没生效」时不用猜优先级。</p>
+
+<h2 id="s13">十三、失败模式</h2>
+
+<table>
+<thead><tr><th>场景</th><th>行为</th><th>用户可见</th></tr></thead>
+<tbody>
+<tr><td>WorkBuddy 未安装</td><td>不注册 section，工具报 <code>no_store</code></td><td><code>memory_status</code> 说明原因与开启方式</td></tr>
+<tr><td>目录不可写</td><td>只读模式</td><td>写工具返回 <code>read_only</code></td></tr>
+<tr><td>文件被占用（Windows）</td><td>原子写内部重试，超时后 <code>busy</code></td><td>提示稍后重试</td></tr>
+<tr><td>锁等待超时</td><td><code>lock_timeout</code>，不写</td><td>同上</td></tr>
+<tr><td>revision 冲突</td><td>按 <code>conflictPolicy</code></td><td><code>conflict</code> + 变化小节清单</td></tr>
+<tr><td>人工编辑时文件被改</td><td>不写，弹「重新加载 / 看差异 / 覆盖」</td><td>草稿保留，默认聚焦重新加载</td></tr>
+<tr><td>L3 全文结构非法</td><td>拒绝保存</td><td>高亮出错行（围栏未闭合 / 标题层级断裂）</td></tr>
+<tr><td>人工编辑后超限额</td><td>保存成功 + 红条提示</td><td>「下次注入会截断」，不阻止人写</td></tr>
+<tr><td>幂等命中</td><td><code>ok, duplicate</code></td><td>视为成功</td></tr>
+<tr><td>写入后超限额</td><td>写成功 + <code>warning</code></td><td>下次注入触发 ACTION REQUIRED</td></tr>
+<tr><td>日期文件结构无法识别</td><td>拒绝写入（不覆盖）</td><td><code>unrecognized_target</code> + 文件头部预览</td></tr>
+<tr><td>画像解析失败</td><td>退化到正则，丢 version</td><td>画像仍注入</td></tr>
+<tr><td>索引损坏</td><td>删除重建</td><td>首次搜索慢一点</td></tr>
+<tr><td>裸写被守卫拦截</td><td>拒绝并给出替代工具</td><td>模型改用 <code>memory_*</code></td></tr>
+</tbody>
+</table>
+
+<div class="ok-box">
+  <span class="t">方向相反的降级：</span>读侧任何异常都降级为「不注入」，绝不阻断 turn；写侧任何不确定都失败，绝不猜。读错的代价是少一点上下文，写错的代价是丢用户数据。
+</div>
+
+<h2 id="s14">十四、测试</h2>
+
+<table>
+<thead><tr><th>层</th><th>用例</th></tr></thead>
+<tbody>
+<tr><td>单元 · 截断</td><td>10000/10001 边界、emoji 代理对、全角字符、CRLF 计数</td></tr>
+<tr><td>单元 · 脱敏</td><td>盘符、<code>~/</code>、Unix 根、URL 不误伤</td></tr>
+<tr><td>单元 · 解析</td><td>标题树、围栏内 <code>##</code> 不算小节、重复小节名、无末尾换行</td></tr>
+<tr><td>单元 · 合并</td><td>三方四种组合（只我们改 / 只对方改 / 相同 / 都改）</td></tr>
+<tr><td>单元 · 探测</td><td>六种环境矩阵各自的行为</td></tr>
+<tr><td>集成 · round-trip</td><td>读 → 解析 → 序列化 → 逐字节一致（CRLF/LF 各自保留）</td></tr>
+<tr><td>集成 · 并发</td><td>两进程同时 append → 串行成功或一成一败，不丢内容</td></tr>
+<tr><td>集成 · 崩溃</td><td>写前 kill → 目标仍是旧版本，无半截文件</td></tr>
+<tr><td>集成 · 最小化环境</td><td>仅官方核心包的 profile 上跑通全流程</td></tr>
+<tr><td>集成 · 双客户端</td><td>模拟 WorkBuddy 无锁写入 → DSH 侧必须报 conflict 而不是覆盖</td></tr>
+<tr><td>注入 · 快照</td><td>同 scope 连续装配只读盘一次；文件变更后 <code>on-change</code> 生效</td></tr>
+<tr><td>界面 · 配置卡</td><td>改限额后不重启，下一次装配按新值截断；revision 冲突时草稿保留</td></tr>
+<tr><td>界面 · 数据通道</td><td><code>/state</code> 字节数与 <code>memory_status</code> 逐项一致；<code>/action</code> 缺 <code>expectedRevision</code> 被拒；越界 target 被拒</td></tr>
+<tr><td>界面 · 降级</td><td><code>ui.enabled: false</code> 时 client 不加载、宿主无报错；<code>configForms</code> 缺失时不注册配置卡</td></tr>
+<tr><td>界面 · 条目编辑</td><td>改一条 → 逐字节对比：只有那一行变，其余行、空行、EOL 全不动</td></tr>
+<tr><td>界面 · 编辑冲突</td><td>打开编辑后另一进程改写文件 → 保存返回 <code>conflict</code>，草稿仍在 DOM 里</td></tr>
+<tr><td>界面 · 结构校验</td><td>L3 删掉一个 ``` → 拒绝保存并定位；补回后可保存</td></tr>
+</tbody>
+</table>
+
+<p>跑法：<code>node --test "tests/*.test.mjs"</code> + <code>tsc --noEmit</code>（JS + JSDoc）。集成测试挂真实 <code>systemPrompt</code> 替身，不 mock 自己的渲染函数——注入顺序错了必须能被测出来。</p>
+
+<h2 id="s15">十五、里程碑</h2>
+
+<table>
+<thead><tr><th>阶段</th><th>交付</th><th>验收</th></tr></thead>
+<tbody>
+<tr><td>M0 骨架</td><td>package / patch / config / locate / capabilities / locale / 日志；先只打点</td><td>装到纯净 profile 不报错；打点确认 <code>assembly.scope</code> 与 <code>assembly.variables.cwd</code>；<code>memory_status</code> 能输出六种环境矩阵</td></tr>
+<tr><td>M1 注入</td><td>四块渲染、限额截断、脱敏、快照与三种 refresh</td><td>新会话第一轮看到项目记忆；同会话第二轮 section 文本不变</td></tr>
+<tr><td>M2 工具</td><td>read / search / append / edit + 锁 / 栅栏 / 备份 / 幂等 + 裸写守卫</td><td>并发与双客户端测试通过；冲突返回 conflict 不覆盖</td></tr>
+<tr><td>M3 整理与自检</td><td><code>memory_consolidate</code>、<code>memory_status</code>、备份恢复</td><td>30 天前的日期文件能生成计划并安全执行</td></tr>
+<tr><td>M4 界面</td><td>配置卡 → 只读面板 → 直接编辑 → 整理与全文（见 9.7 四档）</td><td>改配置不重启即生效；面板与 <code>memory_status</code> 数据一致；UI 写入与工具共用安全链</td></tr>
+<tr><td>M5 发布</td><td>README 双语、locale 完整、三平台 round-trip、client bundle 构建入仓、打包体积达标</td><td>一条命令装上即可工作，侧栏出现记忆入口</td></tr>
+</tbody>
+</table>
+
+<h2 id="s16">十六、风险与待验证</h2>
+
+<table>
+<thead><tr><th>项</th><th>状态</th><th>处置</th></tr></thead>
+<tbody>
+<tr><td><code>assembly.scope</code> 是否稳定对应会话</td><td><span class="tag no">未验证</span></td><td>M0 打点；不稳定则退化为 <code>cwd + Map + TTL</code></td></tr>
+<tr><td><code>assembly.variables.cwd</code> 在 section provider 里是否已填充</td><td><span class="tag no">未验证</span></td><td>M0 打点；备选 <code>ctx.get('session')</code> 或 <code>process.cwd()</code></td></tr>
+<tr><td><code>ctx.tools.guard</code> 能否拦住内置 <code>write</code>/<code>edit</code></td><td><span class="tag no">未验证</span></td><td>M2 实测；拦不住就退化为规则块强提示</td></tr>
+<tr><td><code>dsh-atomic-write</code> 在第三方插件里的解析可用性</td><td>本机可用，其他环境未知</td><td>动态 import + 自带 fallback，两条路径都要测</td></tr>
+<tr><td><code>ctx.fs</code> 能否写 <code>~/.workbuddy</code></td><td><span class="tag no">受限</span></td><td>不用 ctx.fs，直接 <code>node:fs</code>，避免沙箱策略差异</td></tr>
+<tr><td>WorkBuddy 未来改格式或限额</td><td>中风险</td><td>限额全配置化；解析器对未知小节宽容；README 标注基线版本</td></tr>
+<tr><td>两侧高频交替写</td><td>中</td><td>建议 <code>conflictPolicy: merge</code>；文档说明最终一致时间窗</td></tr>
+<tr><td>四块注入挤占上下文</td><td>低</td><td>总上限约 17K 字符，接近上限可逐块关闭</td></tr>
+<tr><td>模型不遵守规则块、不调工具</td><td>中</td><td>规则块祈使句 + 守卫拦截 + 冲突文案引导重试</td></tr>
+<tr><td>client 侧 slot 名或 <code>configForms</code> 契约变化</td><td>中风险</td><td>client 入口逐项做能力检测（<code>typeof</code> 判断），缺哪个就不注册对应界面，Host 侧不受影响</td></tr>
+<tr><td><code>ctx.webServer</code> 在 headless / ACP profile 不存在</td><td><span class="tag no">待验证</span></td><td>按可选服务处理：缺失则不注册路由，面板显示「当前环境不支持界面」</td></tr>
+<tr><td>React 版本与宿主不一致</td><td>低</td><td>打包时 external，只依赖宿主单实例；不 pin 具体小版本</td></tr>
+<tr><td>面板轮询带来额外开销</td><td>低</td><td>3 秒间隔、只读 <code>/state</code>（走 <code>statSync</code> 缓存）、页面隐藏时暂停</td></tr>
+<tr><td>人工编辑选「覆盖」丢掉对方刚写的内容</td><td>中</td><td>覆盖前强制生成备份点；面板顶部「历史」可一键回滚到 5 分钟前</td></tr>
+<tr><td>L3 全文编辑破坏结构</td><td>中</td><td>默认关闭；开启后保存前校验标题树与围栏配对，非法即拒绝</td></tr>
+</tbody>
+</table>
+
+<div class="lead">
+  <p><strong>核心取舍：</strong>不做同步、不做自己的存储、不做记忆提炼。只做一件事——让同一批 Markdown 文件被两个客户端安全地读写。</p>
+  <p>通用性体现在三个地方：装谁的环境都能跑（能力探测）、单独装上就能活（零依赖）、出问题能自己查（<code>memory_status</code>）。这三条做到了才配叫通用插件；只在自己机器上跑通的那是脚本。</p>
+</div>
+
+<footer>
+  基于 WorkBuddy 5.9.3 记忆系统逆向报告（2026-11-06）与本机 dsh 0.2.0-rc.2 的接口实测。<br>
+  DSH 接口签名取自 <code>@deepseek-ai/dsh</code> 包内 <code>.d.ts</code>；依赖声明范式参考已发布插件的通用写法。<br>
+  标 <span class="tag no">未验证</span> 的三项需在 M0/M2 打点确认，其余结论可直接进入实现。
+</footer>
+
+</main>
+</div>
+</body>
+</html>

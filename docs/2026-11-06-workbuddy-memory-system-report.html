@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WorkBuddy 记忆系统实现逻辑报告 · 2026-11-06</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --bg-soft: #141922;
+    --panel: #171d27;
+    --panel-2: #1c232f;
+    --border: #242c3a;
+    --border-soft: #1d242f;
+    --text: #e4e8ef;
+    --text-dim: #a3adbd;
+    --text-faint: #747e8e;
+    --blue: #6ea8fe;
+    --green: #7dd3a0;
+    --amber: #e8b96a;
+    --red: #ef8080;
+    --purple: #b39ddb;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { display: flex; max-width: 1440px; margin: 0 auto; }
+  nav {
+    width: 250px; flex: 0 0 250px;
+    padding: 36px 20px 60px 28px;
+    position: sticky; top: 0; align-self: flex-start;
+    max-height: 100vh; overflow-y: auto;
+    border-right: 1px solid var(--border-soft);
+  }
+  nav .nav-title { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 14px; }
+  nav a {
+    display: block; padding: 5px 0 5px 11px;
+    color: var(--text-dim); text-decoration: none; font-size: 13px;
+    border-left: 2px solid transparent; line-height: 1.5;
+  }
+  nav a:hover { color: var(--text); border-left-color: var(--border); }
+  nav a.sub { padding-left: 24px; font-size: 12.5px; color: var(--text-faint); }
+  main { flex: 1; min-width: 0; padding: 36px 48px 120px 48px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 26px; margin-bottom: 34px; }
+  h1 { font-size: 26px; font-weight: 600; margin: 0 0 10px; letter-spacing: -.01em; }
+  .subtitle { color: var(--text-dim); font-size: 13.5px; margin: 0; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+  .chip {
+    font-size: 11.5px; padding: 3px 9px; border-radius: 5px;
+    background: var(--panel); border: 1px solid var(--border); color: var(--text-dim);
+    font-family: var(--mono);
+  }
+  .chip.on { color: var(--green); border-color: #2c4438; background: #121e19; }
+  .chip.off { color: var(--text-faint); }
+  h2 {
+    font-size: 19px; font-weight: 600; margin: 52px 0 6px;
+    padding-bottom: 9px; border-bottom: 1px solid var(--border-soft);
+    letter-spacing: -.005em;
+  }
+  h2 .num { color: var(--blue); font-family: var(--mono); font-size: 15px; margin-right: 9px; font-weight: 400; }
+  h3 { font-size: 15px; font-weight: 600; margin: 28px 0 8px; color: #d6dbe4; }
+  h4 { font-size: 13.5px; font-weight: 600; margin: 20px 0 6px; color: var(--text-dim); }
+  p { margin: 10px 0; }
+  ul, ol { margin: 10px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+  code {
+    font-family: var(--mono); font-size: 12.5px;
+    background: var(--panel-2); padding: 1.5px 5px; border-radius: 4px;
+    color: #c9d3e2; border: 1px solid var(--border-soft);
+  }
+  pre {
+    background: var(--bg-soft); border: 1px solid var(--border);
+    border-radius: 8px; padding: 15px 17px; overflow-x: auto;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
+    margin: 12px 0; color: #c2ccdb;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: inherit; color: inherit; }
+  .cmt { color: #5f6b7e; }
+  .kw { color: var(--purple); }
+  .str { color: var(--green); }
+  .fn { color: var(--blue); }
+  .num2 { color: var(--amber); }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  th { color: var(--text-faint); font-weight: 500; font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; background: var(--bg-soft); }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #131821; }
+  td code { font-size: 11.8px; }
+  .lead {
+    background: var(--panel); border: 1px solid var(--border);
+    border-left: 3px solid var(--blue);
+    border-radius: 8px; padding: 16px 20px; margin: 20px 0;
+  }
+  .lead p { margin: 6px 0; }
+  .warn-box {
+    background: #1c1614; border: 1px solid #3a2a20; border-left: 3px solid var(--amber);
+    border-radius: 8px; padding: 14px 18px; margin: 16px 0; font-size: 13px;
+  }
+  .warn-box .t { color: var(--amber); font-weight: 600; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 12px; margin: 18px 0; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .card .k { font-size: 11.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 5px; }
+  .card .v { font-size: 20px; font-weight: 600; font-family: var(--mono); color: var(--text); }
+  .card .n { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
+  .figure { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin: 22px 0; }
+  .figure .cap { font-size: 12px; color: var(--text-faint); text-align: center; margin-top: 12px; }
+  details { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; margin: 12px 0; }
+  details summary { cursor: pointer; font-size: 13px; color: var(--text-dim); outline: none; }
+  details summary:hover { color: var(--text); }
+  details[open] summary { margin-bottom: 10px; color: var(--text); }
+  details pre { margin: 8px 0 4px; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 4px; font-family: var(--mono); }
+  .tag.legacy { background: #1e2530; color: var(--blue); border: 1px solid #2a3a52; }
+  .tag.platform { background: #1a2419; color: var(--green); border: 1px solid #2c4438; }
+  .tag.mid { background: #1f1c16; color: var(--amber); border: 1px solid #3a3220; }
+  .bar-row { display: flex; align-items: center; gap: 12px; margin: 9px 0; font-size: 12.5px; }
+  .bar-label { width: 210px; flex: 0 0 210px; color: var(--text-dim); }
+  .bar-track { flex: 1; height: 15px; background: #10151d; border-radius: 3px; overflow: hidden; border: 1px solid var(--border-soft); }
+  .bar-fill { height: 100%; border-radius: 2px; }
+  .bar-val { width: 62px; flex: 0 0 62px; text-align: right; font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+  .flow-step {
+    display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px dashed var(--border-soft);
+  }
+  .flow-step:last-child { border-bottom: none; }
+  .flow-num {
+    flex: 0 0 26px; height: 26px; border-radius: 50%;
+    background: var(--panel-2); border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 12px; color: var(--blue);
+  }
+  .flow-body { flex: 1; min-width: 0; }
+  .flow-body .t { font-weight: 600; font-size: 13.5px; margin-bottom: 3px; }
+  .flow-body .d { font-size: 12.8px; color: var(--text-dim); }
+  .flow-body .d code { font-size: 11.8px; }
+  footer { margin-top: 70px; padding-top: 22px; border-top: 1px solid var(--border); color: var(--text-faint); font-size: 12px; }
+  @media (max-width: 1000px) {
+    nav { display: none; }
+    main { padding: 26px 20px 80px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <div class="nav-title">目录</div>
+  <a href="#s0">核心结论</a>
+  <a href="#s1">一、系统全貌</a>
+  <a href="#s2">二、存储布局</a>
+  <a href="#s2-1" class="sub">目录与文件</a>
+  <a href="#s2-2" class="sub">蒸馏档案格式</a>
+  <a href="#s3">三、注入管线</a>
+  <a href="#s3-1" class="sub">Section 体系</a>
+  <a href="#s3-2" class="sub">四个注入块</a>
+  <a href="#s3-3" class="sub">额度与截断</a>
+  <a href="#s3-4" class="sub">路径脱敏</a>
+  <a href="#s4">四、双路由与门控</a>
+  <a href="#s4-1" class="sub">LEGACY vs PLATFORM</a>
+  <a href="#s4-2" class="sub">门控判定链</a>
+  <a href="#s4-3" class="sub">运行实证</a>
+  <a href="#s5">五、写入路径</a>
+  <a href="#s6">六、档案读写机制</a>
+  <a href="#s7">七、失败与竞态</a>
+  <a href="#s8">八、逆向附录</a>
+  <a href="#s9">九、对独立插件的启示</a>
+</nav>
+<main>
+
+<header>
+  <h1>WorkBuddy 记忆系统实现逻辑报告</h1>
+  <p class="subtitle">从 <code>app.asar</code> 逆向还原的完整读写链路：存储格式、注入管线、路由门控、写入约束、并发防护。</p>
+  <div class="meta">
+    <span class="chip">逆向对象 WorkBuddy 5.9.3</span>
+    <span class="chip">app.asar 181,996,084 B / 9893 files</span>
+    <span class="chip">宿主 main/authority-snapshot.js</span>
+    <span class="chip on">本机路由 LEGACY</span>
+    <span class="chip">2026-11-06</span>
+  </div>
+</header>
+
+<div class="lead">
+  <p><strong>一句话结论：</strong>WorkBuddy 的记忆系统是<strong>「文件即权威存储 + 提示词即写入逻辑」</strong>——宿主只负责读文件、做脱敏和截断、拼进 system prompt；真正决定写什么、写到哪个文件的不是代码，而是注入的那几段提示词，写入动作由模型用通用 <code>Edit</code>/<code>Write</code> 工具完成。</p>
+  <p>这意味着：要兼容它，重点不是复刻 API，而是复刻<strong>注入文本 + 文件布局 + 版本栅栏</strong>这三件事。</p>
+</div>
+
+<h2 id="s0">核心结论</h2>
+
+<div class="cards">
+  <div class="card">
+    <div class="k">记忆层数</div>
+    <div class="v">3 + 1</div>
+    <div class="n">云画像 / 用户级 / 工作区，外加自动化私有记忆</div>
+  </div>
+  <div class="card">
+    <div class="k">注入位置</div>
+    <div class="v">system prompt</div>
+    <div class="n">不是 user context，位于主模板第 20–23 行</div>
+  </div>
+  <div class="card">
+    <div class="k">专用记忆工具</div>
+    <div class="v">0</div>
+    <div class="n">LEGACY 下全靠 Edit / Write</div>
+  </div>
+  <div class="card">
+    <div class="k">工作区 MEMORY.md 上限</div>
+    <div class="v">10,000</div>
+    <div class="n">字符，超出截断并附处理指令</div>
+  </div>
+</div>
+
+<ol>
+  <li><strong>注入是「首轮一次」而非每轮。</strong>所有记忆 Section 的 stage 都是 <code>first_turn</code>，且被 <code>alreadyInjectedUserContext</code> 与 <code>hasPriorUserMessages</code> 双重拦截。进入对话历史后靠 prompt cache 存活，后续轮次不再重新读盘。</li>
+  <li><strong>工作区<em>长期</em>记忆自动注入，<em>每日流水</em>不注入。</strong><code>&lt;cwd&gt;/.workbuddy/memory/MEMORY.md</code> 会整篇进 system prompt；<code>YYYY-MM-DD.md</code> 只在提示词里给出路径和使用规则，由模型自己 <code>Read</code>。</li>
+  <li><strong>两套完全不同的实现并存。</strong>LEGACY（本地蒸馏档案 + 三层提示词）与 PLATFORM（云端 MemoryRecall/MemoryUpdate 工具 + <code>&lt;memory_index&gt;</code>）。由服务端下发的路由快照决定，一旦会话创建即冻结。</li>
+  <li><strong>用户画像有路径脱敏。</strong>Windows 盘符、<code>~/</code>、Unix 常见根目录开头的绝对路径在注入前被替换成 <code>[path omitted]</code>，模型永远看不到真实路径。</li>
+  <li><strong>蒸馏档案有严格的版本栅栏。</strong>写入前比对 <code>Version</code>：小于现有值直接判 stale 丢弃，等于则视为幂等成功，只有更大才落盘——且全程持文件锁、先备份后原子替换。</li>
+  <li><strong>项目记忆没有版本栅栏，纯靠提示词约束。</strong>这是整套设计最脆弱的地方：模型被要求「完成后立即追加」，但没有代码强制。零点的 git 同步任务与 WorkBuddy 自身的 LLM 重写会与外部写入者发生真实竞争。</li>
+</ol>
+
+<h2 id="s1">一、系统全貌</h2>
+
+<p>记忆内容分布在三个物理位置、四类文件里，宿主在每个会话的第一个 turn 把它们组装成 system prompt 的连续四个块。下面的图是完整链路：</p>
+
+<div class="figure">
+<svg viewBox="0 0 900 470" width="100%" role="img" xmlns="http://www.w3.org/2000/svg" style="font-family: inherit;">
+<title>WorkBuddy 记忆系统数据流</title>
+<desc>左侧四个存储源，中间 MemoryCollector 与 UserMemoryCollector 做脱敏截断，右侧四个注入块按顺序进入 system prompt。</desc>
+<defs>
+<marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<text x="30" y="26" font-size="11" fill="#747e8e" letter-spacing="1">存储源</text>
+<text x="330" y="26" font-size="11" fill="#747e8e" letter-spacing="1">处理</text>
+<text x="600" y="26" font-size="11" fill="#747e8e" letter-spacing="1">注入块（system prompt）</text>
+
+<rect x="30" y="46" width="240" height="62" rx="8" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="44" y="68" font-size="12.5" font-weight="500" fill="#d6dbe4">~/.workbuddy/memory/</text>
+<text x="44" y="86" font-size="11.5" fill="#8b95a6" font-family="ui-monospace, monospace">&lt;uid&gt;_memory.md</text>
+<text x="44" y="101" font-size="11" fill="#66707f">服务端画像 · Version 栅栏</text>
+
+<rect x="30" y="120" width="240" height="62" rx="8" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="44" y="142" font-size="12.5" font-weight="500" fill="#d6dbe4">~/.workbuddy/MEMORY.md</text>
+<text x="44" y="160" font-size="11.5" fill="#8b95a6">用户级长期记忆</text>
+<text x="44" y="175" font-size="11" fill="#66707f">跨项目 · 限额 4000</text>
+
+<rect x="30" y="194" width="240" height="62" rx="8" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="44" y="216" font-size="12.5" font-weight="500" fill="#d6dbe4">&lt;cwd&gt;/.workbuddy/memory/</text>
+<text x="44" y="234" font-size="11.5" fill="#8b95a6">MEMORY.md</text>
+<text x="44" y="249" font-size="11" fill="#66707f">项目长期 · 限额 10000</text>
+
+<rect x="30" y="268" width="240" height="62" rx="8" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="44" y="290" font-size="12.5" font-weight="500" fill="#d6dbe4">&lt;cwd&gt;/.workbuddy/memory/</text>
+<text x="44" y="308" font-size="11.5" fill="#8b95a6">YYYY-MM-DD.md · automations/</text>
+<text x="44" y="323" font-size="11" fill="#66707f">不注入，仅给路径</text>
+
+<rect x="330" y="46" width="230" height="76" rx="8" fill="#16211c" stroke="#2c4438" stroke-width="0.8"/>
+<text x="344" y="68" font-size="12.5" font-weight="500" fill="#cfe6d8">UserMemoryCollector</text>
+<text x="344" y="87" font-size="11.5" fill="#8fae9c">sanitize → truncate</text>
+<text x="344" y="103" font-size="11" fill="#66707f">10000 (legacy) / 2000 (platform)</text>
+
+<rect x="330" y="132" width="230" height="76" rx="8" fill="#16211c" stroke="#2c4438" stroke-width="0.8"/>
+<text x="344" y="154" font-size="12.5" font-weight="500" fill="#cfe6d8">MemoryCollector</text>
+<text x="344" y="173" font-size="11.5" fill="#8fae9c">读 MEMORY.md × 2</text>
+<text x="344" y="189" font-size="11" fill="#66707f">10000 / 4000，超限附指令</text>
+
+<rect x="330" y="268" width="230" height="62" rx="8" fill="#1c1a16" stroke="#3a3220" stroke-width="0.8"/>
+<text x="344" y="290" font-size="12.5" font-weight="500" fill="#e3d5b8">不给 collector</text>
+<text x="344" y="308" font-size="11.5" fill="#a3967c">模型自行 Read / Edit</text>
+<text x="344" y="323" font-size="11" fill="#66707f">无代码强制</text>
+
+<rect x="600" y="46" width="270" height="300" rx="10" fill="#11161e" stroke="#242c3a" stroke-width="0.8"/>
+<text x="616" y="70" font-size="12.5" font-weight="500" fill="#d6dbe4">workbuddy-prompt.tpl</text>
+<text x="616" y="87" font-size="11" fill="#66707f">行 20–23</text>
+
+<rect x="616" y="100" width="238" height="52" rx="6" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="628" y="119" font-size="11.5" fill="#9fb6d4" font-family="ui-monospace, monospace">WorkbuddyMemory_1</text>
+<text x="628" y="136" font-size="11" fill="#66707f">三层记忆规则说明</text>
+
+<rect x="616" y="160" width="238" height="52" rx="6" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="628" y="179" font-size="11.5" fill="#9fb6d4" font-family="ui-monospace, monospace">WorkingMemoryContent</text>
+<text x="628" y="196" font-size="11" fill="#66707f">项目 MEMORY.md 全文</text>
+
+<rect x="616" y="220" width="238" height="52" rx="6" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="628" y="239" font-size="11.5" fill="#9fb6d4" font-family="ui-monospace, monospace">UserInstructionsContent</text>
+<text x="628" y="256" font-size="11" fill="#66707f">用户 MEMORY.md 全文</text>
+
+<rect x="616" y="280" width="238" height="52" rx="6" fill="#1a2130" stroke="#2a3a52" stroke-width="0.8"/>
+<text x="628" y="299" font-size="11.5" fill="#9fb6d4" font-family="ui-monospace, monospace">UserMemoryContent</text>
+<text x="628" y="316" font-size="11" fill="#66707f">服务端画像（已脱敏）</text>
+
+<path d="M270 77L324 84" fill="none" stroke="#3f4b5e" stroke-width="1.3" marker-end="url(#ar)"/>
+<path d="M270 151L324 160" fill="none" stroke="#3f4b5e" stroke-width="1.3" marker-end="url(#ar)"/>
+<path d="M270 225L324 178" fill="none" stroke="#3f4b5e" stroke-width="1.3" marker-end="url(#ar)"/>
+<path d="M270 299L324 300" fill="none" stroke="#3f4b5e" stroke-width="1.3" marker-end="url(#ar)"/>
+
+<path d="M560 84L594 122" fill="none" stroke="#3f4b5e" stroke-width="1.3" marker-end="url(#ar)"/>
+<path d="M560 170L594 186" fill="none" stroke="#3f4b5e" stroke-width="1.3" marker-end="url(#ar)"/>
+<path d="M560 186L594 244" fill="none" stroke="#3f4b5e" stroke-width="1.3" marker-end="url(#ar)"/>
+
+<rect x="330" y="368" width="540" height="62" rx="8" fill="#141922" stroke="#242c3a" stroke-width="0.8"/>
+<text x="346" y="389" font-size="12" font-weight="500" fill="#a3adbd">门控：hasPriorUserMessages / alreadyInjectedUserContext / isAskLike / quick 模式</text>
+<text x="346" y="409" font-size="11.5" fill="#66707f">任一命中即整体置空 → 该轮不注入任何记忆</text>
+<path d="M470 360L470 366" fill="none" stroke="#3f4b5e" stroke-width="1.3" marker-end="url(#ar)"/>
+</svg>
+<div class="cap">图 1 · 记忆从磁盘到 system prompt 的完整路径。注意最右侧四块是按模板顺序拼接的连续文本，中间没有 XML 包裹整体。</div>
+</div>
+
+<h2 id="s2">二、存储布局</h2>
+
+<h3 id="s2-1">2.1 目录与文件</h3>
+
+<p>宿主用两个可被环境变量覆盖的根：<code>WORKBUDDY_DATA_FOLDER_NAME</code>（默认 <code>.workbuddy</code>）与 <code>WORKBUDDY_CONFIG_DIR</code>（默认 <code>~/.workbuddy</code>）。工作区记忆固定在 <code>&lt;cwd&gt;/&lt;dataFolderName&gt;/memory</code>。</p>
+
+<pre><code><span class="cmt"># 全局（~/.workbuddy）</span>
+MEMORY.md                        <span class="cmt">用户级长期记忆，跨项目，注入限额 4000 字符</span>
+USER.md                          <span class="cmt">画像，<b>不在记忆管线内</b>，由 identity 模板单独注入</span>
+SOUL.md  IDENTITY.md             <span class="cmt">人格/身份，同样走 identity 模板</span>
+memory/&lt;uid&gt;_memory.md            <span class="cmt">服务端画像蒸馏档案，带 Version + RAW_JSON</span>
+memory/&lt;uid&gt;_memory.md.bak        <span class="cmt">写入前备份，只留最近一份</span>
+memory/.&lt;uid&gt;.lock               <span class="cmt">写入锁，ttl 10s</span>
+memery/&lt;uid&gt;_memory.md            <span class="cmt">历史遗留拼写目录，读到即迁移并重写</span>
+
+<span class="cmt"># 工作区（&lt;cwd&gt;/.workbuddy/memory）</span>
+MEMORY.md                        <span class="cmt">项目长期笔记，注入限额 10000 字符</span>
+YYYY-MM-DD.md                    <span class="cmt">每日流水，append-only，<b>不注入</b></span>
+REFERENCE.md                     <span class="cmt">非约定产物：MEMORY.md 过大时模型自行拆出</span>
+automations/&lt;id&gt;/memory.md       <span class="cmt">自动化任务私有记忆，按任务隔离</span></code></pre>
+
+<p>实测扫描 <code>~/WorkBuddy</code> 下 34 个 memory 目录，文件构成印证了这一点：</p>
+
+<table>
+<thead><tr><th>形态</th><th>数量</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td><code>YYYY-MM-DD.md</code></td><td>189</td><td>绝对主力，每目录最多十几个</td></tr>
+<tr><td><code>MEMORY.md</code></td><td>16</td><td>只有不到一半的目录有，说明是"攒够了才沉淀"</td></tr>
+<tr><td><code>automations/&lt;id&gt;/memory.md</code></td><td>11</td><td>定时任务自带的执行记录</td></tr>
+<tr><td><code>REFERENCE.md</code></td><td>1</td><td>标题写着「从 MEMORY.md 拆出」，属模型自发的容量应对</td></tr>
+</tbody>
+</table>
+
+<div class="warn-box">
+  <span class="t">注意：</span>提示词里从未提到 <code>REFERENCE.md</code>。它的出现纯粹是模型面对 3000 字符/会话限额时的自发行为——这也解释了为什么外部读取工具只认 <code>MEMORY.md</code> 会漏内容。
+</div>
+
+<h3 id="s2-2">2.2 蒸馏档案格式</h3>
+
+<p>全局画像文件不是普通 Markdown，而是<strong>双写结构</strong>：给人看的 Markdown 段落 + 给机器看的 JSON 块。解析器优先读 JSON，失败才退化到正则。</p>
+
+<pre><code># User Memory Profile
+&gt; Last updated: 2026-09-29T14:30:23+08:00
+&gt; Version: 84
+
+## Memory Block
+
+**工作背景**
+…自然语言段落…
+
+**近期动态**
+- …
+
+---
+
+&lt;!-- RAW_JSON_START
+{
+  "uid": "b157244a-…",
+  "memoryBlock": "**工作背景**\n…",
+  "version": 84,
+  "updatedAt": "2026-09-29T14:30:23+08:00"
+}
+RAW_JSON_END --&gt;</code></pre>
+
+<p>对应的解析与序列化是一对纯函数，位于 <code>main/authority-snapshot.js</code>：</p>
+
+<pre><code><span class="kw">function</span> <span class="fn">parseMarkdown</span>(text, uid) {
+  <span class="cmt">// 1. 优先 RAW_JSON：正则匹配 JSON 块，uid 不一致时强制覆写为传入 uid</span>
+  <span class="kw">const</span> raw = text.match(<span class="str">/&lt;!-- RAW_JSON_START\n([\s\S]*?)\nRAW_JSON_END --&gt;/</span>)
+  <span class="kw">if</span> (raw) <span class="kw">try</span> {
+    <span class="kw">const</span> obj = JSON.parse(raw[<span class="num2">1</span>])
+    <span class="kw">return</span> obj.uid === uid ? obj : { ...obj, uid }
+  } <span class="kw">catch</span> {}
+
+  <span class="cmt">// 2. 退化：Markdown 三件套，任一项缺失都不报错</span>
+  <span class="kw">const</span> version = text.match(<span class="str">/^&gt;\s*Version:\s*(\d+)/m</span>)
+  <span class="kw">const</span> updated = text.match(<span class="str">/^&gt;\s*Last updated:\s*(.+)$/m</span>)
+  <span class="kw">return</span> {
+    uid,
+    memoryBlock: text.match(<span class="str">/## Memory Block\n\n([\s\S]*?)\n\n---/</span>)?.[<span class="num2">1</span>]?.trim() ?? <span class="str">''</span>,
+    version: version ? parseInt(version[<span class="num2">1</span>], <span class="num2">10</span>) : <span class="kw">undefined</span>,
+    updatedAt: updated?.[<span class="num2">1</span>]?.trim(),
+  }
+}</code></pre>
+
+<p><code>toMarkdown</code> 是它的逆运算，字段顺序与分隔符完全固定（<code>## Memory Block</code> 后必须空行、正文与 JSON 之间必须 <code>---</code>）。这意味着任何外部写入者只要改动这些分隔符，就会让解析器掉进退化分支。</p>
+
+<h2 id="s3">三、注入管线</h2>
+
+<h3 id="s3-1">3.1 Section 体系</h3>
+
+<p>WorkBuddy 的自研宿主没有 DSH 那样的 prompt assembly waterfall，而是一套 <strong>Section 数组 + stage 标记</strong>的简单机制。每个 Section 声明三个属性：</p>
+
+<table>
+<thead><tr><th>属性</th><th>取值</th><th>含义</th></tr></thead>
+<tbody>
+<tr><td><code>stage</code></td><td><code>first_turn</code> / <code>every_turn</code></td><td>只在会话首轮渲染，还是每轮都渲染</td></tr>
+<tr><td><code>role</code></td><td><code>user-context</code> / <code>additional-data</code></td><td>拼进 system prompt 还是作为独立 user 消息</td></tr>
+<tr><td><code>shouldApply(ctx)</code></td><td>布尔</td><td>二次门控，通常检查模式与注入标记</td></tr>
+</tbody>
+</table>
+
+<p>与记忆相关的四个 Section 全部是 <code>first_turn</code>：</p>
+
+<table>
+<thead><tr><th>Section</th><th>产出</th><th>门控条件</th></tr></thead>
+<tbody>
+<tr><td><code>IdentityContextSection</code></td><td>SOUL / IDENTITY / USER + 产品身份 + 语气 + 自定义指令</td><td><code>alreadyInjectedUserContext !== true</code> 且非 quick</td></tr>
+<tr><td><code>ProjectContextSection</code></td><td><code>&lt;project_context&gt;</code>：CODEBUDDY.md / AGENTS.md + 目录树</td><td>同上，且 cwd 非空</td></tr>
+<tr><td><code>ProjectRulesSection</code></td><td><code>&lt;project_rules&gt;</code>：<code>.codebuddy/rules/</code></td><td>同上</td></tr>
+<tr><td><code>MemoryIndexSection</code></td><td><code>&lt;memory_index&gt;</code>：云端记忆索引</td><td>仅 PLATFORM 路由 + 首轮 + 非 ask</td></tr>
+</tbody>
+</table>
+
+<h3 id="s3-2">3.2 四个注入块</h3>
+
+<p>记忆内容本身由 <code>WorkbuddySystemPromptService.renderSystemPrompt()</code> 通过 Nunjucks 模板渲染，四个变量按固定顺序落在 <code>workbuddy-prompt.tpl</code> 第 20–23 行——紧跟在「dataFolderName 不是临时缓存」之后、<code>&lt;content_policy&gt;</code> 之前：</p>
+
+<pre><code>{{ WorkbuddyMemory_1 }}      <span class="cmt">→ 记忆系统的使用说明书（约 3.5 KB）</span>
+{{ WorkingMemoryContent }}   <span class="cmt">→ &lt;working_memory_content&gt; 项目 MEMORY.md</span>
+{{ UserInstructionsContent }}<span class="cmt">→ &lt;user_memory&gt; / &lt;user_instructions&gt; 用户 MEMORY.md</span>
+{{ UserMemoryContent }}      <span class="cmt">→ &lt;memory&gt; 服务端画像（已脱敏）</span></code></pre>
+
+<h4>块 1：使用说明书</h4>
+
+<p>不是数据而是规则。LEGACY 下由 <code>getWorkbuddyMemory1()</code> 内联生成，内容与磁盘上的 <code>prompt-common/fragments/workbuddy-memory-system.md</code> 同源但多了两段项目隔离警告。核心约束：</p>
+
+<table>
+<thead><tr><th>层</th><th>写入工具</th><th>限额</th><th>触发条件</th></tr></thead>
+<tbody>
+<tr><td>云画像 <code>&lt;memory&gt;</code></td><td>禁止本地修改</td><td>—</td><td>服务端托管，下次会话覆盖</td></tr>
+<tr><td>用户级 <code>~/.workbuddy/MEMORY.md</code></td><td><code>Edit</code> 就地改</td><td>4,000 字符/会话</td><td>用户明确要求长期记住、且不属于某项目</td></tr>
+<tr><td>项目 <code>MEMORY.md</code></td><td><code>Edit</code> 就地改</td><td>3,000 字符/会话</td><td>用户分享了项目约定或偏好</td></tr>
+<tr><td>项目 <code>YYYY-MM-DD.md</code></td><td><code>Edit</code> 追加</td><td>无</td><td>完成实质工作后立刻记，append-only</td></tr>
+</tbody>
+</table>
+
+<div class="lead">
+  <p>「实质工作」被明确定义为 6 类：建改网站/应用、修 bug、写报告/文档、重构或架构变更、选定技术方案、用户分享项目约定。<strong>明确禁止</strong>记录：搜索结果、临时路径、工具错误、命令清单、原始工具输出。</p>
+  <p>还带一条 30 天维护指令：把超过 30 天的日期文件按主题蒸馏进 <code>MEMORY.md</code>，然后<strong>删除旧文件</strong>。这条是模型自己执行的，没有后台任务。</p>
+</div>
+
+<h4>块 2 / 3：项目与用户记忆</h4>
+
+<pre><code>getWorkingMemoryContent(memoryDir, platform) {
+  读 &lt;memoryDir&gt;/MEMORY.md
+  空 → 返回 ''
+  ≤ 10000 → &lt;working_memory_content&gt;
+               The following is the existing working memory for this project. Use it as context.
+               {原文}
+             &lt;/working_memory_content&gt;
+  &gt; 10000 → 截到 10000 + "... (memory truncated — MEMORY.md is too large)"
+             + 平台/遗留两种后续指令（PLATFORM 让去读全文，LEGACY 要求立刻整理）
+}
+
+getUserInstructionsContent(userDir, platform) {
+  读 ~/.workbuddy/MEMORY.md
+  限额 4000，超出截断
+  PLATFORM → &lt;user_instructions&gt;  "user-provided preferences, standing instructions…"
+  LEGACY   → &lt;user_memory&gt;        "your long-term user-level memory, persisted across all projects"
+}</code></pre>
+
+<p>两种模式的包装标签不同不是装饰：LEGACY 的 <code>&lt;user_memory&gt;</code> 语义是「记忆数据」，PLATFORM 的 <code>&lt;user_instructions&gt;</code> 语义是「用户指令，需优先遵守」。同一份文件，注入语义完全不同。</p>
+
+<h4>块 4：服务端画像</h4>
+
+<pre><code>collect() {
+  if (!isCloudMemoryCollectEnabled)  → skip cloud_memory_disabled
+  if (!uid)                          → skip user_not_logged_in
+  if (!gateSnapshot &amp;&amp; DisableMemoryPersonalization) → skip feature_disabled
+
+  route = PLATFORM ? 'platform' : 'legacy'
+  block = route === 'platform'
+        ? resolvePlatformMemoryBlock(uid, enterpriseId, locale)
+        : resolveMemoryBlock(uid, locale, isSameAccount)
+
+  if (!isSameAccount())              → skip account_changed
+  if (gateRevision 变化)             → skip cloud_memory_disabled   // 并发改写检测
+  if (skipReason)                    → skip skipReason
+  if (!block)                        → skip empty_memory_block
+
+  text = truncate(sanitize(block), limit)
+  UserMemoryContent = `&lt;memory&gt;\n${text}\n&lt;/memory&gt;`
+}</code></pre>
+
+<p>取值路径：LEGACY 先读本地档案，本地没有再打 <code>GET /api/memory/profile</code> 取 <code>data.foryou_prompt</code>；PLATFORM 走 <code>resolvePlatformMemoryContext</code>，读本地归档未命中则拉远端并<strong>异步回写归档</strong>。两种模式都有短 TTL 缓存（1s / 30s）与失败冷却（30s），避免每次 turn 都打网络。</p>
+
+<h3 id="s3-3">3.3 额度与截断</h3>
+
+<div class="figure">
+  <div class="bar-row">
+    <div class="bar-label">项目 MEMORY.md</div>
+    <div class="bar-track"><div class="bar-fill" style="width:100%;background:#6ea8fe"></div></div>
+    <div class="bar-val">10,000</div>
+  </div>
+  <div class="bar-row">
+    <div class="bar-label">用户画像（LEGACY）</div>
+    <div class="bar-track"><div class="bar-fill" style="width:100%;background:#7dd3a0"></div></div>
+    <div class="bar-val">10,000</div>
+  </div>
+  <div class="bar-row">
+    <div class="bar-label">用户 MEMORY.md</div>
+    <div class="bar-track"><div class="bar-fill" style="width:40%;background:#e8b96a"></div></div>
+    <div class="bar-val">4,000</div>
+  </div>
+  <div class="bar-row">
+    <div class="bar-label">用户画像（PLATFORM）</div>
+    <div class="bar-track"><div class="bar-fill" style="width:20%;background:#b39ddb"></div></div>
+    <div class="bar-val">2,000</div>
+  </div>
+  <div class="bar-row">
+    <div class="bar-label">&lt;memory_index&gt;</div>
+    <div class="bar-track"><div class="bar-fill" style="width:10%;background:#ef8080"></div></div>
+    <div class="bar-val">1,000</div>
+  </div>
+  <div class="cap">图 2 · 各层注入字符上限（按 10,000 归一化）。全部是 <code>String.length</code> 而非 token 或字节。</div>
+</div>
+
+<p>截断一律走 <code>truncateUtf16</code>，会检查末位是否落在代理对（surrogate pair）中间并回退一位，避免切出半个 emoji。平台模式下还会预留 55 字符给截断提示，所以实际保留 <code>limit - 55</code>。</p>
+
+<p>所有超限都会在文本末尾追加一句<strong>面向模型的行动指令</strong>，而不是静默丢弃：</p>
+
+<pre><code><span class="cmt">// 用户画像</span>
+"\n... (user memory truncated — exceeded character limit)"
+
+<span class="cmt">// 项目记忆（LEGACY，要求模型主动整理）</span>
+"**ACTION REQUIRED**: Your MEMORY.md has exceeded the size limit and was truncated during injection.
+ Before proceeding with the user request …"
+
+<span class="cmt">// 记忆索引</span>
+"&lt;!-- truncated: index too large; call MemoryRecall to look up anything not listed here --&gt;"</code></pre>
+
+<h3 id="s3-4">3.4 路径脱敏</h3>
+
+<p>注入前，服务端画像会过一遍 <code>sanitizeMemoryBlock</code>，把三类绝对路径整段替换成 <code>[path omitted]</code>，并统计替换次数写进日志：</p>
+
+<table>
+<thead><tr><th>正则</th><th>覆盖</th></tr></thead>
+<tbody>
+<tr><td><code>[A-Za-z]:[\\/]…</code></td><td>Windows 盘符路径</td></tr>
+<tr><td><code>~/…</code></td><td>POSIX 家目录简写</td></tr>
+<tr><td><code>/(Users|home|Volumes|private|tmp|var|mnt|media|opt|srv|root|data|Applications|Library)/…</code></td><td>Unix 常见根，带负向前瞻避免误伤 URL 与代码</td></tr>
+</tbody>
+</table>
+
+<p>这条机制解释了为什么注入的画像里会出现「本地仓库 <code>[path omitted]</code>」这类断句——是宿主抹掉的，不是模型写的。项目级 <code>MEMORY.md</code> 不过这道工序，路径原样注入。</p>
+
+<h2 id="s4">四、双路由与门控</h2>
+
+<h3 id="s4-1">4.1 LEGACY 与 PLATFORM</h3>
+
+<p>两套实现不是版本过渡，而是<strong>并行存在的两种产品形态</strong>，由服务端下发的 gate snapshot 决定：</p>
+
+<table>
+<thead><tr><th>维度</th><th><span class="tag legacy">LEGACY</span></th><th><span class="tag platform">PLATFORM</span></th></tr></thead>
+<tbody>
+<tr><td>画像来源</td><td>本地 <code>_memory.md</code> → 远端 <code>/api/memory/profile</code></td><td>本地归档 → 远端 memory context</td></tr>
+<tr><td>画像限额</td><td>10,000</td><td>2,000</td></tr>
+<tr><td>记忆索引</td><td>无</td><td><code>&lt;memory_index&gt;</code>，≤1000</td></tr>
+<tr><td>读取工具</td><td>无专用工具</td><td><code>MemoryRecall</code></td></tr>
+<tr><td>写入工具</td><td>无专用工具，用 <code>Edit</code></td><td><code>MemoryUpdate</code></td></tr>
+<tr><td>用户记忆标签</td><td><code>&lt;user_memory&gt;</code></td><td><code>&lt;user_instructions&gt;</code></td></tr>
+<tr><td>项目提示词</td><td>三层完整版（含"何时写"清单）</td><td>精简版（<code>getWorkspaceMemory1</code>，写入让位给记忆工具）</td></tr>
+</tbody>
+</table>
+
+<p>路由状态机有四个值：<code>LEGACY</code> / <code>MIGRATING</code> / <code>PLATFORM</code> / <code>FAILED</code>。会话创建时冻结一次（<code>freezeMemoryRouteForConversation</code>），中途服务端改配置也不会切换——避免同一会话里记忆语义漂移。</p>
+
+<pre><code><span class="kw">function</span> <span class="fn">computeCloudMemoryPlatformEnabled</span>(route) {
+  <span class="kw">return</span> isMemoryPlatformV2Allowed()        <span class="cmt">// 灰度开关</span>
+      &amp;&amp; isEffectiveCloudMemoryEnabled()      <span class="cmt">// 用户设置 &amp;&amp; 企业策略</span>
+      &amp;&amp; route === <span class="str">'PLATFORM'</span>
+}
+
+<span class="cmt">// 非 PLATFORM 时这两个工具被列入禁用名单</span>
+<span class="kw">const</span> platformOnlyTools = [<span class="str">'MemoryRecall'</span>, <span class="str">'MemoryUpdate'</span>]</code></pre>
+
+<h3 id="s4-2">4.2 门控判定链</h3>
+
+<p>记忆索引的组装门控有一份完整日志（<code>[memory-index]</code> 前缀），判定顺序严格自上而下，第一个命中即返回：</p>
+
+<div class="flow-step">
+  <div class="flow-num">1</div>
+  <div class="flow-body">
+    <div class="t">hasPriorUserMessages || alreadyInjectedUserContext</div>
+    <div class="d"><code>reason: not-first-turn</code> — 会话已有历史消息，或本会话已注入过 user context</div>
+  </div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">2</div>
+  <div class="flow-body">
+    <div class="t">!memoryIndexResolver</div>
+    <div class="d"><code>reason: no-resolver</code> — 宿主没有注册索引解析器</div>
+  </div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">3</div>
+  <div class="flow-body">
+    <div class="t">isAskLike</div>
+    <div class="d"><code>reason: ask-like-mode</code> — Ask 模式是纯问答，不注入记忆</div>
+  </div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">4</div>
+  <div class="flow-body">
+    <div class="t">!computeCloudMemoryPlatformEnabled(route)</div>
+    <div class="d"><code>reason: platform-disabled</code> — 路由不是 PLATFORM，或灰度/设置未开</div>
+  </div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">5</div>
+  <div class="flow-body">
+    <div class="t">will-fetch</div>
+    <div class="d">放行，打 <code>GET /api/memory/global/index</code>，3 秒超时</div>
+  </div>
+</div>
+
+<h3 id="s4-3">4.3 本机运行实证</h3>
+
+<p>从 <code>~/.workbuddy/logs/daemon.log</code> 提取的真实门控记录：</p>
+
+<pre><code>[memory-index] skip {
+  "sessionId": "a9d6f7ee-…",
+  "hasPriorUserMessages": true,
+  "alreadyInjectedUserContext": false,
+  "isAskLike": false,
+  "resolverRegistered": true,
+  "platformEnabled": false,     <span class="cmt">← 决定走 LEGACY</span>
+  "hasGateSnapshot": true,
+  "userSetting": true,          <span class="cmt">← 用户层面已开启</span>
+  "enterprisePolicyAllowed": true,
+  "effective": true,            <span class="cmt">← userSetting &amp;&amp; policy</span>
+  "source": "remote",           <span class="cmt">← 快照来自服务端</span>
+  "reason": "not-first-turn"
+}</code></pre>
+
+<p>三个可直接读出的结论：</p>
+<ul>
+  <li>本机 <strong>LEGACY 模式</strong>：<code>platformEnabled: false</code>，所以没有 <code>&lt;memory_index&gt;</code>，也没有 <code>MemoryRecall</code>/<code>MemoryUpdate</code>。</li>
+  <li>记忆<strong>功能本身是开的</strong>：<code>effective: true</code>。</li>
+  <li>跳过原因<strong>只是非首轮</strong>，即使功能全开，第二轮起也不会再注入索引。</li>
+</ul>
+
+<h2 id="s5">五、写入路径</h2>
+
+<p>这是整套设计里最"轻"的一环，也是唯一没有代码强制的一环：</p>
+
+<div class="lead">
+  <p><strong>没有任何专用写入 API。</strong>提示词直接告诉模型：用 <code>Edit</code> 工具改文件。宿主端不存在 memory write 接口、不存在 schema 校验、不存在内容审核（除了"不要存密钥"这句口头约束）。</p>
+</div>
+
+<p>实际约束全部来自文本：</p>
+
+<table>
+<thead><tr><th>约束</th><th>文本表述</th><th>强度</th></tr></thead>
+<tbody>
+<tr><td>写入时机</td><td>完成实质工作后、给出最终答复前</td><td>强（MUST follow）</td></tr>
+<tr><td>写入目标</td><td>默认当日 <code>YYYY-MM-DD.md</code>；项目约定才进 <code>MEMORY.md</code></td><td>强</td></tr>
+<tr><td>追加语义</td><td>日期文件 append-only，永不覆盖</td><td>强</td></tr>
+<tr><td>额度</td><td>项目 MEMORY.md 3000 字符/会话、用户 4000</td><td>中（无运行时校验）</td></tr>
+<tr><td>内容边界</td><td>不记搜索结果、临时路径、工具错误、命令清单</td><td>中</td></tr>
+<tr><td>密钥</td><td>永不落盘，即使明确要求</td><td>强</td></tr>
+<tr><td>蒸馏</td><td>&gt;30 天的日期文件按主题合并进 MEMORY.md 后删除</td><td>弱（靠模型自觉）</td></tr>
+</tbody>
+</table>
+
+<p>这种设计的代价很明确：<strong>写入质量完全取决于模型是否遵守提示词</strong>。没有幂等键、没有去重、没有冲突检测——同一个事实可能被反复追加到多天的日志里，也可能因为模型"觉得不值得记"而丢失。</p>
+
+<p>唯一有代码保障的是<b>日期文件的命名</b>：提示词里的 <code>{{ WorkbuddyMemoryDir }}/YYYY-MM-DD.md</code> 会被替换成真实绝对路径，模型照着写；目录不存在时提示词明确要求先创建。</p>
+
+<h2 id="s6">六、档案读写机制</h2>
+
+<p>与服务端画像相关的读写是全系统唯一<strong>有完整并发防护</strong>的部分，值得逐层拆开。</p>
+
+<h3>6.1 写入：锁 → 版本栅栏 → 备份 → 原子替换</h3>
+
+<pre><code>doWriteWithLockAndGuard(uid, profile, dirs) {
+  ensureDir(primaryDir)
+
+  <span class="cmt">// ① 独占锁：.&lt;uid&gt;.lock，ttl 10s，最多重试 3 次，间隔 150ms</span>
+  lock = acquireFileLock(`.${uid}.lock`, { ttlMs: 10000, maxRetries: 3, retryDelayMs: 150 })
+  if (!lock) return { success: false, errorCode: 'lock_contention' }
+
+  <span class="cmt">// ② 版本栅栏 —— 三道分支</span>
+  existing = tryReadExistingVersion(archivePath)
+  if (typeof profile.version === 'number' &amp;&amp; typeof existing === 'number') {
+    if (profile.version &lt;  existing) return { success: false, errorCode: 'stale_version', skipped: true }
+    if (profile.version === existing) return { success: true,  skipped: true, skipReason: 'same_version' }
+  }
+
+  <span class="cmt">// ③ 备份现有文件 → &lt;uid&gt;_memory.md.bak（copy 到 temp 再 rename）</span>
+  if (await fileExists(archivePath)) { copyFile → tmp; rename(tmp, backupPath) }
+
+  <span class="cmt">// ④ 原子写：写 temp 再 rename，绝不产生半截文件</span>
+  writeFile(tmpOf(archivePath), toMarkdown(profile))
+  rename(tmp, archivePath)
+}</code></pre>
+
+<p>三道版本分支的语义值得注意：</p>
+<ul>
+  <li><strong>小于现有</strong> → <code>stale_version</code>，丢弃且报告失败。防止慢速网络回来的旧快照覆盖新数据。</li>
+  <li><strong>等于现有</strong> → <code>same_version</code>，报告<b>成功</b>但跳过写入。天然幂等，重复拉取不会反复写盘。</li>
+  <li><strong>大于现有</strong> → 正常落盘。</li>
+</ul>
+
+<h3>6.2 读取：三级回退 + 自动迁移</h3>
+
+<pre><code>doRead(uid, dirs) {
+  <span class="cmt">// ① 新目录</span>
+  try { return parseMarkdown(await readFile(join(primaryDir, `${uid}_memory.md`)), uid) }
+  catch (ENOENT) {}
+
+  <span class="cmt">// ② 历史遗留目录（拼写错误：memery）</span>
+  try {
+    const legacy = parseMarkdown(await readFile(join(legacyDir, `${uid}_memory.md`)), uid)
+    if (legacy) {
+      queueMicrotask(() =&gt; writeProfile(uid, legacy, dirs))   <span class="cmt">// 后台迁移，不阻塞本次读取</span>
+      log.migrated({ source: 'legacy_memery' })
+      return legacy
+    }
+  } catch (ENOENT) {}
+
+  <span class="cmt">// ③ 都没有</span>
+  return null
+}</code></pre>
+
+<p>整个读/写/删都套了 <code>timeoutMs = 1500</code> 的超时和 trace 日志（<code>trace_id</code> / <code>uid</code> / <code>cost_ms</code> / <code>op</code> / <code>error_code</code>），失败分类为 <code>timeout</code> / <code>parse_error</code> / <code>io_error</code> / <code>unknown</code>。</p>
+
+<h3>6.3 谁在写这个文件</h3>
+
+<p>关键点：<strong>LEGACY 模式下客户端不写本地档案</strong>。<code>resolveMemoryBlockUncached</code> 只读不写；唯一的写入路径 <code>persistArchive</code> 只在 PLATFORM 分支被调用（远端拉取成功后归档）。</p>
+
+<p>所以本地 <code>_memory.md</code> 的 <code>Version: 84</code> 这类递增，来源是另一个通道（账号级云端同步），对逆向记忆管线本身不构成影响——但意味着<strong>外部工具不应写这个文件</strong>：版本比对会让它被判 stale 或被下一次同步覆盖。</p>
+
+<h2 id="s7">七、失败与竞态</h2>
+
+<table>
+<thead><tr><th>场景</th><th>行为</th><th>后果</th></tr></thead>
+<tbody>
+<tr><td>服务端画像请求超时</td><td>3s 超时 → 冷却 30s → 该轮无 <code>&lt;memory&gt;</code></td><td>降级可用，模型不知道画像存在</td></tr>
+<tr><td>画像档案 JSON 损坏</td><td>退化到正则解析 <code>## Memory Block</code></td><td>仍能注入，丢失 version</td></tr>
+<tr><td>账号中途切换</td><td><code>isSameMemoryAccount</code> 不一致 → 丢弃 + <code>account_changed</code></td><td>防止串号注入他人画像</td></tr>
+<tr><td>gate revision 变化</td><td>二次校验不一致 → 丢弃</td><td>防止读到开关切换前的旧记忆</td></tr>
+<tr><td>并发写档案</td><td>文件锁 ttl 10s，3 次重试</td><td>失败报 <code>lock_contention</code>，不覆盖</td></tr>
+<tr><td>旧版本快照到达</td><td>版本比对 → <code>stale_version</code></td><td>丢弃，不倒退</td></tr>
+<tr><td>project MEMORY.md 超 10K</td><td>截断 + ACTION REQUIRED 指令</td><td>模型被要求立即整理</td></tr>
+<tr><td>外部写入 vs LLM 重写</td><td><b>无任何防护</b></td><td>后写者胜，内容可能丢失</td></tr>
+<tr><td>零点 git 同步任务</td><td><b>无任何防护</b></td><td>文件占用/冲突需人工介入</td></tr>
+</tbody>
+</table>
+
+<div class="warn-box">
+  <span class="t">结构性风险：</span>整个系统对「并发外部写入」的防护只存在于服务端画像档案一个点。项目级记忆——也就是日常真正在增长的那部分——<strong>零防护</strong>。这不是疏漏，是设计取向：它默认"只有一个写入者（模型自己）"。
+</div>
+
+<h2 id="s8">八、逆向附录</h2>
+
+<h3>8.1 asar 结构与提取方法</h3>
+
+<p>Electron asar 是「8 字节头 + 4 字节长度 + JSON 目录 + 拼接的文件数据」。头部布局：</p>
+
+<pre><code>offset 0   uint32 = 4
+offset 4   uint32 = headerSize
+offset 8   uint32 = jsonSize      <span class="cmt">// 实测 2,609,603</span>
+offset 12  uint32 = 校验/对齐
+offset 16  JSON 目录（9893 个条目，flatten 后每个带 size / offset / unpacked）
+BASE = 16 + jsonSize              <span class="cmt">// 实测 2,609,619，文件数据起点</span></code></pre>
+
+<p>注意两个细节：<code>offset</code> 是<b>字符串</b>而不是数字（超过 2^31 的大文件），必须 <code>Number()</code> 转换；标了 <code>unpacked: true</code> 的文件不在 asar 里，要去 <code>app.asar.unpacked/</code> 同名路径下直接读——提示词片段和模板全部是 unpacked，省了不少事。</p>
+
+<h3>8.2 关键文件清单</h3>
+
+<table>
+<thead><tr><th>路径</th><th>大小</th><th>内容</th></tr></thead>
+<tbody>
+<tr><td><code>main/authority-snapshot.js</code></td><td>795 KB</td><td><b>核心</b>。Section 体系、两个 Collector、档案读写、sanitize、门控日志</td></tr>
+<tr><td><code>main/server.js</code></td><td>3.6 MB</td><td>含 <code>memory-index</code> 相关路由与日志初始化</td></tr>
+<tr><td><code>resources/templates/workbuddy-prompt.tpl</code></td><td>—</td><td>system prompt 主模板，记忆四块在第 20–23 行</td></tr>
+<tr><td><code>resources/templates/user-context-identity.tpl</code></td><td>2.4 KB</td><td>SOUL / IDENTITY / USER 注入（独立于记忆管线）</td></tr>
+<tr><td><code>prompt-common/fragments/workbuddy-memory-system.md</code></td><td>3.9 KB</td><td>三层记忆规则（njk 版，与内联版同源）</td></tr>
+<tr><td><code>prompt-common/fragments/cloud-memory-platform-system.md</code></td><td>3.1 KB</td><td>PLATFORM 记忆规则（MemoryRecall / MemoryUpdate）</td></tr>
+<tr><td><code>prompt-common/fragments/workspace-project-memory.md</code></td><td>1.3 KB</td><td>PLATFORM 下的工作区提示（精简版）</td></tr>
+<tr><td><code>prompt-common/fragments/memory-context.md</code></td><td>0.1 KB</td><td>只有三行变量引用，拼接用</td></tr>
+<tr><td><code>main/memory-check.js</code></td><td>4.6 KB</td><td><b>与记忆无关</b>，是 RAM 占用自检</td></tr>
+<tr><td><code>renderer/assets/MemorySettingsPanel-*.js</code></td><td>28.5 KB</td><td>记忆设置面板 UI，开关项在这里</td></tr>
+</tbody>
+</table>
+
+<h3>8.3 检索技巧</h3>
+
+<p>压缩产物里所有标识符都被重命名（<code>In</code>、<code>Fn</code>、<code>Ln</code>），直接搜函数名效率低。有效做法是搜<strong>字符串字面量</strong>——中文文案、日志前缀、错误码几乎不可压缩：</p>
+
+<pre><code>alreadyInjectedUserContext     <span class="cmt">// 定位 Section 门控</span>
+RAW_JSON_START                 <span class="cmt">// 定位档案格式</span>
+not-first-turn                 <span class="cmt">// 定位判定链</span>
+memory_injection_skip          <span class="cmt">// 定位注入日志</span>
+[path omitted]                 <span class="cmt">// 定位脱敏常量</span></code></pre>
+
+<p>常量表则通过「赋值语句 + 已知语义值」定位，例如搜 <code>Ln=`</code> 拿到截断文案，同一行里 <code>Fn=1e4, In=2e3</code> 就是两个限额。</p>
+
+<h2 id="s9">九、对独立插件的启示</h2>
+
+<p>如果把这份实现当作参照系，做一个兼容 WorkBuddy 记忆的独立插件，需要分三类对待：</p>
+
+<table>
+<thead><tr><th>类别</th><th>项目</th><th>建议</th></tr></thead>
+<tbody>
+<tr><td rowspan="4"><span class="tag legacy">必须复刻</span></td>
+    <td>文件布局与目录名</td><td><code>&lt;cwd&gt;/.workbuddy/memory</code> + <code>~/.workbuddy</code>，支持两个环境变量覆盖</td></tr>
+<tr><td>四个注入块的语义与边界</td><td>项目 MEMORY.md 全文、用户 MEMORY.md、画像、规则说明；顺序固定</td></tr>
+<tr><td>限额与截断文案</td><td>10000 / 4000 / 2000，超限要带行动指令而非静默截断</td></tr>
+<tr><td>路径脱敏</td><td>否则会把用户真实目录写进提示词，跨项目泄漏</td></tr>
+
+<tr><td rowspan="3"><span class="tag mid">值得借鉴</span></td>
+    <td>版本栅栏的三分支语义</td><td>stale 丢弃 / same 幂等成功 / 更新才写，比"最后写入胜"稳得多</td></tr>
+<tr><td>首轮注入而非每轮</td><td>省 token 且稳定 prompt cache；变化内容靠工具按需读</td></tr>
+<tr><td>日志带 trace_id 与 cost_ms</td><td>记忆是静默 subsystem，没有日志等于不可调试</td></tr>
+
+<tr><td rowspan="3"><span class="tag platform">必须超越</span></td>
+    <td>项目记忆的写入</td><td>用工具 + 服务端校验替代"提示词自觉"：幂等键、小节级定位、revision 栅栏</td></tr>
+<tr><td>并发安全</td><td>跨进程文件锁 + 提交前 hash 复检，别只防进程内</td></tr>
+<tr><td>检索能力</td><td>原设计只有整篇注入，没有 search / browse，189 个日期文件完全靠模型逐个 Read</td></tr>
+</tbody>
+</table>
+
+<div class="lead">
+  <p><strong>最核心的一条判断：</strong>WorkBuddy 的记忆系统本质上是一个「精心写好的提示词 + 几个 Markdown 文件」，工程复杂度集中在<b>注入侧</b>（脱敏、截断、门控、缓存、路由）而不是<b>存储侧</b>。要兼容它，读懂那 3.9 KB 的提示词比读 795 KB 的 bundle 更重要——代码只决定了"给不给看"，提示词决定了"记不记、记哪"。</p>
+</div>
+
+<footer>
+  报告基于 WorkBuddy 5.9.3（<code>app.asar</code> 181,996,084 B）静态逆向 + 本机运行数据交叉验证生成。<br>
+  逆向文件与提取脚本存于临时目录，未改动任何 WorkBuddy 数据；所有结论均可通过第八节的检索关键字复现。
+</footer>
+
+</main>
+</div>
+</body>
+</html>
