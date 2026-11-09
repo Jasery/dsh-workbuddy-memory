@@ -14,5 +14,6 @@
   "noProject": "No project memory directory for this session.",
   "ambiguousProfile": "More than one profile candidate and no profileUid; injection skipped.",
   "status.title": "dsh-workbuddy-memory",
-  "status.readOnly": "Read-only mode: every write is refused."
+  "status.readOnly": "Read-only mode: every write is refused.",
+  "guard.refused": "{path} is a WorkBuddy memory file. Use memory_append / memory_edit instead; a bare write bypasses the version fence and the backups, and can overwrite what the other client just wrote."
 }

@@ -9,6 +9,9 @@ import { Config, normalizeConfig } from './config.js'
 import { createTranslator, resolveLanguage } from './locale.js'
 import { registerSections } from './inject.js'
 import { registerTools } from './tools/index.js'
+import { registerWriteGuard } from './write/guard.js'
+import { createStore } from './write/store.js'
+import { resolveStateDir } from './paths.js'
 
 export const name = 'dsh-workbuddy-memory'
 export const inject = ['systemPrompt', 'tools']
@@ -29,15 +32,20 @@ export function apply(ctx, config) {
 
   const t = createTranslator(resolveLanguage(cfg.locale))
 
+  let sections = null
   try {
-    registerSections(ctx, { cfg, t })
+    sections = registerSections(ctx, { cfg, t })
   } catch (error) {
     // A broken injection path must not stop the tools from working.
     ctx.logger?.warn?.(`[workbuddy-memory] section registration failed: ${error?.message ?? error}`)
   }
 
   try {
-    registerTools(ctx, { cfg, t })
+    const stateDir = resolveStateDir(cfg.stateDir).path
+    const store = createStore({ cfg, stateDir })
+    registerTools(ctx, { cfg, t, store })
+    registerWriteGuard(ctx, { cfg, t })
+    void sections
   } catch (error) {
     ctx.logger?.warn?.(`[workbuddy-memory] tool registration failed: ${error?.message ?? error}`)
   }

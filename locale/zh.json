@@ -14,5 +14,6 @@
   "noProject": "本次会话没有可用的项目记忆目录。",
   "ambiguousProfile": "画像候选不止一个且未指定 profileUid，已跳过注入。",
   "status.title": "dsh-workbuddy-memory",
-  "status.readOnly": "只读模式：开启时所有写入被拒绝。"
+  "status.readOnly": "只读模式：开启时所有写入被拒绝。",
+  "guard.refused": "{path} 是 WorkBuddy 记忆文件。请改用 memory_append / memory_edit；直接写入会绕过版本栅栏与备份，可能覆盖另一个客户端刚写的内容。"
 }

@@ -68,6 +68,10 @@ export const Config = z.object({
       operationLog: z.boolean().default(true).volatile(),
     }),
 
+  guard: z.object({
+    enabled: z.boolean().default(true).volatile(),
+  }),
+
   search: z
     .object({
       enabled: z.boolean().default(true).volatile(),
@@ -109,6 +113,7 @@ export function normalizeConfig(raw) {
   const inject = input.inject && typeof input.inject === 'object' ? input.inject : {}
   const write = input.write && typeof input.write === 'object' ? input.write : {}
   const search = input.search && typeof input.search === 'object' ? input.search : {}
+  const guard = input.guard && typeof input.guard === 'object' ? input.guard : {}
   const limits = inject.limits && typeof inject.limits === 'object' ? inject.limits : {}
 
   return {
@@ -143,6 +148,10 @@ export function normalizeConfig(raw) {
       backupKeep: num(write.backupKeep, 5, 0, 100),
       fsync: bool(write.fsync, true),
       operationLog: bool(write.operationLog, true),
+    },
+
+    guard: {
+      enabled: bool(guard.enabled, true),
     },
 
     search: {
