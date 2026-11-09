@@ -38,7 +38,9 @@ export function renderSections({ cfg, probe, t }) {
   }
 
   if (cfg.inject.rules) {
-    const rules = t('rules')
+    // Read-only gets its own wording: telling the model how to write when every
+    // write returns `read_only` just burns turns on retries.
+    const rules = t(cfg.readOnly ? 'rulesReadOnly' : 'rules')
     const lines = Array.isArray(rules) ? rules : []
     if (lines.length > 0) {
       const body = lines.map((line, index) => `${index + 1}. ${line}`).join('\n')

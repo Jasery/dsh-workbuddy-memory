@@ -94,3 +94,57 @@ ERR_PNPM_UNEXPECTED_STORE  The dependencies at ...\node_modules are currently li
 ## 10. Web UI 首次认证
 
 `dsh web` 打印的 `?token=` 用于换 cookie：`GET /` 命中 token → 303 → `Set-Cookie ...; HttpOnly; SameSite=Strict`。token 不是一次性的，但浏览器首次落在 401 页面时不会自动重试，需要一次 `location.replace('./')` 或刷新才进得去。
+
+## 11. 在 0.2.2-rc.1 上复跑（2026-11-09 晚）
+
+本机有两套宿主：全局 CLI 原为 `0.2.0-rc.2`，桌面 runtime 已是 `0.2.2-rc.1`。把全局 CLI 升到同一个版本后复跑，插件无需改核心逻辑，但有五处宿主契约变化值得记下来。
+
+### 11.1 升级方式：必须用 Node 24 装
+
+`@deepseek-ai/dsh@0.2.2-rc.1` 的 `engines.node` 是 `>=24.9.0`，而 PATH 上的默认 node 是 22.22.2（WorkBuddy 自带）。用 22 装也能装（只是 EBADENGINE 警告），但正确做法是用桌面 runtime 里的 node 24 跑 npm：
+
+```bash
+npm-prefix-bin=$(dirname $(which node))/node      # 换成 runtime 的 node.exe
+"$NODE24" "$NPMCLI" install -g @deepseek-ai/dsh@0.2.2-rc.1 --prefix "$APPDATA/npm"
+```
+
+装的时候若报 `EBUSY ... koffi.node`，是本机还跑着旧版 dsh（koffi 原生模块被占用），先停掉再装。
+
+### 11.2 `assemble()` 现在要求工具执行器在场
+
+`ctx.systemPrompt.assemble()` 内部要做工具 schema 投影，会调用 `tools.selectExecutor()`；组合里没有执行器时直接抛 `ToolExecutorUnavailableError`。这不是插件的 bug（装配由宿主发起），但任何在进程内复现装配的测试脚本都要先挂 `@deepseek-ai/dsh-tool-executor-native`。
+
+### 11.3 装配上下文的 `agent` 是顶层字段
+
+`assembleContextFor(agent, signal)` 返回 `{ agent, scope: agent, signal }`。注入侧读 `context.agent.session.header.cwd` 在 0.2.0 与 0.2.2 上一致；把 `agent` 塞进 `scope` 里则读不到。
+
+### 11.4 插件要登记进 `dsh.profile.bundles`，不能只手写 insert
+
+这条最要紧。原来在 profile 的 `cordis.patch.yml` 里手写：
+
+```yaml
+- insert:
+    - id: workbuddy-memory
+      name: dsh-workbuddy-memory
+```
+
+配置卡能显示、能勾选，但 `form.set()` 的落盘是在**用户 patch 层追加一条同 id 的新条目**，结果装配里出现两个 `workbuddy-memory`，`insert` 里那条永远是旧值 —— 表现为「勾了没反应」。
+
+正确做法是把它当 bundle：`package.json` 的 `dsh.profile.bundles` 加包名（`dependencies` 也要有，插件页才会列出）。bundle 层负责 insert 条目，用户 patch 层的 `- id: workbuddy-memory` 再按 id 合并 `config`，装配结果只有一条：
+
+```yaml
+- id: workbuddy-memory
+  name: dsh-workbuddy-memory
+  config:
+    readOnly: true
+```
+
+`scripts/dev-install.mjs` 已改为自动完成这两步，不再打印「手写 insert」。
+
+### 11.5 只读时规则块换文案
+
+复跑时发现的真缺口：`readOnly: true` 只让工具返回 `read_only`，但注入的规则块仍在教模型「用 memory_append 写」。模型会照着试，白跑几轮。现在 `readOnly` 走 `rulesReadOnly` 文案（中英各一份），直接说明本次会话只读、不要尝试写入、要改请让用户关掉开关。
+
+### 11.6 0.2.2 上不兼容的第三方插件（与本插件无关）
+
+启动日志会报 `1 entry did not activate`：`better-sidebar` 在等一个 `webRuntime` 服务，0.2.2 里没有；`dsh-plugin-gate` 在插件页显示「异常」。这两个是别家的插件，不影响本插件——本插件在 0.2.2 上注入、工具、守卫、配置卡全部通过。

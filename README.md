@@ -30,13 +30,9 @@ Local development, when the profile's pnpm store was made by another major versi
 node scripts/dev-install.mjs web
 ```
 
-then add to the profile's `cordis.patch.yml`:
+The script copies the package into `<profile>/node_modules` and registers it in the profile's `dsh.profile.bundles` and `dependencies`. Do **not** hand-write an `insert:` block into `cordis.patch.yml`: the inserted entry and the entry the config card writes end up as two records with the same id, and toggles then look like they do nothing. The card writes an id-targeted override that merges into the bundle's entry.
 
-```yaml
-- insert:
-    - id: workbuddy-memory
-      name: dsh-workbuddy-memory
-```
+Verified on `0.2.0-rc.2` and `0.2.2-rc.1`; `engines.dsh` only sets the lower bound `>=0.2.0-0`, so a host major bump does not lock the plugin out.
 
 ## Files it reads
 

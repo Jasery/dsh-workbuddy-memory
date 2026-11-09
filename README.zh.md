@@ -30,13 +30,9 @@ dsh plugin --profile web add dsh-workbuddy-memory
 node scripts/dev-install.mjs web
 ```
 
-再在 profile 的 `cordis.patch.yml` 加一条：
+脚本会把包复制进 `<profile>/node_modules`，并写进 profile `package.json` 的 `dsh.profile.bundles` 与 `dependencies`。**不要**再往 `cordis.patch.yml` 手写 `insert:` —— 那样插出来的条目和配置卡写入的条目会成为两条同 id 记录，勾配置就会「点了没反应」。配置卡自己写的是按 id 合并的覆盖条目。
 
-```yaml
-- insert:
-    - id: workbuddy-memory
-      name: dsh-workbuddy-memory
-```
+已在 `0.2.0-rc.2` 与 `0.2.2-rc.1` 上实测；`engines.dsh` 只设下限 `>=0.2.0-0`，宿主升主版本不会因此拒绝加载。
 
 ## 工具
 
