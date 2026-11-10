@@ -148,3 +148,31 @@ npm-prefix-bin=$(dirname $(which node))/node      # 换成 runtime 的 node.exe
 ### 11.6 0.2.2 上不兼容的第三方插件（与本插件无关）
 
 启动日志会报 `1 entry did not activate`：`better-sidebar` 在等一个 `webRuntime` 服务，0.2.2 里没有；`dsh-plugin-gate` 在插件页显示「异常」。这两个是别家的插件，不影响本插件——本插件在 0.2.2 上注入、工具、守卫、配置卡全部通过。
+
+## 12. 面板写路由（M4c/M4d）
+
+### 12.1 `req` 是可读流，不需要宿主提供 body 解析
+
+`webServer.register({kind:'prefix'})` 的 handler 拿到的是标准 `IncomingMessage`，`req.on('data')` / `on('end')` 直接可用。所以 `/action` 自己读 body，带 64 KB 硬上限并在超限时 `req.destroy()`，不依赖任何未公开的宿主中间件。
+
+### 12.2 状态码按「人接下来能做什么」定
+
+`conflict` → 409（重新读一遍再决定）、`read_only` / `write_disabled` / `write_actions_disabled` → 403、`no_store` / `no_revision` / `not_found` → 404、`lock_timeout` → 423，其余 400。客户端只把这些 code 翻成一句话（`describeCode`），不在 UI 里判断业务。
+
+### 12.3 行号比文本匹配适合面板
+
+工具用「关键词 + 唯一性检查」定位条目，这对模型够用；面板握着的是「我渲染的是第 3 行」，用文本匹配反而会在两行内容相同时报 `ambiguous`。所以 `editEntryAt(text, heading, line)` 先校验该行仍在小节范围内、且确实是一个 `- ` 条目，否则 `stale_line`。文件在别处被改过时，行号校验会先失败，比 revision 检查更早给出可读原因。
+
+### 12.4 整理是跨文件事务，先写目标再清源
+
+`consolidate` 动两个文件：项目 `MEMORY.md`（写）与各日期文件（清行）。顺序固定 —— 先把条目按 `## YYYY-MM-DD` 写进目标（一次锁、一次 CAS、一次备份），再逐源文件逆序删行，最后把 `journal/<opId>.json` 落到 `log/`。崩在中间时账本里有 `cleared` / `failed`，人能看出哪一步没做完；重复执行要带同一个 `operationId`，否则会重复写入（这一点比设计文档的「按 journal 续跑」弱一级，已写在 README 的限制里）。
+
+### 12.5 面板测试需要一个 hooks 运行时
+
+纯函数测试覆盖不到「点击 → fetch → 重渲染」。`tests/helpers/react.mjs` 实现了一个单实例 hooks 运行时（`useState` 有真实 setter、`useEffect` 按 deps 比较、`useMemo`/`useCallback` 缓存），`settle()` 循环渲染直到没有新状态，`fire()` 把事件喂给某个节点的 handler。这能把「点一行 → 发一条 `{type:'edit', line:3, expectedRevision:'rev-project'}`」钉死，也会在 hook 顺序错乱时立刻炸出来。
+
+一个坑：hook 槽是模块级的，跨测试复用会把上一个用例的选中态带进来 —— 每个用例前必须 `runtime.reset()`。
+
+### 12.6 `title` 也要跟着权限走
+
+只读时行内仍渲染了 `title="点击编辑"`，测试断言抓到的。提示语必须和可操作性一致，否则用户点了没反应还会以为坏了。

@@ -13,9 +13,9 @@
 | 写入工具（`memory_append` / `memory_edit`）与裸写守卫 | 已实现 |
 | revision 栅栏、备份、操作账本 | 已实现 |
 | 插件页配置卡 | 已实现 |
-| 侧栏记忆面板（浏览现有记忆） | 已实现 |
-| 面板内编辑条目 | 未开始 |
-| `memory_consolidate`（跨天蒸馏） | 未开始 |
+| 侧栏记忆面板（浏览 + 编辑 + 搜索） | 已实现 |
+| 面板内整理（日期笔记并入项目记忆）与历史回滚 | 已实现 |
+| `memory_consolidate` 工具（供模型调用） | 未开始 |
 
 设计文档见 [`docs/2026-11-09-dsh-workbuddy-memory-design.html`](docs/2026-11-09-dsh-workbuddy-memory-design.html)。
 
@@ -69,23 +69,44 @@ node scripts/dev-install.mjs web
 | `inject.limits.*` | 10000 / 4000 / 2000 | 按字符截断 |
 | `stateDir` | `''` | 索引与备份根，留空用 `~/.dsh/workbuddy-memory` |
 | `ui.enabled` | `true` | 关掉后侧栏面板读不到数据（`/workbuddy-memory` 路由不注册） |
+| `ui.allowWriteActions` | `false` | 面板写操作总开关。关着时面板只读，`/action` 一律拒绝 |
+| `ui.allowFullTextEdit` | `false` | 整文件编辑（尚未接入面板 UI） |
 
 可在插件页直接改的键都标了 `.volatile()`；`stateDir` 与 `locale` 需要重载插件，只以 YAML 为准。
 
 ## 侧栏面板
 
-左侧栏底部的「记忆」图标打开：顶部一行状态（home、当前项目、只读/可写、备份数），左边是文件树（项目 MEMORY.md、日期笔记、用户 MEMORY.md、画像），右边是选中文件的原文与各小节条目数，3 秒轮询。
+左侧栏底部的「记忆」图标打开。三段式：
 
-数据来自宿主上的只读路由 `/workbuddy-memory/state` 与 `/workbuddy-memory/content`。目标只接受枚举（`project-memory` / `project-daily` / `user-memory` / `profile`），日期只接受 `YYYY-MM-DD`，不收路径，所以它不能当文件浏览器用；POST 一律 405，跨源请求 403。
+- **状态条**：home、当前项目、只读/可写、项目与用户记忆占限额的比例条、备份数、冲突数
+- **树**：项目 `MEMORY.md`、日期笔记（超 30 天标「建议合并」）、用户 `MEMORY.md`、画像（只读）
+- **详情**：按 `## 小节` 分组，每条一行；顶部有搜索框（本地过滤 + 高亮）与「整理…」「历史…」「重新加载」
+
+写操作默认关闭，需要到插件页把「面板写操作」打开。打开后：
+
+| 操作 | 交互 | 落到哪 |
+|---|---|---|
+| 改条目 | 点一行变成输入框，Enter 保存 / Esc 取消 | `POST /action {type:'edit'}` |
+| 删条目 | 行尾 `✕` | `POST /action {type:'remove'}` |
+| 加条目 | 小节标题右侧 `＋` | `POST /action {type:'add'}` |
+| 撤销 | 保存后 10 秒内点「撤销」（恢复刚生成的那份备份） | `POST /action {type:'restore'}` |
+| 整理 | 出计划（哪些日期文件、多少条）→ 勾选 → 合并 | `POST /action {type:'consolidate'}` |
+| 回滚 | 选一份备份 → 看行级 diff → 确认 | `POST /action {type:'restore'}` |
+
+三条数据通道，全部同源校验：`GET /state`、`GET /content`、`GET /revisions` + `/revision`（只读），`POST /action`（默认关）。目标只接受枚举（`project-memory` / `project-daily` / `user-memory` / `profile`），日期只接受 `YYYY-MM-DD`，不收路径，所以它不能当文件浏览器用；跨源请求 403；`/action` 还强制 `content-type: application/json` 且 body ≤ 64 KB。
+
+面板不是第二条写入路径：每个动作都进同一个 `store`，同一把锁、同一套 revision CAS、同一份备份、同一本操作账本。写入时带上你看到的 revision，文件在此期间被改过就返回 `conflict`，面板给三个出口（重新加载 / 保留草稿 / 覆盖并先备份）。
 
 「当前项目」取的是最近一次 prompt 装配看到的工作目录，所以要先和一个会话说一句话，面板才知道该显示哪个项目。
 
 ## 测试
 
 ```bash
-npm test               # 105 个用例
+npm test               # 136 个用例
 npm run test:coverage  # 带覆盖率
 ```
+
+`tests/e2e.test.mjs` 起一个真实 HTTP 服务打真文件（临时目录），验证「JSON → 文件变化」这条缝；`tests/panel.test.mjs` 用一个极简 hooks 运行时驱动面板，点击 → fetch → 重渲染整条链路。
 
 当前：**行 90.5% / 分支 77.9% / 函数 76.2%**（`src/` 全部 20 个文件都进统计）。
 

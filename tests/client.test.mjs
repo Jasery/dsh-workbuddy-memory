@@ -46,6 +46,9 @@ const fakeRequire = (name) => {
     useMemo(fn) {
       return fn()
     },
+    useRef(value) {
+      return { current: value ?? null }
+    },
   }
 }
 
@@ -109,10 +112,10 @@ test('getJson reports the host error code, not an opaque failure', async () => {
   }
 })
 
-test('the panel shows a hint before anything is selected', () => {
+test('the panel says what to do before anything is selected', () => {
   const tree = expand(MemoryPanel({}))
   const body = text(tree)
-  assert.match(body, /从左边选一个文件查看内容/)
+  assert.match(body, /从左边选一个文件/)
   assert.match(body, /刷新/)
 })
 
@@ -140,18 +143,26 @@ function fakeForm(snap) {
 }
 
 test('a writable snapshot leaves every control enabled', () => {
-  const tree = expand(SettingsCard({ form: fakeForm(snapshot()) }))
+  const tree = expand(SettingsCard({ form: fakeForm(snapshot({ value: { inject: {}, write: {}, search: {}, guard: {}, ui: { allowWriteActions: true } } })) }))
   const inputs = walk(tree).filter((node) => node.type === 'input')
 
-  assert.equal(inputs.length >= 5, true, 'the card should render its switches')
+  assert.equal(inputs.length >= 7, true, 'the card should render its switches')
   assert.equal(inputs.every((node) => node.props.disabled === false), true, 'a writable form must stay editable')
   assert.match(text(tree), /revision 3/)
   assert.match(text(tree), /可写/)
 })
 
+test('full-text editing stays off until panel writes are on', () => {
+  const tree = expand(SettingsCard({ form: fakeForm(snapshot()) }))
+  const inputs = walk(tree).filter((node) => node.type === 'input')
+  // 只读 + 两个路径 + 四个能力开关 + 面板写操作 stay usable; 全文编辑 does not.
+  assert.equal(inputs.filter((node) => node.props.disabled === false).length, 8)
+  assert.equal(inputs.filter((node) => node.props.disabled === true).length, 1)
+})
+
 test('the card keys editability off `writable`, not off a mode field', () => {
   // 0.2.2 dropped `mode`; a snapshot without it must still be editable.
-  const snap = snapshot()
+  const snap = snapshot({ value: { inject: {}, write: {}, search: {}, guard: {}, ui: { allowWriteActions: true } } })
   assert.equal('mode' in snap, false)
   const inputs = walk(expand(SettingsCard({ form: fakeForm(snap) }))).filter((node) => node.type === 'input')
   assert.equal(inputs.every((node) => node.props.disabled === false), true)
@@ -178,4 +189,61 @@ test('loading and unavailable snapshots say so instead of rendering an empty for
 
   const unavailable = expand(SettingsCard({ form: fakeForm(snapshot({ status: 'unavailable' })) }))
   assert.match(text(unavailable), /无法写入宿主配置/)
+})
+
+const { ratio, filterEntries, highlightParts, lineDiff, describeCode, shortPath } = module.__internals
+
+test('ratio reports how full a limit is, and says when it overflows', () => {
+  assert.deepEqual(ratio(0, 100), { value: 0, percent: 0, level: 'ok' })
+  assert.deepEqual(ratio(50, 100), { value: 0.5, percent: 50, level: 'ok' })
+  assert.equal(ratio(85, 100).level, 'warn')
+  assert.deepEqual(ratio(120, 100), { value: 1, percent: 120, level: 'over' })
+  // A zero limit means "no cap", not "always full".
+  assert.deepEqual(ratio(10, 0), { value: 0, percent: 0, level: 'none' })
+})
+
+test('filterEntries matches case-insensitively and ignores a blank query', () => {
+  const rows = [{ text: 'Node 22' }, { text: 'docker' }]
+  assert.equal(filterEntries(rows, '').length, 2)
+  assert.deepEqual(filterEntries(rows, 'NODE').map((row) => row.text), ['Node 22'])
+  assert.deepEqual(filterEntries(rows, '   ').map((row) => row.text), ['Node 22', 'docker'])
+  assert.equal(filterEntries(rows, 'nope').length, 0)
+})
+
+test('highlightParts splits around the first hit only', () => {
+  assert.deepEqual(highlightParts('a Node b node c', 'node'), { before: 'a ', hit: 'Node', after: ' b node c' })
+  assert.deepEqual(highlightParts('plain', 'zzz'), { before: 'plain', hit: '', after: '' })
+  assert.deepEqual(highlightParts('plain', ''), { before: 'plain', hit: '', after: '' })
+})
+
+test('lineDiff counts added and removed rows', () => {
+  const diff = lineDiff('a\nb\nc\n', 'a\nB\nc\n')
+  assert.equal(diff.truncated, false)
+  assert.equal(diff.added, 1)
+  assert.equal(diff.removed, 1)
+  assert.deepEqual(
+    diff.rows.filter((row) => row.type !== 'same').map((row) => row.text),
+    ['b', 'B'],
+  )
+})
+
+test('lineDiff refuses to build a table for a huge file', () => {
+  const big = Array.from({ length: 500 }, (_, index) => `line ${index}`).join('\n')
+  const diff = lineDiff(big, big.replace('line 0', 'line zero'))
+  assert.equal(diff.truncated, true)
+  assert.equal(diff.reason, 'too_large')
+})
+
+test('a refusal code becomes a sentence a person can act on', () => {
+  assert.match(describeCode('write_actions_disabled'), /面板写操作/)
+  assert.match(describeCode('conflict'), /被改过/)
+  // An unmapped code is shown as-is rather than swallowed.
+  assert.equal(describeCode('weird_new_code'), 'weird_new_code')
+})
+
+test('paths in the status bar keep their tail, not their depth', () => {
+  assert.equal(shortPath(String.raw`C:\Users\admin\.workbuddy`), '…/admin/.workbuddy')
+  assert.equal(shortPath('D:/git/x'), 'D:/git/x')
+  assert.equal(shortPath(''), '—')
+  assert.equal(shortPath(null), '—')
 })

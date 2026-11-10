@@ -13,9 +13,9 @@ Share one set of memory files between DSH and WorkBuddy: the `MEMORY.md`, daily 
 | Write tools (`memory_append` / `memory_edit`) and the bare-write guard | done |
 | Revision fence, backups, operation log | done |
 | Config card on the Plugins page | done |
-| Sidebar memory panel (browse) | done |
-| Editing entries from the panel | not started |
-| `memory_consolidate` (fold old daily notes) | not started |
+| Sidebar memory panel (browse, edit, search) | done |
+| Consolidate and restore from the panel | done |
+| `memory_consolidate` tool (for the model) | not started |
 
 See [`docs/2026-11-09-dsh-workbuddy-memory-design.html`](docs/2026-11-09-dsh-workbuddy-memory-design.html) for the design (Chinese).
 
@@ -57,27 +57,48 @@ An empty `workbuddyHome` follows WorkBuddy's own order: `WORKBUDDY_CONFIG_DIR` �
 | `inject.limits.*` | 10000 / 4000 / 2000 | character limits per block |
 | `stateDir` | `''` | index and backups root; defaults to `~/.dsh/workbuddy-memory` |
 | `ui.enabled` | `true` | when off, the sidebar panel gets no data (the `/workbuddy-memory` routes stay unregistered) |
+| `ui.allowWriteActions` | `false` | master switch for panel writes; while off the panel is read-only and `/action` refuses everything |
+| `ui.allowFullTextEdit` | `false` | whole-file editing (no panel UI yet) |
 
 Keys editable from the plugin page carry `.volatile()`; `stateDir` and `locale` need a reload and stay YAML-only.
 
 ## Sidebar panel
 
-The `记忆` icon at the bottom of the sidebar opens it: a status line (home, current project, read-only or not, backup count), a file tree on the left (project `MEMORY.md`, daily notes, user `MEMORY.md`, profile), and the selected file's text with per-section entry counts on the right. It polls every 3 seconds.
+The `记忆` icon at the bottom of the sidebar opens it. Three bands:
 
-Data comes from two read-only host routes, `/workbuddy-memory/state` and `/workbuddy-memory/content`. Targets are an enum (`project-memory` / `project-daily` / `user-memory` / `profile`) and dates must be `YYYY-MM-DD`; no path is ever accepted, so it cannot serve as a file browser. `POST` is 405 everywhere and a cross-origin `Origin` is 403.
+- **Status**: home, current project, read-only or not, limit meters for project and user memory, backup and conflict counts
+- **Tree**: project `MEMORY.md`, daily notes (anything over 30 days is flagged "suggest merging"), user `MEMORY.md`, profile (read-only)
+- **Detail**: rows grouped by `## section`, with a search box (local filter and highlight), plus "整理…", "历史…" and "reload"
+
+Writes are off by default; turn on "面板写操作" on the Plugins page. With it on:
+
+| Action | Interaction | Route |
+|---|---|---|
+| Edit a row | click the row, Enter saves, Esc cancels | `POST /action {type:'edit'}` |
+| Delete a row | the `✕` at the end of the row | `POST /action {type:'remove'}` |
+| Add a row | the `＋` next to a section heading | `POST /action {type:'add'}` |
+| Undo | within 10 s of a save, "撤销" restores that backup | `POST /action {type:'restore'}` |
+| Consolidate | plan first, tick the dates, then merge | `POST /action {type:'consolidate'}` |
+| Roll back | pick a backup, read the line diff, confirm | `POST /action {type:'restore'}` |
+
+Three data routes, all same-origin checked: `GET /state`, `GET /content`, `GET /revisions` + `/revision` (read-only), and `POST /action` (off by default). Targets are an enum (`project-memory` / `project-daily` / `user-memory` / `profile`) and dates must be `YYYY-MM-DD`; no path is ever accepted, so it cannot serve as a file browser. A cross-origin `Origin` is 403, and `/action` additionally requires `content-type: application/json` and a body of at most 64 KB.
+
+The panel is not a second write path: every action goes through the same store as the tools — same lock, same revision CAS, same backup, same ledger. It sends the revision it displayed, so a file changed underneath it returns `conflict` and the panel offers three exits (reload / keep the draft / overwrite after backing up).
 
 "Current project" is the working directory the last prompt assembly saw, so the panel only knows which project to show after a session has talked to it once.
 
 ## Tests
 
 ```bash
-npm test               # 105 cases
+npm test               # 136 cases
 npm run test:coverage  # with coverage
 ```
 
-Current: **90.5% lines / 77.9% branches / 76.2% functions** (all 20 files under `src/` are counted).
+Current: **92.6% lines / 77.6% branches / 80.0% functions** (all 20 files under `src/` are counted).
 
 What the suite pins down: the path resolution chain and the six-step capability matrix, byte-stable markdown edits, the write chain (lock, revision fence, backups, `read_only`), the real-path classification behind the bare-write guard, section ordering and truncation (no half surrogate pairs), the refresh modes and cache keys, all five tools including conflict and idempotent replay, the panel routes' JSON shape and 405/403 edges, and the config card rendered through a four-hook React stand-in — which is what catches a host dropping a snapshot field.
+
+Two suites go further than units: `tests/e2e.test.mjs` boots a real HTTP server over real files in a temp dir (JSON in, bytes out, conflict, restore, consolidate), and `tests/panel.test.mjs` drives the panel through a minimal hooks runtime, so a click → fetch → re-render round trip is asserted rather than assumed.
 
 Not covered automatically: real browser focus and drag behaviour, and cross-process contention (only half of `fslock`'s wait and timeout paths run).
 
