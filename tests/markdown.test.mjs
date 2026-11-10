@@ -121,3 +121,61 @@ test('removeLines drops rows from the bottom up and keeps one trailing eol', () 
   assert.equal(removeLines('- one\n\n- two\n', [0]), '- two\n')
   assert.equal(removeLines('- one\n', [0]), '')
 })
+
+test('a replacement without a dash keeps the bullet marker', () => {
+  const text = '## A\n- one\n- two\n'
+  // Both clients send the entry body, not a whole line; the marker belongs to
+  // the document, so a plain replacement must not demote the entry to prose.
+  assert.equal(editEntry(text, 'A', 'one', { replacement: 'ONE' }).text, '## A\n- ONE\n- two\n')
+  assert.equal(editEntry(text, 'A', 'one', { replacement: '- ONE' }).text, '## A\n- ONE\n- two\n')
+  assert.equal(editEntryAt(text, 'A', 1, { replacement: 'ONE' }).text, '## A\n- ONE\n- two\n')
+})
+
+test('a replacement keeps the marker and indentation the entry already had', () => {
+  const text = '## A\n- one\n  * child\n'
+  const result = editEntry(text, 'A', 'child', { replacement: 'CHILD' })
+  assert.equal(result.replaced, 1)
+  assert.equal(result.text, '## A\n- one\n  * CHILD\n')
+})
+
+test('an empty replacement is refused instead of deleting the entry', () => {
+  const text = '## A\n- one\n- two\n'
+  for (const replacement of [undefined, '', '   ', '- ']) {
+    const result = editEntry(text, 'A', 'one', { replacement })
+    assert.equal(result.replaced, 0, `replacement ${JSON.stringify(replacement)} must not write`)
+    assert.equal(result.reason, 'empty_text')
+    assert.equal(result.text, text)
+  }
+  assert.equal(editEntryAt(text, 'A', 1, { replacement: '' }).reason, 'empty_text')
+})
+
+test('prose and sub-headings inside a section are not entries', () => {
+  const text = '## A\n\n这一节说明：one 是常用选项。\n### one 小节\n- one\n'
+  // A prose-only hit is named as such, so the caller knows the text is there.
+  const prose = editEntry('## A\n\n说明：one 是常用选项。\n', 'A', 'one', { replacement: 'ONE' })
+  assert.equal(prose.replaced, 0)
+  assert.equal(prose.reason, 'not_an_entry')
+
+  const heading = editEntry('## A\n### one\n- x\n', 'A', 'one', { replacement: 'ONE' })
+  assert.equal(heading.replaced, 0)
+  assert.equal(heading.reason, 'not_an_entry')
+
+  // The bullet is still the one addressable target when prose also matches.
+  const both = editEntry(text, 'A', 'one', { replacement: 'ONE' })
+  assert.equal(both.replaced, 1)
+  assert.equal(both.text, '## A\n\n这一节说明：one 是常用选项。\n### one 小节\n- ONE\n')
+})
+
+test('a fenced block inside a section is not addressable', () => {
+  const text = '## A\n- one\n```\n- one in code\n```\n'
+  const result = editEntry(text, 'A', 'one in code', { replacement: 'x' })
+  assert.equal(result.replaced, 0)
+  assert.equal(result.text, text)
+})
+
+test('all=true rewrites every matching bullet and nothing else', () => {
+  const text = '## A\n- same\n说明 same\n- same\n'
+  const result = editEntry(text, 'A', 'same', { replacement: 'X', all: true })
+  assert.equal(result.replaced, 2)
+  assert.equal(result.text, '## A\n- X\n说明 same\n- X\n')
+})

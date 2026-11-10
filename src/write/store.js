@@ -27,6 +27,24 @@ export const TARGETS = ['project-memory', 'project-daily', 'user-memory']
 export const ACTIONS = ['add', 'edit', 'remove', 'consolidate', 'restore']
 
 /**
+ * Today as `YYYY-MM-DD` in the machine's own timezone.
+ *
+ * `toISOString()` is UTC: at 00:30 in Asia/Shanghai it still says yesterday, so
+ * "today's note" would be written into the previous day's file for the first
+ * eight hours of every day. The daily file is user-visible, so it follows the
+ * user's clock, not the server's.
+ *
+ * @param {Date} [now]
+ * @returns {string}
+ */
+export function localDateStamp(now = new Date()) {
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+/**
  * Resolve one target to a path and its writing style.
  *
  * @param {string} target
@@ -38,7 +56,7 @@ export function resolveTarget(target, probe, date) {
     case 'project-memory':
       return { path: probe.project.memoryPath, mode: 'rewrite', dir: probe.project.dir, exists: probe.project.exists }
     case 'project-daily': {
-      const stamp = date ?? new Date().toISOString().slice(0, 10)
+      const stamp = date ?? localDateStamp()
       if (!/^\d{4}-\d{2}-\d{2}$/.test(stamp)) return { path: null, mode: 'append', dir: probe.project.dir, error: 'bad_date' }
       return { path: probe.project.dir ? join(probe.project.dir, `${stamp}.md`) : null, mode: 'append', dir: probe.project.dir }
     }

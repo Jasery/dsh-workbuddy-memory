@@ -8,6 +8,8 @@
  */
 
 const HEADING = /^(#{1,6})[ \t]+(.*?)[ \t]*$/
+/** One bullet entry: indent, marker, spacing, body. Prose and headings do not match. */
+const BULLET = /^([ \t]*)([-*])([ \t]+)(\S.*)$/
 
 /** Dominant line ending of a document. */
 export function detectEol(text) {
@@ -123,13 +125,44 @@ export function appendToSection(text, heading, line) {
 }
 
 /**
+ * Rewrite one bullet's body, keeping its marker, indentation and spacing.
+ *
+ * A caller may pass the body with or without a leading `- `: the prefix is
+ * owned by the document, not by the caller, so it is re-applied here instead of
+ * being taken from the replacement. Dropping it would silently demote an entry
+ * to a paragraph, which every later `memory_edit` then refuses to find.
+ *
+ * @param {string} body - the current line without its terminator.
+ * @param {string} replacement - new body, optionally prefixed with `- `.
+ * @returns {string|null} the rewritten line without terminator, or null when empty.
+ */
+function rewriteBulletBody(body, replacement) {
+  const match = BULLET.exec(body)
+  if (!match) return null
+  const [, indent, marker, spacing] = match
+  let next = String(replacement ?? '').trim()
+  // A bare marker is a caller that meant "no text", not an entry whose body is
+  // the dash itself.
+  if (/^[-*]$/.test(next)) return null
+  const prefixed = /^([-*])[ \t]+/.exec(next)
+  if (prefixed) next = next.slice(prefixed[0].length).trim()
+  if (!next) return null
+  return `${indent}${marker}${spacing}${next}`
+}
+
+/**
  * Replace or remove the one entry matching `match`.
+ *
+ * Only bullet lines are candidates: prose and sub-headings inside a section are
+ * not entries, and rewriting one of them is how a memory file loses its shape.
+ * A match that exists only in prose is reported as `not_an_entry` rather than
+ * `no_match`, so the caller learns the text is there but is not addressable.
  *
  * @param {string} text
  * @param {string} heading
  * @param {string} match - literal text (or `literal`, see options) identifying the entry.
  * @param {{ replacement?: string, mode?: 'replace'|'remove', all?: boolean }} options
- * @returns {{ text: string, replaced: number, lines: number[] }}
+ * @returns {{ text: string, replaced: number, lines: number[], reason?: string }}
  */
 export function editEntry(text, heading, match, options = {}) {
   const mode = options.mode ?? 'replace'
@@ -138,30 +171,47 @@ export function editEntry(text, heading, match, options = {}) {
 
   const lines = splitLines(text)
   const hits = []
+  let proseHit = false
+  let fence = null
   for (let index = section.line + 1; index <= section.endLine; index += 1) {
     const body = lines[index].replace(/\r?\n$/, '')
+    const fenceMatch = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(body)
+    if (fenceMatch) {
+      if (!fence) fence = fenceMatch[1][0].repeat(3)
+      else if (fenceMatch[1].startsWith(fence)) fence = null
+      continue
+    }
+    if (fence) continue
     if (!body.trim()) continue
-    if (body.includes(match)) hits.push(index)
+    if (!body.includes(match)) continue
+    if (BULLET.test(body)) hits.push(index)
+    else proseHit = true
   }
 
-  if (hits.length === 0) return { text, replaced: 0, lines: [], reason: 'no_match' }
+  if (hits.length === 0) {
+    return { text, replaced: 0, lines: [], reason: proseHit ? 'not_an_entry' : 'no_match' }
+  }
   if (hits.length > 1 && options.all !== true) return { text, replaced: 0, lines: hits, reason: 'ambiguous' }
 
   const eol = detectEol(text)
   const targets = options.all === true ? hits : [hits[0]]
 
+  // Validate every target before touching the document: a replace that cannot
+  // produce a valid entry must not leave half of a multi-target edit applied.
+  const rewrites = new Map()
   for (const index of targets) {
     if (mode === 'remove') {
       // Keep the terminator so a removal shrinks the line, not the file's shape.
-      lines[index] = lines[index].endsWith('\n') ? eol : ''
-    } else {
-      const body = lines[index].replace(/\r?\n$/, '')
-      const indent = /^([ \t]*)/.exec(body)[1]
-      const replacement = String(options.replacement ?? '').trim()
-      lines[index] = `${indent}${replacement}${eol}`
+      rewrites.set(index, lines[index].endsWith('\n') ? eol : '')
+      continue
     }
+    const body = lines[index].replace(/\r?\n$/, '')
+    const next = rewriteBulletBody(body, options.replacement)
+    if (next === null) return { text, replaced: 0, lines: targets, reason: 'empty_text' }
+    rewrites.set(index, `${next}${eol}`)
   }
 
+  for (const [index, line] of rewrites) lines[index] = line
   return { text: lines.join(''), replaced: targets.length, lines: targets }
 }
 
@@ -194,16 +244,17 @@ export function editEntryAt(text, heading, line, options = {}) {
 
   const lines = splitLines(text)
   const body = lines[line]?.replace(/\r?\n$/, '') ?? ''
-  if (!/^[ \t]*[-*][ \t]+\S/.test(body)) return { text, replaced: 0, lines: [line], reason: 'not_an_entry' }
+  if (!BULLET.test(body)) return { text, replaced: 0, lines: [line], reason: 'not_an_entry' }
 
   const eol = detectEol(text)
   if ((options.mode ?? 'replace') === 'remove') {
     lines[line] = lines[line].endsWith('\n') ? eol : ''
   } else {
-    const indent = /^([ \t]*)/.exec(body)[1]
-    const next = String(options.replacement ?? '').trim()
-    if (!next) return { text, replaced: 0, lines: [line], reason: 'empty_text' }
-    lines[line] = `${indent}${next}${eol}`
+    // The marker is the document's, not the caller's: it is preserved here so a
+    // replacement written as plain text cannot demote the entry to a paragraph.
+    const next = rewriteBulletBody(body, options.replacement)
+    if (next === null) return { text, replaced: 0, lines: [line], reason: 'empty_text' }
+    lines[line] = `${next}${eol}`
   }
   return { text: lines.join(''), replaced: 1, lines: [line] }
 }

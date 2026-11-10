@@ -100,13 +100,13 @@ Project memory lives in `<project>/.workbuddy/memory/`. `MEMORY.md` (long-term) 
 ## Tests
 
 ```bash
-npm test               # 139 cases
+npm test               # 152 cases
 npm run test:coverage  # with coverage
 ```
 
-Current: **92.8% lines / 78.3% branches / 80.9% functions** (all 20 files under `src/` are counted).
+Current: **93.0% lines / 79.2% branches / 81.2% functions** (all 20 files under `src/` are counted).
 
-What the suite pins down: the path resolution chain and the six-step capability matrix, byte-stable markdown edits, the write chain (lock, revision fence, backups, `read_only`), the real-path classification behind the bare-write guard, section ordering and truncation (no half surrogate pairs), the refresh modes and cache keys, all five tools including conflict and idempotent replay, the panel routes' JSON shape and 405/403 edges, and the config card rendered through a four-hook React stand-in — which is what catches a host dropping a snapshot field.
+What the suite pins down: the path resolution chain and the six-step capability matrix, byte-stable markdown edits (including that a rewritten entry keeps its `- ` marker and that an empty replacement is refused instead of deleting the row), the write chain (lock, revision fence, backups, `read_only`, local-calendar daily files), the real-path classification behind the bare-write guard, section ordering and truncation (no half surrogate pairs), the refresh modes and cache keys, all five tools including conflict and idempotent replay, the panel routes' JSON shape and 405/403 edges, and the config card rendered through a four-hook React stand-in — which is what catches a host dropping a snapshot field.
 
 Two suites go further than units: `tests/e2e.test.mjs` boots a real HTTP server over real files in a temp dir (JSON in, bytes out, conflict, restore, consolidate), and `tests/panel.test.mjs` drives the panel through a minimal hooks runtime, so a click → fetch → re-render round trip is asserted rather than assumed.
 

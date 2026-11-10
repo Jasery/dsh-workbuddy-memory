@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import test from 'node:test'
 
 import { normalizeConfig } from '../src/config.js'
 import { probeEnvironment } from '../src/env.js'
 import { contentRevision } from '../src/write/fslock.js'
-import { createStore } from '../src/write/store.js'
+import { createStore, localDateStamp } from '../src/write/store.js'
 
 function workspace() {
   const root = mkdtempSync(join(tmpdir(), 'wbm-'))
@@ -136,6 +136,57 @@ test('a missing memory directory is reported, not created', async () => {
   const result = await s.store.append({ target: 'project-memory', section: 'A', text: 'x' }, probe)
   assert.equal(result.ok, false)
   assert.equal(result.code, 'no_store')
+})
+
+test('the daily file follows the local calendar day, not UTC', async () => {
+  const s = setup()
+  // 00:30 in a UTC+8 zone is still the previous day in UTC; the note a person
+  // writes at half past midnight must land in today's file.
+  const now = new Date('2026-11-10T00:30:00+08:00')
+  assert.equal(localDateStamp(now), '2026-11-10')
+
+  const result = await s.store.append({ target: 'project-daily', text: '凌晨一条' }, s.probe)
+  assert.equal(result.ok, true)
+  assert.equal(basename(result.path), `${localDateStamp()}.md`)
+})
+
+test('edit without a replacement is refused, not turned into a delete', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- one\n- two\n', 'utf8')
+
+  const result = await s.store.edit({ target: 'project-memory', section: 'A', match: 'one' }, s.probe)
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'empty_text')
+  assert.equal(readFileSync(file, 'utf8'), '## A\n- one\n- two\n')
+})
+
+test('edit keeps the bullet marker when the client sends only the body', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- one\n- two\n', 'utf8')
+
+  const result = await s.store.edit({ target: 'project-memory', section: 'A', match: 'one', replacement: 'ONE' }, s.probe)
+  assert.equal(result.ok, true)
+  assert.equal(readFileSync(file, 'utf8'), '## A\n- ONE\n- two\n')
+})
+
+test('edit refuses prose instead of rewriting it', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  const before = '## A\n\n说明：one 是常用选项。\n- one\n'
+  writeFileSync(file, before, 'utf8')
+
+  // The bullet is still found when prose also contains the text.
+  const result = await s.store.edit({ target: 'project-memory', section: 'A', match: 'one', replacement: 'ONE' }, s.probe)
+  assert.equal(result.ok, true)
+  assert.equal(readFileSync(file, 'utf8'), '## A\n\n说明：one 是常用选项。\n- ONE\n')
+
+  writeFileSync(file, '## A\n\n说明：only prose here。\n', 'utf8')
+  const proseOnly = await s.store.edit({ target: 'project-memory', section: 'A', match: 'only prose', replacement: 'x' }, s.probe)
+  assert.equal(proseOnly.ok, false)
+  assert.equal(proseOnly.code, 'not_an_entry')
+  assert.equal(readFileSync(file, 'utf8'), '## A\n\n说明：only prose here。\n')
 })
 
 test('editAt rewrites one row by line and refuses a stale line', async () => {

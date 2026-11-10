@@ -43,7 +43,9 @@ node scripts/dev-install.mjs web
 | `memory_read` | 读一个目标（项目 MEMORY.md / 日期文件 / 用户 MEMORY.md），返回 revision 与小节列表 |
 | `memory_search` | 按字面量搜索所有记忆文件，返回文件 + 小节 + 行号 |
 | `memory_append` | 往指定小节追加一条，或往当天笔记追加一行 |
-| `memory_edit` | 替换或删除一条；匹配不唯一时拒绝而不是猜 |
+| `memory_edit` | 替换或删除一条；只认 `- ` 条目，散文与子标题拒绝；匹配不唯一时拒绝而不是猜 |
+
+`memory_edit` 的 `replacement` 只写条目正文，`- ` 前缀与缩进由文件保留（传了也会被剥掉再补回）；`mode=replace` 时 `replacement` 为空会返回 `empty_text`，不会静默删掉那条。
 
 写入链：跨进程锁 → 锁内重读 → revision 比对 → 备份 → 原子替换。`write` / `edit` 直接改记忆文件会被守卫拒绝。
 
@@ -112,19 +114,19 @@ node scripts/dev-install.mjs web
 ## 测试
 
 ```bash
-npm test               # 139 个用例
+npm test               # 152 个用例
 npm run test:coverage  # 带覆盖率
 ```
 
 `tests/e2e.test.mjs` 起一个真实 HTTP 服务打真文件（临时目录），验证「JSON → 文件变化」这条缝；`tests/panel.test.mjs` 用一个极简 hooks 运行时驱动面板，点击 → fetch → 重渲染整条链路。
 
-当前：**行 90.5% / 分支 77.9% / 函数 76.2%**（`src/` 全部 20 个文件都进统计）。
+当前：**行 93.0% / 分支 79.2% / 函数 81.2%**（`src/` 全部 20 个文件都进统计）。
 
 | 覆盖面 | 用例锁定的是 |
 |---|---|
 | `paths` / `env` | 路径解析链、六种环境矩阵、画像歧义不猜 |
-| `markdown` | 追加与替换逐字节稳定、围栏内标题不算小节、匹配不唯一拒绝 |
-| `write/store` | 锁内复检、revision 栅栏、备份、`read_only` / `write_disabled` |
+| `markdown` | 追加与替换逐字节稳定、围栏内标题不算小节、匹配不唯一拒绝、改条目保留 `- ` 前缀、空替换报 `empty_text`、散文与子标题不算条目 |
+| `write/store` | 锁内复检、revision 栅栏、备份、`read_only` / `write_disabled`、日期笔记按本地日历 |
 | `write/guard` | 真路径分类、兄弟目录不误伤、只读时让行、非写入器放行 |
 | `render` | 四块顺序、开关只关一块、超限截断、代理对不切半、home 脱敏 |
 | `inject` / `cache` | 同一次装配只读一次盘、`first-turn` 冻结、provider 异常不炸 turn |

@@ -49,12 +49,12 @@ export function editTool({ cfg, store }) {
   return defineTool({
     name: 'memory_edit',
     description:
-      'Replace or remove one existing entry in a WorkBuddy MEMORY.md, matched by literal text inside the given section. Refuses when the match is ambiguous, so the caller can be more specific instead of the tool guessing.',
+      'Replace or remove one existing bullet entry in a WorkBuddy MEMORY.md, matched by literal text inside the given section. Only bullet lines are addressable: prose and sub-headings are refused with not_an_entry, and an ambiguous match is refused rather than guessed. The "- " marker and indentation are preserved, so replacement takes the entry text, not a whole line.',
     parameters: {
       target: { type: 'string', required: true, description: 'project-memory | user-memory' },
       section: { type: 'string', required: true, description: 'section heading that contains the entry' },
-      match: { type: 'string', required: true, description: 'literal text identifying exactly one entry in that section' },
-      replacement: { type: 'string', description: 'replacement line (without "- "), for mode=replace' },
+      match: { type: 'string', required: true, description: 'literal text identifying exactly one bullet entry in that section' },
+      replacement: { type: 'string', description: 'new entry text for mode=replace; the leading "- " is optional and never needed. Required (non-empty) when replacing.' },
       mode: { type: 'string', description: 'replace (default) | remove' },
       expectedRevision: { type: 'string', description: 'revision from memory_read' },
       operationId: { type: 'string', description: 'idempotency key' },
