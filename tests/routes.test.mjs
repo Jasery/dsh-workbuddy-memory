@@ -183,3 +183,17 @@ test('the panel can switch between the workspaces it has seen', async () => {
   const crossRead = await call(`/workbuddy-memory/content?target=project-memory&project=${'0'.repeat(8)}`)
   assert.equal(crossRead.status, 404)
 })
+
+test('a project target without a workspace says so, rather than blaming the target', async () => {
+  const { call } = await harness()
+  const project = await call('/workbuddy-memory/content?target=project-memory')
+  assert.equal(project.status, 404)
+  assert.equal(JSON.parse(project.body).code, 'no_project')
+
+  const daily = await call('/workbuddy-memory/content?target=project-daily&date=2026-11-09')
+  assert.equal(JSON.parse(daily.body).code, 'no_project')
+
+  // An actually unknown target still reports as one.
+  const bogus = await call('/workbuddy-memory/content?target=../etc/passwd')
+  assert.equal(JSON.parse(bogus.body).code, 'unknown_target')
+})

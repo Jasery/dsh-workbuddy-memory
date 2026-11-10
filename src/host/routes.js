@@ -266,7 +266,7 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store }) {
       allowWriteActions: cfg.ui.allowWriteActions,
       allowFullTextEdit: cfg.ui.allowFullTextEdit,
       limits: cfg.inject.limits,
-      dailyLimitHint: cfg.write.backupKeep,
+      backupKeep: cfg.write.backupKeep,
       dataFolderName: cfg.dataFolderName || '.workbuddy',
       home: { path: probe.home.path, source: probe.home.source, detail: probe.home.detail },
       stores: {
@@ -317,7 +317,13 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store }) {
     if (target === 'profile' && !resolved.path) {
       return { ok: false, code: probe.profile.ambiguous ? 'ambiguous_profile' : 'no_profile' }
     }
-    if (!resolved.path) return { ok: false, code: resolved.error ?? 'unknown_target', targets: TARGETS }
+    // An enum target with no path means "this plugin has no workspace yet",
+    // not "you asked for something that does not exist". The panel needs the
+    // difference: one is fixed by opening a session, the other by fixing a bug.
+    if (!resolved.path) {
+      if (resolved.error) return { ok: false, code: resolved.error, target }
+      return { ok: false, code: cwd ? 'no_store' : 'no_project', target, targets: TARGETS }
+    }
     if (!existsSync(resolved.path)) return { ok: false, code: 'not_found', path: resolved.path }
 
     const described = describe(resolved.path)
