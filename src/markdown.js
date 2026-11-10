@@ -171,6 +171,94 @@ export function ensureTrailingEol(text) {
   return text.endsWith('\n') ? text : text + detectEol(text)
 }
 
+/**
+ * Rewrite or delete exactly one line, addressed by position.
+ *
+ * The panel renders entries with the line number it read, so it can name the
+ * row it means instead of quoting text that may occur twice in a section. The
+ * heading is still checked: a line number from a stale render must not land in
+ * a different section after the file shifted.
+ *
+ * @param {string} text
+ * @param {string} heading
+ * @param {number} line - 0-based line index of the entry.
+ * @param {{ replacement?: string, mode?: 'replace'|'remove' }} options
+ * @returns {{ text: string, replaced: number, reason?: string, lines: number[] }}
+ */
+export function editEntryAt(text, heading, line, options = {}) {
+  const section = findSection(text, heading)
+  if (!section) return { text, replaced: 0, lines: [], reason: 'no_section' }
+  if (!Number.isInteger(line) || line <= section.line || line > section.endLine) {
+    return { text, replaced: 0, lines: [], reason: 'stale_line' }
+  }
+
+  const lines = splitLines(text)
+  const body = lines[line]?.replace(/\r?\n$/, '') ?? ''
+  if (!/^[ \t]*[-*][ \t]+\S/.test(body)) return { text, replaced: 0, lines: [line], reason: 'not_an_entry' }
+
+  const eol = detectEol(text)
+  if ((options.mode ?? 'replace') === 'remove') {
+    lines[line] = lines[line].endsWith('\n') ? eol : ''
+  } else {
+    const indent = /^([ \t]*)/.exec(body)[1]
+    const next = String(options.replacement ?? '').trim()
+    if (!next) return { text, replaced: 0, lines: [line], reason: 'empty_text' }
+    lines[line] = `${indent}${next}${eol}`
+  }
+  return { text: lines.join(''), replaced: 1, lines: [line] }
+}
+
+/** Bullet entries of a section with their line numbers, in document order. */
+export function sectionEntries(text, heading) {
+  const section = findSection(text, heading)
+  if (!section) return []
+  const lines = splitLines(text)
+  const out = []
+  for (let index = section.line + 1; index <= section.endLine; index += 1) {
+    const body = (lines[index] ?? '').replace(/\r?\n$/, '')
+    const match = /^([ \t]*)[-*][ \t]+(\S.*)$/.exec(body)
+    if (match) out.push({ line: index, indent: match[1].length, text: match[2].trim() })
+  }
+  return out
+}
+
+/** Every bullet entry in the document, ignoring headings and prose. */
+export function allEntries(text) {
+  return splitLines(text)
+    .map((raw, index) => {
+      const body = raw.replace(/\r?\n$/, '')
+      const match = /^([ \t]*)[-*][ \t]+(\S.*)$/.exec(body)
+      return match ? { line: index, indent: match[1].length, text: match[2].trim() } : null
+    })
+    .filter(Boolean)
+}
+
+/**
+ * Drop the given 0-based line numbers, highest first so earlier indices stay
+ * valid. Blank lines left behind by a removal are dropped, and the file keeps
+ * exactly one trailing newline.
+ */
+export function removeLines(text, lineNumbers) {
+  const eol = detectEol(text)
+  const lines = splitLines(text)
+  for (const index of [...lineNumbers].sort((a, b) => b - a)) {
+    if (index < 0 || index >= lines.length) continue
+    const body = lines[index].replace(/\r?\n$/, '')
+    if (body.trim() === '') continue
+    lines.splice(index, 1)
+  }
+  // Collapse the blank runs a removal can leave between list items, and drop
+  // any that end up leading the file.
+  const squeezed = []
+  for (const line of lines) {
+    const blank = line.replace(/\r?\n$/, '').trim() === ''
+    if (blank && (squeezed.length === 0 || squeezed[squeezed.length - 1].trim() === '')) continue
+    squeezed.push(line.replace(/\r?\n$/, ''))
+  }
+  while (squeezed.length > 0 && squeezed[squeezed.length - 1].trim() === '') squeezed.pop()
+  return squeezed.length === 0 ? '' : `${squeezed.join(eol)}${eol}`
+}
+
 /** Count `- ` entries under one section. */
 export function countEntries(text, heading) {
   const section = findSection(text, heading)

@@ -62,9 +62,10 @@ export function apply(ctx, config) {
   }
 
   let stateDir = ''
+  let store = null
   try {
     stateDir = resolveStateDir(cfg.stateDir).path
-    const store = createStore({ cfg, stateDir })
+    store = createStore({ cfg, stateDir })
     registerTools(ctx, { cfg, t, store })
     registerWriteGuard(ctx, { cfg, t })
     void sections
@@ -77,7 +78,10 @@ export function apply(ctx, config) {
     // the plugin from loading.
     ctx.inject(['webServer'], (scoped) => {
       try {
-        registerRoutes(scoped, { cfg, recent, stateDir, version: VERSION })
+        // The panel writes through the same store the tools use. It is one
+        // instance per plugin, so a panel write and a tool write queue on the
+        // same lock.
+        registerRoutes(scoped, { cfg, recent, stateDir, version: VERSION, store })
       } catch (error) {
         ctx.logger?.warn?.(`[workbuddy-memory] panel routes failed: ${error?.message ?? error}`)
       }

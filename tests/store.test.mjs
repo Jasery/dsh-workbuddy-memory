@@ -137,3 +137,106 @@ test('a missing memory directory is reported, not created', async () => {
   assert.equal(result.ok, false)
   assert.equal(result.code, 'no_store')
 })
+
+test('editAt rewrites one row by line and refuses a stale line', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- one\n- two\n', 'utf8')
+
+  const before = readFileSync(file, 'utf8')
+  const result = await s.store.editAt({ target: 'project-memory', section: 'A', line: 1, replacement: '- ONE', expectedRevision: contentRevision(before) }, s.probe)
+  assert.equal(result.ok, true)
+  assert.equal(readFileSync(file, 'utf8'), '## A\n- ONE\n- two\n')
+
+  // The heading still exists but the line index no longer holds an entry.
+  const moved = await s.store.editAt({ target: 'project-memory', section: 'A', line: 9, replacement: '- x' }, s.probe)
+  assert.equal(moved.ok, false)
+  assert.equal(moved.code, 'stale_line')
+})
+
+test('remove deletes exactly the named line', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- one\n- two\n- three\n', 'utf8')
+  const result = await s.store.remove({ target: 'project-memory', section: 'A', line: 2 }, s.probe)
+  assert.equal(result.ok, true)
+  assert.equal(readFileSync(file, 'utf8'), '## A\n- one\n\n- three\n')
+})
+
+test('revisions are listed per file and read back verbatim', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- one\n', 'utf8')
+  const first = await s.store.append({ target: 'project-memory', section: 'A', text: 'two' }, s.probe)
+  assert.equal(first.ok, true)
+
+  const rows = s.store.listRevisions(file)
+  assert.equal(rows.length, 1)
+  const snapshot = s.store.readRevision(file, rows[0].name)
+  assert.equal(snapshot.ok, true)
+  assert.equal(snapshot.text, '## A\n- one\n')
+
+  // An unknown name is refused rather than turned into a path.
+  assert.equal(s.store.readRevision(file, '../../../etc/passwd').ok, false)
+})
+
+test('restore puts the snapshot back and backs up what it replaced', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- one\n', 'utf8')
+  await s.store.append({ target: 'project-memory', section: 'A', text: 'two' }, s.probe)
+  const rows = s.store.listRevisions(file)
+  const current = readFileSync(file, 'utf8')
+
+  const result = await s.store.restore({ target: 'project-memory', name: rows[0].name, expectedRevision: contentRevision(current) }, s.probe)
+  assert.equal(result.ok, true)
+  assert.equal(readFileSync(file, 'utf8'), '## A\n- one\n')
+  assert.equal(s.store.listRevisions(file).length, 2, 'the replaced version became a backup too')
+
+  const missing = await s.store.restore({ target: 'project-memory', name: 'nope.md', expectedRevision: contentRevision('## A\n- one\n') }, s.probe)
+  assert.equal(missing.code, 'no_revision')
+})
+
+test('consolidate plans by age, then moves entries instead of copying them', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## 环境\n- Node 22\n', 'utf8')
+  writeFileSync(join(s.memoryDir, '2026-01-02.md'), '- 老的一\n- 老的二\n', 'utf8')
+  writeFileSync(join(s.memoryDir, '2099-01-01.md'), '- 未来的\n', 'utf8')
+
+  const plan = await s.store.consolidate({ beforeDays: 30, dryRun: true }, s.probe)
+  assert.equal(plan.ok, true)
+  assert.equal(plan.dryRun, true)
+  assert.deepEqual(plan.candidates.map((row) => row.date), ['2026-01-02'])
+  assert.equal(plan.entries, 2)
+
+  const merged = await s.store.consolidate({ beforeDays: 30, dryRun: false, dates: ['2026-01-02'] }, s.probe)
+  assert.equal(merged.ok, true)
+  const text = readFileSync(file, 'utf8')
+  assert.match(text, /## 2026-01-02/)
+  assert.match(text, /- 老的一/)
+  assert.match(text, /- 老的二/)
+  assert.doesNotMatch(readFileSync(join(s.memoryDir, '2026-01-02.md'), 'utf8'), /老的一/)
+  assert.match(readFileSync(join(s.memoryDir, '2099-01-01.md'), 'utf8'), /未来的/)
+})
+
+test('consolidate with nothing old enough says so instead of writing', async () => {
+  const s = setup()
+  writeFileSync(join(s.memoryDir, '2099-01-01.md'), '- 未来的\n', 'utf8')
+  const result = await s.store.consolidate({ beforeDays: 30, dryRun: false }, s.probe)
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'nothing_to_consolidate')
+})
+
+test('the ledger counts conflicts, not just commits', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- one\n', 'utf8')
+  await s.store.editAt({ target: 'project-memory', section: 'A', line: 1, replacement: '- two', expectedRevision: contentRevision('## A\n- one\n') }, s.probe)
+  await s.store.editAt({ target: 'project-memory', section: 'A', line: 1, replacement: '- three', expectedRevision: 'stale' }, s.probe)
+
+  const stats = s.store.operationStats()
+  assert.equal(stats.conflicts, 1)
+  assert.equal(typeof stats.lastConflictAt, 'number')
+  assert.equal(typeof stats.lastCommitAt, 'number')
+})

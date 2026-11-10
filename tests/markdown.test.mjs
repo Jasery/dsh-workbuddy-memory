@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { appendToSection, countEntries, editEntry, ensureTrailingEol, findSection, parseSections, splitLines } from '../src/markdown.js'
+import { allEntries, editEntryAt, removeLines, appendToSection, countEntries, editEntry, ensureTrailingEol, findSection, parseSections, splitLines } from '../src/markdown.js'
 
 const BASE = ['# Memory', '', '## 偏好', '- 用简体中文', '- 避免人称代词', '', '## 项目', '- DSH 插件', ''].join('\n')
 
@@ -85,4 +85,39 @@ test('trailing eol helper does not double an existing one', () => {
 test('split keeps terminators', () => {
   assert.deepEqual(splitLines('a\nb'), ['a\n', 'b'])
   assert.deepEqual(splitLines(''), [])
+})
+
+test('editEntryAt rewrites only the addressed row', () => {
+  const text = '## A\n- one\n- two\n'
+  const result = editEntryAt(text, 'A', 1, { replacement: '- ONE' })
+  assert.equal(result.replaced, 1)
+  assert.equal(result.text, '## A\n- ONE\n- two\n')
+
+  const removal = editEntryAt(text, 'A', 2, { mode: 'remove' })
+  assert.equal(removal.text, '## A\n- one\n\n')
+})
+
+test('editEntryAt refuses a line that is not the entry it was told', () => {
+  const text = '## A\n- one\n\n## B\n- two\n'
+  assert.equal(editEntryAt(text, 'A', 3, { replacement: '- x' }).reason, 'stale_line')
+  assert.equal(editEntryAt(text, 'A', 9, { replacement: '- x' }).reason, 'stale_line')
+  assert.equal(editEntryAt(text, 'B', 1, { replacement: '- x' }).reason, 'stale_line')
+  assert.equal(editEntryAt(text, 'missing', 1, { replacement: '- x' }).reason, 'no_section')
+  assert.equal(editEntryAt('## A\n- one\n', 'A', 1, { replacement: '   ' }).reason, 'empty_text')
+  assert.equal(editEntryAt('## A\nplain text\n', 'A', 1, { replacement: '- x' }).reason, 'not_an_entry')
+})
+
+test('allEntries sees bullets anywhere, with their line numbers', () => {
+  const text = '# T\n\n- one\n\n## S\n- two\n  - nested\nnot a bullet\n'
+  const rows = allEntries(text)
+  assert.deepEqual(rows.map((row) => row.text), ['one', 'two', 'nested'])
+  assert.deepEqual(rows.map((row) => row.line), [2, 5, 6])
+})
+
+test('removeLines drops rows from the bottom up and keeps one trailing eol', () => {
+  const text = 'a\n- one\n- two\nb\n'
+  assert.equal(removeLines(text, [2, 1]), 'a\nb\n')
+  // Blank lines left where a row was removed collapse instead of piling up.
+  assert.equal(removeLines('- one\n\n- two\n', [0]), '- two\n')
+  assert.equal(removeLines('- one\n', [0]), '')
 })
