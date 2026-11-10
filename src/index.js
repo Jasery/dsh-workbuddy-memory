@@ -43,18 +43,31 @@ export function apply(ctx, config) {
 
   const t = createTranslator(resolveLanguage(cfg.locale))
 
-  // The panel has no agent scope, so it shows the project the last prompt
-  // assembly saw. That is the same project the chat is talking about.
-  const recent = { cwd: null }
+  // The panel has no agent scope: it does not know which project a browser tab
+  // belongs to. What it can know is which working directories this plugin has
+  // assembled a prompt for, so it offers that list and nothing else — a project
+  // the panel has never seen cannot be addressed, which keeps the route from
+  // becoming a file browser.
+  const recent = {
+    cwd: null,
+    /** @type {Map<string, number>} cwd → last seen, newest last. */
+    seen: new Map(),
+    /** Remember a workspace, capped so a long session cannot grow it forever. */
+    note(cwd) {
+      if (typeof cwd !== 'string' || cwd.length === 0) return
+      recent.cwd = cwd
+      recent.seen.delete(cwd)
+      recent.seen.set(cwd, Date.now())
+      while (recent.seen.size > 12) recent.seen.delete(recent.seen.keys().next().value)
+    },
+  }
 
   let sections = null
   try {
     sections = registerSections(ctx, {
       cfg,
       t,
-      onProbe: (_probe, cwd) => {
-        if (typeof cwd === 'string' && cwd.length > 0) recent.cwd = cwd
-      },
+      onProbe: (_probe, cwd) => recent.note(cwd),
     })
   } catch (error) {
     // A broken injection path must not stop the tools from working.

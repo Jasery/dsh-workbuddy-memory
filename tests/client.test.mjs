@@ -112,10 +112,11 @@ test('getJson reports the host error code, not an opaque failure', async () => {
   }
 })
 
-test('the panel says what to do before anything is selected', () => {
+test('the panel explains the project before anything is selected', () => {
   const tree = expand(MemoryPanel({}))
   const body = text(tree)
-  assert.match(body, /从左边选一个文件/)
+  assert.match(body, /面板还不知道你在哪个项目/)
+  assert.match(body, /项目记忆在左边/)
   assert.match(body, /刷新/)
 })
 

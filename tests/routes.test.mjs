@@ -1,6 +1,7 @@
 /** Panel routes: shape of the JSON and the guards in front of it. */
 
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,7 +13,7 @@ import { registerRoutes } from '../src/host/routes.js'
 import { createStore } from '../src/write/store.js'
 
 /** Capture the registered route and answer one request against it. */
-async function harness({ readOnly = false, allowWriteActions = false } = {}) {
+async function harness({ readOnly = false, allowWriteActions = false, recent = { cwd: null } } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'wbm-routes-'))
   const home = join(root, 'home')
   mkdirSync(join(home, 'memory'), { recursive: true })
@@ -35,7 +36,7 @@ async function harness({ readOnly = false, allowWriteActions = false } = {}) {
     logger: { warn() {} },
   }
 
-  const registered = registerRoutes(ctx, { cfg, recent: { cwd: null }, stateDir, version: 'test', store })
+  const registered = registerRoutes(ctx, { cfg, recent, stateDir, version: 'test', store })
   assert.equal(registered, true)
   assert.equal(routes.length, 1)
   assert.equal(routes[0].kind, 'prefix')
@@ -128,4 +129,57 @@ test('read-only config is reported', async () => {
   const { call } = await harness({ readOnly: true })
   const body = JSON.parse((await call('/workbuddy-memory/state')).body)
   assert.equal(body.readOnly, true)
+})
+
+test('the panel can switch between the workspaces it has seen', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wbm-multi-'))
+  const home = join(root, 'home')
+  mkdirSync(home, { recursive: true })
+  writeFileSync(join(home, 'MEMORY.md'), '## 偏好\n- 简体中文\n', 'utf8')
+
+  const first = join(root, 'alpha')
+  const second = join(root, 'beta')
+  for (const [dir, text] of [
+    [first, '## 甲\n- 来自 alpha\n'],
+    [second, '## 乙\n- 来自 beta\n'],
+  ]) {
+    mkdirSync(join(dir, '.workbuddy', 'memory'), { recursive: true })
+    writeFileSync(join(dir, '.workbuddy', 'memory', 'MEMORY.md'), text, 'utf8')
+    writeFileSync(join(dir, '.workbuddy', 'memory', '2026-11-09.md'), '- 一天\n', 'utf8')
+  }
+
+  const seen = new Map([
+    [first, Date.now() - 1000],
+    [second, Date.now()],
+  ])
+  const { call } = await harness({ recent: { cwd: second, seen } })
+
+  const keyOf = (cwd) => createHash('sha1').update(cwd).digest('hex').slice(0, 8)
+
+  const state = JSON.parse((await call('/workbuddy-memory/state')).body)
+  assert.equal(state.projects.length, 2)
+  assert.equal(state.cwd, second)
+  assert.equal(state.projects.find((row) => row.current).path, second)
+  assert.equal(state.projects.find((row) => row.path === first).hasMemory, true)
+  assert.equal(state.projects.find((row) => row.path === first).daily, 1)
+
+  // Pinning a workspace moves every read to that project.
+  const pinned = JSON.parse((await call(`/workbuddy-memory/state?project=${keyOf(first)}`)).body)
+  assert.equal(pinned.cwd, first)
+  assert.match(pinned.stores.project.memory, /alpha/)
+
+  const content = JSON.parse((await call(`/workbuddy-memory/content?target=project-memory&project=${keyOf(first)}`)).body)
+  assert.equal(content.ok, true)
+  assert.match(content.text, /来自 alpha/)
+
+  const daily = JSON.parse((await call(`/workbuddy-memory/content?target=project-daily&date=2026-11-09&project=${keyOf(first)}`)).body)
+  assert.equal(daily.ok, true)
+
+  // A key this plugin never saw is refused: the route is not a path reader.
+  const unknown = await call('/workbuddy-memory/content?target=project-memory&project=deadbeef')
+  assert.equal(unknown.status, 404)
+  assert.equal(JSON.parse(unknown.body).code, 'unknown_project')
+
+  const crossRead = await call(`/workbuddy-memory/content?target=project-memory&project=${'0'.repeat(8)}`)
+  assert.equal(crossRead.status, 404)
 })

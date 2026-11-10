@@ -176,3 +176,43 @@ npm-prefix-bin=$(dirname $(which node))/node      # 换成 runtime 的 node.exe
 ### 12.6 `title` 也要跟着权限走
 
 只读时行内仍渲染了 `title="点击编辑"`，测试断言抓到的。提示语必须和可操作性一致，否则用户点了没反应还会以为坏了。
+
+## 13. 面板「这个项目」是谁
+
+### 13.1 面板没有会话，只能沿用最近装配过的 cwd
+
+`recent.cwd` 是注入路径的副作用：`systemPrompt.section` 的 `text(context)` 拿到 `context.agent.session.header.cwd` 时顺手记下。所以**没说过话就没有项目**，面板显示「未确定」。这是设计如此，但不是好的交互 —— 用户不知道自己该做什么。
+
+### 13.2 多项目：白名单 + 不可逆 key
+
+第一版只有一个 `recent.cwd`，切项目只能靠「去那个项目说一句话再刷新」。现在 `recent` 带一个 12 条上限的 `Map<cwd, ts>`，`/state` 返回 `projects` 列表（含 `name` / `hasMemory` / `daily`），客户端渲染成下拉框。
+
+关键约束：`/content?project=<key>` 的 key 是 `sha1(cwd).slice(0,8)`，且**必须在白名单里**，否则 404 `unknown_project`。这样面板能切项目，但仍然读不到任何「插件没见过」的路径 —— 安全性没有因为多项目而放宽。
+
+### 13.3 「没有 MEMORY.md」不等于没有记忆
+
+用户最容易卡住的一点：项目记忆目录里有 `YYYY-MM-DD.md` 但没有 `MEMORY.md`，面板左栏只写「这个项目还没有 MEMORY.md」，看起来像整个项目都没记录。现在空态文案明确说：两个是独立文件，日期笔记在下面单独列。
+
+### 13.4 修改入口要写全路径
+
+「面板只读」这种提示等于没说。现在详情区顶部直接给路径：**插件页 → dsh-workbuddy-memory → 记忆面板 → 面板写操作**，并补一句「不想开也可以让智能体调 memory_append / memory_edit」。
+
+## 13. 面板「这个项目」是谁
+
+### 13.1 面板没有会话，只能沿用最近装配过的 cwd
+
+`recent.cwd` 是注入路径的副作用：`systemPrompt.section` 的 `text(context)` 拿到 `context.agent.session.header.cwd` 时顺手记下。所以**没说过话就没有项目**，面板显示「未确定」。这是设计如此，但不是好的交互 —— 用户不知道自己该做什么。
+
+### 13.2 多项目：白名单 + 不可逆 key
+
+第一版只有一个 `recent.cwd`，切项目只能靠「去那个项目说一句话再刷新」。现在 `recent` 带一个 12 条上限的 `Map<cwd, ts>`，`/state` 返回 `projects` 列表（含 `name` / `hasMemory` / `daily`），客户端渲染成下拉框。
+
+关键约束：`/content?project=<key>` 的 key 是 `sha1(cwd).slice(0,8)`，且**必须在白名单里**，否则 404 `unknown_project`。这样面板能切项目，但仍然读不到任何「插件没见过」的路径 —— 安全性没有因为多项目而放宽。
+
+### 13.3 「没有 MEMORY.md」不等于没有记忆
+
+用户最容易卡住的一点：项目记忆目录里有 `YYYY-MM-DD.md` 但没有 `MEMORY.md`，面板左栏只写「这个项目还没有 MEMORY.md」，看起来像整个项目都没记录。现在空态文案明确说：两个是独立文件，日期笔记在下面单独列。
+
+### 13.4 修改入口要写全路径
+
+「面板只读」这种提示等于没说。现在详情区顶部直接给路径：**插件页 → dsh-workbuddy-memory → 记忆面板 → 面板写操作**，并补一句「不想开也可以让智能体调 memory_append / memory_edit」。

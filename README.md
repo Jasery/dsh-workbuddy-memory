@@ -87,14 +87,24 @@ The panel is not a second write path: every action goes through the same store a
 
 "Current project" is the working directory the last prompt assembly saw, so the panel only knows which project to show after a session has talked to it once.
 
+### Choosing a project
+
+The panel has no session of its own; it only knows which working directories this plugin has assembled a prompt for. So:
+
+- talk to a session in a project → that project becomes a candidate, and the top bar shows its name (a label when there is one, a dropdown when there are several)
+- changing the dropdown moves the whole panel — tree, detail, consolidate and restore all follow it
+- a directory never opened in a session is not a candidate: `/content` only accepts the keys in that list (first 8 hex of the cwd's sha1), so this is still not a file browser
+
+Project memory lives in `<project>/.workbuddy/memory/`. `MEMORY.md` (long-term) and `YYYY-MM-DD.md` (that day's log) are separate files — **a missing MEMORY.md does not mean the project has no memory**, the daily notes are listed on their own.
+
 ## Tests
 
 ```bash
-npm test               # 136 cases
+npm test               # 139 cases
 npm run test:coverage  # with coverage
 ```
 
-Current: **92.6% lines / 77.6% branches / 80.0% functions** (all 20 files under `src/` are counted).
+Current: **92.8% lines / 78.3% branches / 80.9% functions** (all 20 files under `src/` are counted).
 
 What the suite pins down: the path resolution chain and the six-step capability matrix, byte-stable markdown edits, the write chain (lock, revision fence, backups, `read_only`), the real-path classification behind the bare-write guard, section ordering and truncation (no half surrogate pairs), the refresh modes and cache keys, all five tools including conflict and idempotent replay, the panel routes' JSON shape and 405/403 edges, and the config card rendered through a four-hook React stand-in — which is what catches a host dropping a snapshot field.
 

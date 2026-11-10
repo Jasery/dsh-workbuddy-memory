@@ -453,12 +453,22 @@ window.__ModuleLoader__.load({
       },
       inlineInput: { flex: 1, minWidth: 0, font: 'inherit', color: 'inherit', background: 'rgba(127,127,127,0.1)', border: '1px solid rgba(127,127,127,0.35)', borderRadius: '5px', padding: '3px 6px', outline: 'none' },
       search: { width: '100%', boxSizing: 'border-box', padding: '5px 8px', fontSize: '12px', color: 'inherit', background: 'rgba(127,127,127,0.08)', border: '1px solid rgba(127,127,127,0.24)', borderRadius: '6px', outline: 'none' },
+      select: {
+        fontSize: '11.5px',
+        color: 'inherit',
+        background: 'rgba(127,127,127,0.1)',
+        border: '1px solid rgba(127,127,127,0.28)',
+        borderRadius: '5px',
+        padding: '1px 4px',
+        maxWidth: '170px',
+      },
       btn: { border: '1px solid rgba(127,127,127,0.3)', background: 'transparent', color: 'inherit', font: 'inherit', fontSize: '11.5px', padding: '3px 9px', borderRadius: '6px', cursor: 'pointer' },
       btnPrimary: { border: '1px solid rgba(127,127,127,0.5)', background: 'rgba(127,127,127,0.16)' },
       note: { fontSize: '11.5px', opacity: 0.6, lineHeight: 1.6 },
       err: { fontSize: '11.5px', color: '#e06c75' },
       ok: { fontSize: '11.5px', color: '#69b07a' },
       warnBar: { fontSize: '11.5px', padding: '6px 10px', borderRadius: '6px', background: 'rgba(224,168,80,0.14)', border: '1px solid rgba(224,168,80,0.4)' },
+      hintBar: { fontSize: '11.5px', padding: '6px 10px', borderRadius: '6px', background: 'rgba(127,127,127,0.1)', border: '1px solid rgba(127,127,127,0.24)', lineHeight: 1.6 },
       errBar: { fontSize: '11.5px', padding: '6px 10px', borderRadius: '6px', background: 'rgba(224,108,117,0.12)', border: '1px solid rgba(224,108,117,0.4)' },
       modalWrap: {
         position: 'absolute',
@@ -502,6 +512,46 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * Which workspace the panel is looking at.
+     *
+     * The panel has no session of its own, so it can only offer the ones this
+     * plugin has already assembled a prompt for. One workspace is a label;
+     * several become a picker, because "your memory" is ambiguous once two
+     * projects are open.
+     */
+    function ProjectPicker({ projects, cwd, value, onChange }) {
+      if (!projects.length) {
+        return h('span', { style: { opacity: 0.75 }, title: cwd ?? '' }, '项目 未确定')
+      }
+      const current = projects.find((row) => row.current) ?? projects[0]
+      const active = value ?? current.key
+      const shown = projects.find((row) => row.key === active) ?? current
+      if (projects.length === 1) {
+        return h('span', { title: shown.path }, `项目 ${shown.name}`)
+      }
+      return h(
+        'label',
+        { style: { display: 'flex', alignItems: 'center', gap: '4px' }, title: shown.path },
+        '项目',
+        h(
+          'select',
+          {
+            style: P.select,
+            value: active,
+            onChange: (event) => onChange(event.target.value),
+          },
+          projects.map((row) =>
+            h(
+              'option',
+              { key: row.key, value: row.key },
+              `${row.name}${row.hasMemory ? '' : row.daily > 0 ? ` · 仅 ${row.daily} 天流水` : ' · 无记忆'}`,
+            ),
+          ),
+        ),
+      )
+    }
+
     function Row({ label, sub, active, onClick }) {
       return h(
         'button',
@@ -539,6 +589,8 @@ window.__ModuleLoader__.load({
       const [dialog, setDialog] = React.useState(null)
       const [undo, setUndo] = React.useState(null)
       const [stale, setStale] = React.useState(false)
+      /** Which workspace the panel is showing; null follows the last session. */
+      const [projectKey, setProjectKey] = React.useState(null)
       const noticeTimer = React.useRef(null)
 
       const flash = React.useCallback((text) => {
@@ -547,22 +599,35 @@ window.__ModuleLoader__.load({
         noticeTimer.current = setTimeout(() => setNotice(''), 4000)
       }, [])
 
+      /** Every request names its workspace, so a pinned pick survives polling. */
+      const withProject = React.useCallback(
+        (params) => {
+          const query = new URLSearchParams(params ?? {})
+          if (projectKey) query.set('project', projectKey)
+          const suffix = query.toString()
+          return suffix ? `?${suffix}` : ''
+        },
+        [projectKey],
+      )
+
       const refresh = React.useCallback(async () => {
         try {
-          const next = await getJson(`${API}/state`)
+          const next = await getJson(`${API}/state${withProject()}`)
           setState(next)
           setError('')
           return next
         } catch (cause) {
           const code = String(cause?.message ?? cause)
           setError(
-            code.includes('404') || code === 'no_route'
-              ? '面板接口没有注册：确认插件配置里的「界面」是打开的，且宿主带 webServer。'
-              : describeCode(code),
+            code === 'unknown_project'
+              ? '这个项目已经不在最近会话里了，换一个。'
+              : code.includes('404') || code === 'no_route'
+                ? '面板接口没有注册：确认插件配置里的「界面」是打开的，且宿主带 webServer。'
+                : describeCode(code),
           )
           return null
         }
-      }, [])
+      }, [withProject])
 
       React.useEffect(() => {
         refresh()
@@ -574,36 +639,39 @@ window.__ModuleLoader__.load({
 
       React.useEffect(() => () => noticeTimer.current && clearTimeout(noticeTimer.current), [])
 
-      const open = React.useCallback(async (target, date) => {
-        setSelected({ target, date })
-        setDoc(null)
-        setEditing(null)
-        setAdding(null)
-        setQuery('')
-        setStale(false)
-        try {
-          const params = new URLSearchParams({ target })
-          if (date) params.set('date', date)
-          setDoc(await getJson(`${API}/content?${params.toString()}`))
-          setError('')
-        } catch (cause) {
-          setError(describeCode(String(cause?.message ?? cause)))
-        }
-      }, [])
+      const open = React.useCallback(
+        async (target, date) => {
+          setSelected({ target, date })
+          setDoc(null)
+          setEditing(null)
+          setAdding(null)
+          setQuery('')
+          setStale(false)
+          try {
+            const params = { target }
+            if (date) params.date = date
+            setDoc(await getJson(`${API}/content${withProject(params)}`))
+            setError('')
+          } catch (cause) {
+            setError(describeCode(String(cause?.message ?? cause)))
+          }
+        },
+        [withProject],
+      )
 
       /** Reload just the open document, keeping the selection. */
       const reload = React.useCallback(async () => {
         if (!selected) return
         try {
-          const params = new URLSearchParams({ target: selected.target })
-          if (selected.date) params.set('date', selected.date)
-          setDoc(await getJson(`${API}/content?${params.toString()}`))
+          const params = { target: selected.target }
+          if (selected.date) params.date = selected.date
+          setDoc(await getJson(`${API}/content${withProject(params)}`))
           setStale(false)
         } catch (cause) {
           setError(describeCode(String(cause?.message ?? cause)))
         }
         await refresh()
-      }, [selected, refresh])
+      }, [selected, refresh, withProject])
 
       // A different revision on disk than the one on screen is the one thing a
       // person cannot see by looking: flag it instead of letting the next save
@@ -626,7 +694,7 @@ window.__ModuleLoader__.load({
           setBusy(true)
           setError('')
           try {
-            const { body } = await postJson(`${API}/action`, payload)
+            const { body } = await postJson(`${API}/action${withProject()}`, payload)
             if (body.ok) {
               if (body.backup) {
                 setUndo({ target: payload.target, name: String(body.backup).split(/[\\/]/).pop(), revision: body.revision, until: Date.now() + 10000 })
@@ -646,7 +714,7 @@ window.__ModuleLoader__.load({
             setBusy(false)
           }
         },
-        [],
+        [withProject],
       )
 
       const saveEntry = React.useCallback(
@@ -787,6 +855,15 @@ window.__ModuleLoader__.load({
           h(Btn, { label: '重新加载', onClick: reload }),
         ),
         doc?.path ? h('div', { style: { ...P.note, marginTop: '2px' } }, doc.path) : null,
+        state && !state.allowWriteActions
+          ? h(
+              'div',
+              { style: { ...P.hintBar, marginTop: '6px' } },
+              h('span', null, '当前只读。要在这里改，去 '),
+              h('b', null, '插件页 → dsh-workbuddy-memory → 记忆面板 → 面板写操作'),
+              h('span', null, ' 打开开关；不想开也可以让对话里的智能体调 memory_append / memory_edit。'),
+            )
+          : null,
         h(
           'div',
           { style: { marginTop: '8px' } },
@@ -868,9 +945,34 @@ window.__ModuleLoader__.load({
       const body = !selected
         ? h(
             'div',
-            { style: { ...P.note, padding: '18px 14px' } },
-            '从左边选一个文件。',
-            writable ? '点条目可以直接改，行尾可以删，小节标题右边可以加。' : '当前是只读：到插件页把「面板写操作」打开才能改。',
+            { style: { ...P.note, padding: '18px 14px', display: 'flex', flexDirection: 'column', gap: '10px' } },
+            !state?.cwd
+              ? h(
+                  'div',
+                  null,
+                  h('div', { style: { fontWeight: 600, opacity: 1 } }, '面板还不知道你在哪个项目'),
+                  h(
+                    'div',
+                    null,
+                    '它没有自己的会话上下文，只能沿用「最近一次装配过提示词的工作目录」。在一个项目的会话里发一句话，回来点「刷新」就会认到；开过多个项目时，上方会变成可切换的下拉框。',
+                  ),
+                )
+              : null,
+            h(
+              'div',
+              null,
+              h('div', { style: { fontWeight: 600, opacity: 1 } }, '项目记忆在左边'),
+              h('div', null, `路径是 <项目>/${state?.dataFolderName ?? '.workbuddy'}/memory/。点 MEMORY.md 看长期记忆，点日期笔记看当天流水——它们是两个独立文件，没有 MEMORY.md 不代表这个项目没记录。`),
+            ),
+            writable
+              ? h('div', null, '写操作已开：点条目可以直接改，行尾 ✕ 删，小节标题右边 ＋ 加。')
+              : h(
+                  'div',
+                  null,
+                  '现在只能看。要改，去 ',
+                  h('b', null, '插件页 → dsh-workbuddy-memory → 记忆面板 → 面板写操作'),
+                  ' 打开开关。',
+                ),
           )
         : !doc
           ? h('div', { style: { ...P.note, padding: '18px 14px' } }, '读取中…')
@@ -933,8 +1035,18 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: P.bar },
-          h('span', null, `home ${shortPath(state?.home?.path)}`),
-          h('span', null, `项目 ${state?.cwd ? shortPath(state.cwd) : '未确定'}`),
+          h('span', { title: state?.home?.path ?? '' }, `home ${shortPath(state?.home?.path)}`),
+          h(ProjectPicker, {
+            projects: state?.projects ?? [],
+            cwd: state?.cwd ?? null,
+            value: projectKey,
+            onChange: (key) => {
+              setProjectKey(key)
+              setSelected(null)
+              setDoc(null)
+              setStale(false)
+            },
+          }),
           h('span', null, state?.readOnly ? '只读模式' : state?.writeEnabled ? '可写' : '写入已关'),
           state?.allowWriteActions ? null : h('span', { style: { opacity: 0.6 } }, '面板只读'),
           h(Meter, { label: '项目', bytes: project?.bytes, limit: limits.project }),

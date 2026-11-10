@@ -14,7 +14,8 @@
  */
 
 import { existsSync, readdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { basename, join } from 'node:path'
 import { probeEnvironment, ageInDays } from '../env.js'
 import { parseSections } from '../markdown.js'
 import { readTextSafe } from '../fsx.js'
@@ -186,7 +187,52 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store }) {
   const server = ctx.webServer
   if (!server || typeof server.register !== 'function') return false
 
-  const probeNow = () => probeEnvironment({ cfg, cwd: recent.cwd ?? null, detail: true })
+  /** Stable, non-reversible handle for a workspace path. */
+  const keyFor = (cwd) => createHash('sha1').update(String(cwd)).digest('hex').slice(0, 8)
+
+  /** Every workspace this plugin has assembled a prompt for, newest first. */
+  const projects = () => {
+    const seen = recent?.seen instanceof Map ? [...recent.seen.entries()] : []
+    if (recent?.cwd && !seen.some(([cwd]) => cwd === recent.cwd)) seen.push([recent.cwd, Date.now()])
+    return seen
+      .sort((a, b) => b[1] - a[1])
+      .map(([cwd, at]) => {
+        const memoryDir = join(cwd, cfg.dataFolderName || '.workbuddy', 'memory')
+        let daily = 0
+        try {
+          daily = readdirSync(memoryDir).filter((name) => /^\d{4}-\d{2}-\d{2}\.md$/.test(name)).length
+        } catch {
+          daily = 0
+        }
+        return {
+          key: keyFor(cwd),
+          path: cwd,
+          name: basename(cwd) || cwd,
+          lastSeenAt: at,
+          current: cwd === recent?.cwd,
+          hasMemory: existsSync(join(memoryDir, 'MEMORY.md')),
+          daily,
+        }
+      })
+  }
+
+  /**
+   * Which workspace a request is about.
+   *
+   * A `project` key is only honoured when this plugin has seen that workspace
+   * during a prompt assembly — the set is finite and lived, so it cannot be
+   * used to read an arbitrary path.
+   */
+  const pickCwd = (key) => {
+    if (!key) return { ok: true, cwd: recent?.cwd ?? null }
+    if (key === keyFor(recent?.cwd ?? '')) return { ok: true, cwd: recent.cwd }
+    if (recent?.seen instanceof Map) {
+      for (const cwd of recent.seen.keys()) if (keyFor(cwd) === key) return { ok: true, cwd }
+    }
+    return { ok: false }
+  }
+
+  const probeNow = (cwd) => probeEnvironment({ cfg, cwd, detail: true })
 
   /** Path for a target, without touching the file system. */
   const pathFor = (target, date, probe) =>
@@ -206,20 +252,22 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store }) {
     return { count, latest }
   }
 
-  const state = () => {
-    const probe = probeNow()
+  const state = (cwd) => {
+    const probe = probeNow(cwd)
     const project = describe(probe.project.memoryPath)
     const user = describe(probe.user.memoryPath)
     return {
       ok: true,
       version,
-      cwd: recent.cwd ?? null,
+      cwd: cwd ?? null,
+      projects: projects(),
       readOnly: cfg.readOnly,
       writeEnabled: cfg.write.enabled,
       allowWriteActions: cfg.ui.allowWriteActions,
       allowFullTextEdit: cfg.ui.allowFullTextEdit,
       limits: cfg.inject.limits,
       dailyLimitHint: cfg.write.backupKeep,
+      dataFolderName: cfg.dataFolderName || '.workbuddy',
       home: { path: probe.home.path, source: probe.home.source, detail: probe.home.detail },
       stores: {
         project: {
@@ -261,8 +309,8 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store }) {
     }
   }
 
-  const content = (target, date) => {
-    const probe = probeNow()
+  const content = (target, date, cwd) => {
+    const probe = probeNow(cwd)
     // The profile file is read-only in this plugin (a distillation pass owns
     // it), so it is not one of the write targets. It still needs to be viewable.
     const resolved = target === 'profile' ? { path: probe.profile.path } : resolveTarget(target, probe, date)
@@ -292,14 +340,14 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store }) {
   }
 
   /** One action, dispatched to the same store the tools use. */
-  const runAction = async (input) => {
+  const runAction = async (input, cwd) => {
     if (!cfg.ui.allowWriteActions) return { ok: false, code: 'write_actions_disabled' }
     if (!store) return { ok: false, code: 'no_store' }
 
     const type = String(input?.type ?? '')
     if (!ACTIONS.includes(type)) return { ok: false, code: 'unknown_action', actions: ACTIONS }
 
-    const probe = probeNow()
+    const probe = probeNow(cwd)
     const target = String(input?.target ?? '')
     const date = typeof input?.date === 'string' ? input.date : undefined
     if (date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, code: 'bad_date' }
@@ -381,15 +429,20 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store }) {
               if (!type.toLowerCase().startsWith('application/json')) {
                 return send(res, 415, { ok: false, code: 'json_required' })
               }
+              const picked = pickCwd(url.searchParams.get('project') ?? undefined)
+              if (!picked.ok) return send(res, 404, { ok: false, code: 'unknown_project' })
               const body = await readBody(req, MAX_ACTION_BYTES)
               if (!body.ok) return send(res, body.code === 'body_too_large' ? 413 : 400, body)
-              const result = await runAction(body.value)
+              const result = await runAction(body.value, picked.cwd)
               return send(res, statusFor(result), result)
             }
 
             if (req.method !== 'GET') return send(res, 405, { ok: false, code: 'method_not_allowed' })
 
-            if (route === '/state') return send(res, 200, state())
+            const picked = pickCwd(url.searchParams.get('project') ?? undefined)
+            if (!picked.ok) return send(res, 404, { ok: false, code: 'unknown_project' })
+
+            if (route === '/state') return send(res, 200, state(picked.cwd))
 
             if (route === '/content') {
               const target = url.searchParams.get('target') ?? ''
@@ -397,14 +450,14 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store }) {
               if (date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
                 return send(res, 400, { ok: false, code: 'bad_date' })
               }
-              const body = content(target, date)
+              const body = content(target, date, picked.cwd)
               return send(res, body.ok ? 200 : 404, body)
             }
 
             if (route === '/revisions') {
               const target = url.searchParams.get('target') ?? ''
               if (!TARGETS.includes(target)) return send(res, 400, { ok: false, code: 'unknown_target', targets: TARGETS })
-              const probe = probeNow()
+              const probe = probeNow(picked.cwd)
               const path = pathFor(target, undefined, probe)
               if (!path) return send(res, 404, { ok: false, code: 'no_store' })
               const rows = store?.listRevisions ? store.listRevisions(path) : []
@@ -415,7 +468,7 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store }) {
               const target = url.searchParams.get('target') ?? ''
               const name = url.searchParams.get('name') ?? ''
               if (!TARGETS.includes(target)) return send(res, 400, { ok: false, code: 'unknown_target', targets: TARGETS })
-              const probe = probeNow()
+              const probe = probeNow(picked.cwd)
               const path = pathFor(target, undefined, probe)
               if (!path) return send(res, 404, { ok: false, code: 'no_store' })
               const snapshot = store?.readRevision ? store.readRevision(path, name) : { ok: false, code: 'no_revision' }

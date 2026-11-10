@@ -77,6 +77,8 @@ function baseState(overrides = {}) {
     writeEnabled: true,
     allowWriteActions: true,
     limits: { project: 10000, user: 4000, profile: 2000, rules: 2000 },
+    dataFolderName: '.workbuddy',
+    projects: [{ key: 'proj-a', path: 'C:\\repo', name: 'repo', lastSeenAt: 2, current: true, hasMemory: true, daily: 1 }],
     home: { path: 'C:\\Users\\admin\\.workbuddy', source: 'env', detail: 'WORKBUDDY_CONFIG_DIR' },
     stores: {
       project: {
@@ -380,4 +382,42 @@ test('the history dialog diffs a backup before restoring it', async () => {
   assert.equal(actions[0].type, 'restore')
   assert.equal(actions[0].name, '2026-11-10T00-00-00-000Z.md')
   assert.equal(actions[0].expectedRevision, 'rev-now')
+})
+
+test('two workspaces turn the project label into a picker', async () => {
+  const projects = [
+    { key: 'proj-a', path: 'C://repo', name: 'repo', lastSeenAt: 3, current: true, hasMemory: true, daily: 1 },
+    { key: 'proj-b', path: 'C://other', name: 'other', lastSeenAt: 2, current: false, hasMemory: false, daily: 2 },
+  ]
+  const calls = installFetch({ state: baseState({ projects }) })
+  const restore = installTimers()
+  try {
+    let tree = await runtime.settle(MemoryPanel, {})
+    const select = walk(expand(tree)).find((node) => node.type === 'select')
+    assert.ok(select, 'more than one workspace needs a picker')
+    assert.equal(select.children.length, 2)
+    assert.match(text(select), /repo/)
+    assert.match(text(select), /other/)
+    // A workspace without a MEMORY.md still says how much daily history it has.
+    assert.match(text(select), /仅 2 天流水/)
+
+    tree = await runtime.fire(select, 'onChange', MemoryPanel, {}, { target: { value: 'proj-b' } })
+    await runtime.settle(MemoryPanel, {})
+
+    assert.ok(calls.gets.some((url) => url.includes('project=proj-b')), calls.gets.join('\n'))
+  } finally {
+    restore()
+  }
+})
+
+test('one workspace stays a label instead of a one-item dropdown', async () => {
+  installFetch()
+  const restore = installTimers()
+  try {
+    const tree = await runtime.settle(MemoryPanel, {})
+    assert.equal(walk(expand(tree)).some((node) => node.type === 'select'), false)
+    assert.match(text(expand(tree)), /项目 repo/)
+  } finally {
+    restore()
+  }
 })
