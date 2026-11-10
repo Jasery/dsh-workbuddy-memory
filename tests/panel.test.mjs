@@ -88,6 +88,7 @@ function baseState(overrides = {}) {
         exists: true,
         memoryExists: true,
         bytes: 1200,
+        chars: 900,
         writable: true,
         entries: 3,
         revision: 'rev-project',
@@ -99,6 +100,7 @@ function baseState(overrides = {}) {
         exists: true,
         memoryExists: true,
         bytes: 23743,
+        chars: 8000,
         entries: 9,
         revision: 'rev-user',
       },
@@ -395,7 +397,8 @@ test('two workspaces turn the project label into a picker', async () => {
     let tree = await runtime.settle(MemoryPanel, {})
     const select = walk(expand(tree)).find((node) => node.type === 'select')
     assert.ok(select, 'more than one workspace needs a picker')
-    assert.equal(select.children.length, 2)
+    // Two workspaces plus the "follow the live session" escape hatch.
+    assert.equal(select.children.length, 3)
     assert.match(text(select), /repo/)
     assert.match(text(select), /other/)
     // A workspace without a MEMORY.md still says how much daily history it has.
@@ -417,6 +420,58 @@ test('one workspace stays a label instead of a one-item dropdown', async () => {
     const tree = await runtime.settle(MemoryPanel, {})
     assert.equal(walk(expand(tree)).some((node) => node.type === 'select'), false)
     assert.match(text(expand(tree)), /项目 repo/)
+  } finally {
+    restore()
+  }
+})
+
+test('the limit meter counts characters, the unit the limit is in', async () => {
+  const state = baseState()
+  state.stores.user = { ...state.stores.user, bytes: 23743, chars: 8000 }
+  installFetch({ state })
+  const restore = installTimers()
+  try {
+    const tree = await runtime.settle(MemoryPanel, {})
+    const body = text(expand(tree))
+    // 8000 / 4000 = 200%. Reading bytes instead would claim 594%.
+    assert.match(body, /200%/)
+    assert.doesNotMatch(body, /594%/)
+  } finally {
+    restore()
+  }
+})
+
+test('the panel pins its workspace instead of following a session race', async () => {
+  const projects = [
+    { key: 'proj-a', path: 'C://a', name: 'a', lastSeenAt: 2, current: true, hasMemory: true, daily: 0 },
+    { key: 'proj-b', path: 'C://b', name: 'b', lastSeenAt: 1, current: false, hasMemory: true, daily: 0 },
+  ]
+  let state = baseState({ projects })
+  const calls = { gets: [], actions: [] }
+  globalThis.fetch = async (url, init = {}) => {
+    const href = String(url)
+    if (init.method === 'POST') {
+      calls.actions.push(JSON.parse(init.body))
+      return { ok: true, status: 200, json: async () => ({ ok: true }) }
+    }
+    calls.gets.push(href)
+    return { ok: true, status: 200, json: async () => (href.includes('/content') ? projectContent : state) }
+  }
+  const restore = installTimers()
+  try {
+    let tree = await runtime.settle(MemoryPanel, {})
+    assert.ok(calls.gets.some((url) => url.includes('project=proj-a')), 'first load pins the current workspace')
+
+    // A background turn in the other session moves `recent.cwd`; the panel
+    // must stay where the person is looking.
+    state = baseState({ projects: projects.map((row) => ({ ...row, current: row.key === 'proj-b' })) })
+    tree = await runtime.settle(MemoryPanel, {})
+    const refresh = walk(tree).find((node) => node.type?.name === 'Btn' && node.props.label === '刷新')
+    tree = await runtime.fire(refresh, 'onClick', MemoryPanel, {})
+    await runtime.settle(MemoryPanel, {})
+
+    const latest = calls.gets.at(-1)
+    assert.match(latest, /project=proj-a/)
   } finally {
     restore()
   }

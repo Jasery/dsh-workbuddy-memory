@@ -531,7 +531,8 @@ window.__ModuleLoader__.load({
         return h('span', { style: { opacity: 0.75 }, title: cwd ?? '' }, '项目 未确定')
       }
       const current = projects.find((row) => row.current) ?? projects[0]
-      const active = value ?? current.key
+      // undefined = still deciding, null = follow the live session.
+      const active = value === undefined ? current.key : (value ?? '')
       const shown = projects.find((row) => row.key === active) ?? current
       if (projects.length === 1) {
         return h('span', { title: shown.path }, `项目 ${shown.name}`)
@@ -545,15 +546,18 @@ window.__ModuleLoader__.load({
           {
             style: P.select,
             value: active,
-            onChange: (event) => onChange(event.target.value),
+            onChange: (event) => onChange(event.target.value || null),
           },
-          projects.map((row) =>
-            h(
-              'option',
-              { key: row.key, value: row.key },
-              `${row.name}${row.hasMemory ? '' : row.daily > 0 ? ` · 仅 ${row.daily} 天流水` : ' · 无记忆'}`,
+          [
+            h('option', { key: '__follow', value: '' }, '（跟随最近会话）'),
+            ...projects.map((row) =>
+              h(
+                'option',
+                { key: row.key, value: row.key },
+                `${row.name}${row.hasMemory ? '' : row.daily > 0 ? ` · 仅 ${row.daily} 天流水` : ' · 无记忆'}`,
+              ),
             ),
-          ),
+          ],
         ),
       )
     }
@@ -567,14 +571,21 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function Meter({ label, bytes, limit }) {
-      const r = ratio(bytes, limit)
+    /**
+     * Share of the injection limit.
+     *
+     * The limit is counted in characters, so the meter is too — comparing bytes
+     * against a character budget reports 611% for a file that is only twice the
+     * limit, which reads as a bug in the panel rather than a fact about the file.
+     */
+    function Meter({ label, chars, limit }) {
+      const r = ratio(chars, limit)
       const tone = r.level === 'over' ? '#e06c75' : r.level === 'warn' ? '#e0a850' : 'currentColor'
       return h(
         'span',
-        { style: P.meterWrap, title: `${label} ${humanBytes(bytes)} / ${humanBytes(limit)}` },
+        { style: P.meterWrap, title: `${label} ${Number(chars) || 0} / ${limit} 字` },
         h('span', { style: { opacity: 0.7 } }, label),
-        h('span', { style: P.meter }, h('span', { style: { display: 'block', width: `${r.percent}%`, height: '100%', background: tone, opacity: r.level === 'ok' ? 0.5 : 0.9 } })),
+        h('span', { style: P.meter }, h('span', { style: { display: 'block', width: `${Math.min(r.percent, 100)}%`, height: '100%', background: tone, opacity: r.level === 'ok' ? 0.5 : 0.9 } })),
         h('span', { style: { opacity: 0.62 } }, `${r.percent}%`),
       )
     }
@@ -595,8 +606,13 @@ window.__ModuleLoader__.load({
       const [dialog, setDialog] = React.useState(null)
       const [undo, setUndo] = React.useState(null)
       const [stale, setStale] = React.useState(false)
-      /** Which workspace the panel is showing; null follows the last session. */
-      const [projectKey, setProjectKey] = React.useState(null)
+      /**
+       * Which workspace the panel is showing.
+       *
+       * `undefined` = not decided yet (the first snapshot picks it), `null` =
+       * follow whichever session assembled last, a string = pinned.
+       */
+      const [projectKey, setProjectKey] = React.useState(undefined)
       const noticeTimer = React.useRef(null)
 
       const flash = React.useCallback((text) => {
@@ -642,6 +658,18 @@ window.__ModuleLoader__.load({
         }, 3000)
         return () => clearInterval(timer)
       }, [refresh])
+
+      // Pin the workspace on first load.
+      //
+      // `recent.cwd` is whichever session assembled a prompt last, and two open
+      // sessions make that flip back and forth — the panel would jump from the
+      // project you are looking at to the one that answered a background turn.
+      // Pinning once keeps the view still; the picker is how it changes.
+      React.useEffect(() => {
+        if (projectKey !== undefined || !state?.projects?.length) return
+        const current = state.projects.find((row) => row.current) ?? state.projects[0]
+        if (current?.key) setProjectKey(current.key)
+      }, [state, projectKey])
 
       React.useEffect(() => () => noticeTimer.current && clearTimeout(noticeTimer.current), [])
 
@@ -861,7 +889,9 @@ window.__ModuleLoader__.load({
           h(Btn, { label: '重新加载', onClick: reload }),
         ),
         doc?.path ? h('div', { style: { ...P.note, marginTop: '2px' } }, doc.path) : null,
-        state && !state.allowWriteActions
+        // Only worth saying once the detail pane is on screen; the empty state
+        // already explains how to turn writes on.
+        state && !state.allowWriteActions && selected
           ? h(
               'div',
               { style: { ...P.hintBar, marginTop: '6px' } },
@@ -1055,8 +1085,8 @@ window.__ModuleLoader__.load({
           }),
           h('span', null, state?.readOnly ? '只读模式' : state?.writeEnabled ? '可写' : '写入已关'),
           state?.allowWriteActions ? null : h('span', { style: { opacity: 0.6 } }, '面板只读'),
-          h(Meter, { label: '项目', bytes: project?.bytes, limit: limits.project }),
-          h(Meter, { label: '用户', bytes: user?.bytes, limit: limits.user }),
+          h(Meter, { label: '项目', chars: project?.chars, limit: limits.project }),
+          h(Meter, { label: '用户', chars: user?.chars, limit: limits.user }),
           h('span', null, `备份 ${backupCount}`),
           conflicts > 0 ? h('span', { style: { color: '#e0a850' } }, `冲突 ${conflicts}`) : null,
           h('span', { style: { flex: 1 } }),
