@@ -28,6 +28,10 @@ export function searchTool({ cfg }) {
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
     },
     async execute(args, exec) {
+      // The config card says this switch decides whether memory_search works, so
+      // it has to be read here: a key that changes nothing is worse than no key.
+      if (!cfg.search.enabled) return { ok: false, code: 'search_disabled' }
+
       const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }) ?? null, detail: true })
       const query = String(args.query ?? '').trim()
       if (!query) return { ok: false, code: 'empty_query' }

@@ -125,6 +125,56 @@ export function appendToSection(text, heading, line) {
 }
 
 /**
+ * Drop one bullet line without piling up blank lines.
+ *
+ * A single removal keeps the line's terminator, so the file's shape survives.
+ * But a second removal next to it would leave a second blank line, and a few
+ * edits later the section is mostly whitespace. So a removal splices the whole
+ * line out when the row above it is already blank (or it is the first line);
+ * otherwise it blanks the line as before.
+ *
+ * @param {string[]} lines - mutable line array, terminators kept.
+ * @param {number} index - 0-based line index.
+ * @param {string} eol - the document's line ending.
+ * @returns {string[]} the array to keep using (splicing shortens it).
+ */
+function removeBulletLine(lines, index, eol) {
+  const previous = index > 0 ? lines[index - 1].replace(/\r?\n$/, '') : ''
+  if (index === 0 || previous.trim() === '') {
+    lines.splice(index, 1)
+    return lines
+  }
+  lines[index] = lines[index].endsWith('\n') ? eol : ''
+  return lines
+}
+
+/**
+ * Tidy the blank lines a removal can leave behind.
+ *
+ * Deleting every entry of a section should not leave a growing column of empty
+ * lines: consecutive blanks collapse to one, and the document keeps exactly one
+ * trailing line ending. Non-blank lines are untouched byte for byte.
+ *
+ * @param {string[]} lines - lines with terminators.
+ * @param {string} eol - the document's line ending.
+ * @returns {string[]}
+ */
+function collapseBlankRuns(lines, eol) {
+  const out = []
+  for (const raw of lines) {
+    const body = raw.replace(/\r?\n$/, '')
+    if (body.trim() === '') {
+      if (out.length === 0 || out[out.length - 1].replace(/\r?\n$/, '').trim() === '') continue
+      out.push(eol)
+      continue
+    }
+    out.push(raw.endsWith('\n') ? raw : `${raw}${eol}`)
+  }
+  while (out.length > 0 && out[out.length - 1].replace(/\r?\n$/, '').trim() === '') out.pop()
+  return out
+}
+
+/**
  * Rewrite one bullet's body, keeping its marker, indentation and spacing.
  *
  * A caller may pass the body with or without a leading `- `: the prefix is
@@ -196,15 +246,16 @@ export function editEntry(text, heading, match, options = {}) {
   const eol = detectEol(text)
   const targets = options.all === true ? hits : [hits[0]]
 
+  if (mode === 'remove') {
+    // Highest first, so splicing one row cannot shift the next index.
+    for (const index of [...targets].sort((a, b) => b - a)) removeBulletLine(lines, index, eol)
+    return { text: collapseBlankRuns(lines, eol).join(''), replaced: targets.length, lines: targets }
+  }
+
   // Validate every target before touching the document: a replace that cannot
   // produce a valid entry must not leave half of a multi-target edit applied.
   const rewrites = new Map()
   for (const index of targets) {
-    if (mode === 'remove') {
-      // Keep the terminator so a removal shrinks the line, not the file's shape.
-      rewrites.set(index, lines[index].endsWith('\n') ? eol : '')
-      continue
-    }
     const body = lines[index].replace(/\r?\n$/, '')
     const next = rewriteBulletBody(body, options.replacement)
     if (next === null) return { text, replaced: 0, lines: targets, reason: 'empty_text' }
@@ -248,14 +299,13 @@ export function editEntryAt(text, heading, line, options = {}) {
 
   const eol = detectEol(text)
   if ((options.mode ?? 'replace') === 'remove') {
-    lines[line] = lines[line].endsWith('\n') ? eol : ''
-  } else {
-    // The marker is the document's, not the caller's: it is preserved here so a
-    // replacement written as plain text cannot demote the entry to a paragraph.
-    const next = rewriteBulletBody(body, options.replacement)
-    if (next === null) return { text, replaced: 0, lines: [line], reason: 'empty_text' }
-    lines[line] = `${next}${eol}`
+    return { text: collapseBlankRuns(removeBulletLine(lines, line, eol), eol).join(''), replaced: 1, lines: [line] }
   }
+  // The marker is the document's, not the caller's: it is preserved here so a
+  // replacement written as plain text cannot demote the entry to a paragraph.
+  const next = rewriteBulletBody(body, options.replacement)
+  if (next === null) return { text, replaced: 0, lines: [line], reason: 'empty_text' }
+  lines[line] = `${next}${eol}`
   return { text: lines.join(''), replaced: 1, lines: [line] }
 }
 

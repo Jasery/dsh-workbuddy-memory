@@ -1,4 +1,4 @@
-/** The five memory tools, exercised through their real definitions. */
+/** The six memory tools, exercised through their real definitions. */
 
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
@@ -8,7 +8,7 @@ import test from 'node:test'
 
 import { normalizeConfig } from '../src/config.js'
 import { createTranslator } from '../src/locale.js'
-import { appendTool, editTool } from '../src/tools/write.js'
+import { appendTool, consolidateTool, editTool } from '../src/tools/write.js'
 import { readTool } from '../src/tools/read.js'
 import { searchTool } from '../src/tools/search.js'
 import { statusTool } from '../src/tools/status.js'
@@ -47,6 +47,7 @@ function fixture(config = {}) {
       search: searchTool(deps),
       append: appendTool(deps),
       edit: editTool(deps),
+      consolidate: consolidateTool(deps),
     },
   }
 }
@@ -315,4 +316,58 @@ test('a write survives a round trip through read', async () => {
   const file = await tools.read.execute({ target: 'project-memory' }, exec)
   assert.equal(existsSync(join(dir, 'MEMORY.md')), true)
   assert.match(file.content, /往返一条/)
+})
+
+test('memory_consolidate plans first and only writes when told to', async () => {
+  const { tools, exec, dir } = fixture()
+  writeFileSync(join(dir, '2026-01-02.md'), '- 很久以前的一条\n', 'utf8')
+
+  const plan = await tools.consolidate.execute({ beforeDays: 30 }, exec)
+  assert.equal(plan.ok, true)
+  assert.equal(plan.dryRun, true)
+  assert.deepEqual(plan.candidates.map((row) => row.date), ['2026-01-02'])
+  // A dry run must not touch either file.
+  assert.equal(readFileSync(join(dir, '2026-01-02.md'), 'utf8'), '- 很久以前的一条\n')
+  assert.equal(readFileSync(join(dir, 'MEMORY.md'), 'utf8').includes('2026-01-02'), false)
+
+  const done = await tools.consolidate.execute({ beforeDays: 30, dryRun: false, operationId: 'op-1' }, exec)
+  assert.equal(done.ok, true)
+  assert.deepEqual(done.cleared, ['2026-01-02'])
+  const memory = readFileSync(join(dir, 'MEMORY.md'), 'utf8')
+  assert.match(memory, /## 2026-01-02/)
+  assert.match(memory, /很久以前的一条/)
+})
+
+test('memory_consolidate accepts an explicit date list', async () => {
+  const { tools, exec, dir } = fixture()
+  writeFileSync(join(dir, '2026-01-02.md'), '- 甲\n', 'utf8')
+  writeFileSync(join(dir, '2026-01-03.md'), '- 乙\n', 'utf8')
+
+  const plan = await tools.consolidate.execute({ dates: '2026-01-03', dryRun: true }, exec)
+  assert.deepEqual(plan.candidates.map((row) => row.date), ['2026-01-03'])
+})
+
+test('memory_search reports search_disabled when the switch is off', async () => {
+  const { tools, exec } = fixture({ search: { enabled: false } })
+  const result = await tools.search.execute({ query: '用简体中文' }, exec)
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'search_disabled')
+})
+
+test('memory_append bootstraps the memory directory only when ensureLayout is on', async () => {
+  const off = fixture()
+  const emptyCwd = join(off.root, 'fresh')
+  mkdirSync(emptyCwd, { recursive: true })
+  const offExec = { agent: { session: { header: { cwd: emptyCwd } } } }
+  const refused = await off.tools.append.execute({ target: 'project-memory', section: 'A', text: 'x' }, offExec)
+  assert.equal(refused.code, 'no_store')
+  assert.equal(existsSync(join(emptyCwd, '.workbuddy')), false, 'a refusal must not leave a directory behind')
+
+  const on = fixture({ write: { ensureLayout: true } })
+  const onCwd = join(on.root, 'fresh')
+  mkdirSync(onCwd, { recursive: true })
+  const onExec = { agent: { session: { header: { cwd: onCwd } } } }
+  const created = await on.tools.append.execute({ target: 'project-memory', section: 'A', text: 'x' }, onExec)
+  assert.equal(created.ok, true)
+  assert.match(readFileSync(join(onCwd, '.workbuddy', 'memory', 'MEMORY.md'), 'utf8'), /- x/)
 })

@@ -194,10 +194,17 @@ window.__ModuleLoader__.load({
             }),
             h(Switch, {
               label: '启用检索',
-              hint: 'memory_search 是否可用。',
+              hint: '关闭后 memory_search 不注册，模型看不到这个工具。',
               checked: search.enabled,
               disabled: !writable,
               onChange: (next) => commit('search.enabled', next),
+            }),
+            h(Switch, {
+              label: '首次写入自动建目录',
+              hint: '项目里还没有 .workbuddy/memory 时，由第一次写入创建它。默认关闭——凭空多出的隐藏目录可能与 WorkBuddy 自己的工作区初始化撞车。',
+              checked: write.ensureLayout,
+              disabled: !writable,
+              onChange: (next) => commit('write.ensureLayout', next),
             }),
           ),
         ),
@@ -364,6 +371,8 @@ window.__ModuleLoader__.load({
       conflict: '文件在你编辑期间被改过。',
       stale_line: '这一行已经不在原处了，重新加载后再改。',
       not_an_entry: '这一行不是条目，不能按条目改。',
+      bad_target: '这个文件不支持逐条编辑：日期笔记只追加，请用「整理」合并，或直接编辑文件。',
+      search_disabled: '检索已关闭（插件页 → 注入与写入 → 启用检索）。',
       no_section: '小节找不到了。',
       empty_text: '内容不能为空。',
       ambiguous: '同一个关键词匹配到多条，换一句更精确的。',
@@ -721,7 +730,15 @@ window.__ModuleLoader__.load({
         if (live && doc.revision && live !== doc.revision) setStale(true)
       }, [state, doc, selected])
 
-      const writable = Boolean(state?.allowWriteActions && !state?.readOnly && state?.writeEnabled) && selected?.target !== 'profile'
+      // Two different questions, deliberately answered separately:
+      //  - canWrite: may this panel perform any write at all (gates 整理…).
+      //  - rowEditable: can the open document be rewritten row by row. A daily
+      //    note is append-only, so offering ✎/✕ on it would be an affordance the
+      //    server always refuses — the panel must not draw what it cannot honour.
+      const canWrite = Boolean(state?.allowWriteActions && !state?.readOnly && state?.writeEnabled)
+      const EDITABLE_TARGETS = new Set(['project-memory', 'user-memory'])
+      const rowEditable = canWrite && EDITABLE_TARGETS.has(selected?.target)
+      const writable = rowEditable
 
       const act = React.useCallback(
         async (payload) => {
@@ -882,10 +899,8 @@ window.__ModuleLoader__.load({
             ? h('span', { style: P.note }, `${doc.entries ?? 0} 条 · ${humanBytes(doc.bytes)} · rev ${doc.revision}`)
             : null,
           h('span', { style: { flex: 1 } }),
-          selected && writable ? h(Btn, { label: '整理…', onClick: () => setDialog({ kind: 'consolidate' }) }) : null,
-          selected && writable && selected.target !== 'project-daily'
-            ? h(Btn, { label: '历史…', onClick: () => setDialog({ kind: 'revisions' }) })
-            : null,
+          selected && canWrite ? h(Btn, { label: '整理…', onClick: () => setDialog({ kind: 'consolidate' }) }) : null,
+          selected && rowEditable ? h(Btn, { label: '历史…', onClick: () => setDialog({ kind: 'revisions' }) }) : null,
           h(Btn, { label: '重新加载', onClick: reload }),
         ),
         doc?.path ? h('div', { style: { ...P.note, marginTop: '2px' } }, doc.path) : null,
@@ -898,6 +913,15 @@ window.__ModuleLoader__.load({
               h('span', null, '当前只读。要在这里改，去 '),
               h('b', null, '插件页 → dsh-workbuddy-memory → 记忆面板 → 面板写操作'),
               h('span', null, ' 打开开关；不想开也可以让对话里的智能体调 memory_append / memory_edit。'),
+            )
+          : null,
+        // Writes are on but this document cannot take them: say why, instead of
+        // rendering rows that look editable and a button that always fails.
+        canWrite && selected && !rowEditable
+          ? h(
+              'div',
+              { style: { ...P.hintBar, marginTop: '6px' } },
+              '日期笔记是追加写的：这里只能看，不能逐条改。要合并进项目记忆用「整理…」，要改当天内容让智能体调 memory_append。',
             )
           : null,
         h(

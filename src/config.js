@@ -66,6 +66,11 @@ export const Config = z.object({
       backupKeep: z.number().default(5).volatile(),
       fsync: z.boolean().default(true).volatile(),
       operationLog: z.boolean().default(true).volatile(),
+      ensureLayout: z
+        .boolean()
+        .default(false)
+        .description('Create <cwd>/<dataFolder>/memory on first write. Off by default: inventing a hidden folder can race WorkBuddy workspace setup.')
+        .volatile(),
     }),
 
   guard: z.object({
@@ -155,6 +160,7 @@ export function normalizeConfig(raw) {
       backupKeep: num(write.backupKeep, 5, 0, 100),
       fsync: bool(write.fsync, true),
       operationLog: bool(write.operationLog, true),
+      ensureLayout: bool(write.ensureLayout, false),
     },
 
     guard: {

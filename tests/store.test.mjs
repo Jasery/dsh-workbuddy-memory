@@ -189,6 +189,21 @@ test('edit refuses prose instead of rewriting it', async () => {
   assert.equal(readFileSync(file, 'utf8'), '## A\n\n说明：only prose here。\n')
 })
 
+test('deleting every entry does not leave a column of blank lines', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n\n- one\n- two\n- three\n', 'utf8')
+
+  for (const match of ['two', 'three', 'one']) {
+    const result = await s.store.edit({ target: 'project-memory', section: 'A', match, mode: 'remove' }, s.probe)
+    assert.equal(result.ok, true, `removing ${match} failed: ${JSON.stringify(result)}`)
+  }
+
+  const text = readFileSync(file, 'utf8')
+  assert.equal(text, '## A\n')
+  assert.equal(/\n\n\n/.test(text), false, 'removals must not accumulate blank lines')
+})
+
 test('editAt rewrites one row by line and refuses a stale line', async () => {
   const s = setup()
   const file = join(s.memoryDir, 'MEMORY.md')

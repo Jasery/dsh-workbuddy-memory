@@ -10,12 +10,11 @@
 |---|---|
 | 注入（项目 / 规则 / 用户 / 画像 四块） | 已实现 |
 | `memory_status` / `memory_read` / `memory_search` | 已实现 |
-| 写入工具（`memory_append` / `memory_edit`）与裸写守卫 | 已实现 |
+| 写入工具（`memory_append` / `memory_edit` / `memory_consolidate`）与裸写守卫 | 已实现 |
 | revision 栅栏、备份、操作账本 | 已实现 |
 | 插件页配置卡 | 已实现 |
 | 侧栏记忆面板（浏览 + 编辑 + 搜索） | 已实现 |
 | 面板内整理（日期笔记并入项目记忆）与历史回滚 | 已实现 |
-| `memory_consolidate` 工具（供模型调用） | 未开始 |
 
 设计文档见 [`docs/2026-11-09-dsh-workbuddy-memory-design.html`](docs/2026-11-09-dsh-workbuddy-memory-design.html)。
 
@@ -41,9 +40,10 @@ node scripts/dev-install.mjs web
 |---|---|
 | `memory_status` | 解析后的 home、各存储文件、字节数、可写性、画像解析结果与生效配置 |
 | `memory_read` | 读一个目标（项目 MEMORY.md / 日期文件 / 用户 MEMORY.md），返回 revision 与小节列表 |
-| `memory_search` | 按字面量搜索所有记忆文件，返回文件 + 小节 + 行号 |
+| `memory_search` | 按字面量搜索所有记忆文件，返回文件 + 小节 + 行号（`search.enabled: false` 时不注册） |
 | `memory_append` | 往指定小节追加一条，或往当天笔记追加一行 |
 | `memory_edit` | 替换或删除一条；只认 `- ` 条目，散文与子标题拒绝；匹配不唯一时拒绝而不是猜 |
+| `memory_consolidate` | 把旧日期笔记并入项目记忆（`dryRun` 默认 `true`，先出计划再执行） |
 
 `memory_edit` 的 `replacement` 只写条目正文，`- ` 前缀与缩进由文件保留（传了也会被剥掉再补回）；`mode=replace` 时 `replacement` 为空会返回 `empty_text`，不会静默删掉那条。
 
@@ -73,6 +73,8 @@ node scripts/dev-install.mjs web
 | `ui.enabled` | `true` | 关掉后侧栏面板读不到数据（`/workbuddy-memory` 路由不注册） |
 | `ui.allowWriteActions` | `false` | 面板写操作总开关。关着时面板只读，`/action` 一律拒绝 |
 | `ui.allowFullTextEdit` | `false` | 整文件编辑（尚未接入面板 UI） |
+| `write.ensureLayout` | `false` | 项目里没有 `.workbuddy/memory` 时，由第一次写入创建它 |
+| `search.enabled` | `true` | 关掉后 `memory_search` 不注册，模型看不到该工具 |
 
 可在插件页直接改的键都标了 `.volatile()`；`stateDir` 与 `locale` 需要重载插件，只以 YAML 为准。
 
@@ -114,19 +116,19 @@ node scripts/dev-install.mjs web
 ## 测试
 
 ```bash
-npm test               # 152 个用例
+npm test               # 159 个用例
 npm run test:coverage  # 带覆盖率
 ```
 
 `tests/e2e.test.mjs` 起一个真实 HTTP 服务打真文件（临时目录），验证「JSON → 文件变化」这条缝；`tests/panel.test.mjs` 用一个极简 hooks 运行时驱动面板，点击 → fetch → 重渲染整条链路。
 
-当前：**行 93.0% / 分支 79.2% / 函数 81.2%**（`src/` 全部 20 个文件都进统计）。
+当前：**行 93.2% / 分支 79.8% / 函数 81.0%**（`src/` 全部 20 个文件都进统计）。
 
 | 覆盖面 | 用例锁定的是 |
 |---|---|
 | `paths` / `env` | 路径解析链、六种环境矩阵、画像歧义不猜 |
-| `markdown` | 追加与替换逐字节稳定、围栏内标题不算小节、匹配不唯一拒绝、改条目保留 `- ` 前缀、空替换报 `empty_text`、散文与子标题不算条目 |
-| `write/store` | 锁内复检、revision 栅栏、备份、`read_only` / `write_disabled`、日期笔记按本地日历 |
+| `markdown` | 追加与替换逐字节稳定、围栏内标题不算小节、匹配不唯一拒绝、改条目保留 `- ` 前缀、空替换报 `empty_text`、散文与子标题不算条目、删条目不留空行 |
+| `write/store` | 锁内复检、revision 栅栏、备份、`read_only` / `write_disabled`、日期笔记按本地日历、`ensureLayout` 开关 |
 | `write/guard` | 真路径分类、兄弟目录不误伤、只读时让行、非写入器放行 |
 | `render` | 四块顺序、开关只关一块、超限截断、代理对不切半、home 脱敏 |
 | `inject` / `cache` | 同一次装配只读一次盘、`first-turn` 冻结、provider 异常不炸 turn |

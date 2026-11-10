@@ -10,12 +10,11 @@ Share one set of memory files between DSH and WorkBuddy: the `MEMORY.md`, daily 
 |---|---|
 | Injection (project / rules / user / profile sections) | done |
 | `memory_status` / `memory_read` / `memory_search` | done |
-| Write tools (`memory_append` / `memory_edit`) and the bare-write guard | done |
+| Write tools (`memory_append` / `memory_edit` / `memory_consolidate`) and the bare-write guard | done |
 | Revision fence, backups, operation log | done |
 | Config card on the Plugins page | done |
 | Sidebar memory panel (browse, edit, search) | done |
 | Consolidate and restore from the panel | done |
-| `memory_consolidate` tool (for the model) | not started |
 
 See [`docs/2026-11-09-dsh-workbuddy-memory-design.html`](docs/2026-11-09-dsh-workbuddy-memory-design.html) for the design (Chinese).
 
@@ -59,6 +58,8 @@ An empty `workbuddyHome` follows WorkBuddy's own order: `WORKBUDDY_CONFIG_DIR` â
 | `ui.enabled` | `true` | when off, the sidebar panel gets no data (the `/workbuddy-memory` routes stay unregistered) |
 | `ui.allowWriteActions` | `false` | master switch for panel writes; while off the panel is read-only and `/action` refuses everything |
 | `ui.allowFullTextEdit` | `false` | whole-file editing (no panel UI yet) |
+| `write.ensureLayout` | `false` | create `<cwd>/<dataFolder>/memory` on first write |
+| `search.enabled` | `true` | when off, `memory_search` is not registered at all |
 
 Keys editable from the plugin page carry `.volatile()`; `stateDir` and `locale` need a reload and stay YAML-only.
 
@@ -100,11 +101,11 @@ Project memory lives in `<project>/.workbuddy/memory/`. `MEMORY.md` (long-term) 
 ## Tests
 
 ```bash
-npm test               # 152 cases
+npm test               # 159 cases
 npm run test:coverage  # with coverage
 ```
 
-Current: **93.0% lines / 79.2% branches / 81.2% functions** (all 20 files under `src/` are counted).
+Current: **93.2% lines / 79.8% branches / 81.0% functions** (all 20 files under `src/` are counted).
 
 What the suite pins down: the path resolution chain and the six-step capability matrix, byte-stable markdown edits (including that a rewritten entry keeps its `- ` marker and that an empty replacement is refused instead of deleting the row), the write chain (lock, revision fence, backups, `read_only`, local-calendar daily files), the real-path classification behind the bare-write guard, section ordering and truncation (no half surrogate pairs), the refresh modes and cache keys, all five tools including conflict and idempotent replay, the panel routes' JSON shape and 405/403 edges, and the config card rendered through a four-hook React stand-in â€” which is what catches a host dropping a snapshot field.
 

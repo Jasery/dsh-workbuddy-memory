@@ -156,8 +156,8 @@ test('a writable snapshot leaves every control enabled', () => {
 test('full-text editing stays off until panel writes are on', () => {
   const tree = expand(SettingsCard({ form: fakeForm(snapshot()) }))
   const inputs = walk(tree).filter((node) => node.type === 'input')
-  // 只读 + 两个路径 + 四个能力开关 + 面板写操作 stay usable; 全文编辑 does not.
-  assert.equal(inputs.filter((node) => node.props.disabled === false).length, 8)
+  // 只读 + 两个路径 + 五个能力开关 + 面板写操作 stay usable; 全文编辑 does not.
+  assert.equal(inputs.filter((node) => node.props.disabled === false).length, 9)
   assert.equal(inputs.filter((node) => node.props.disabled === true).length, 1)
 })
 

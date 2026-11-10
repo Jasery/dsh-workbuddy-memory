@@ -62,10 +62,12 @@ test('edit reports a missing section instead of writing', () => {
   assert.equal(result.text, BASE)
 })
 
-test('remove blanks the line and keeps the file shape', () => {
+test('remove drops the row and does not leave a blank line behind', () => {
   const result = editEntry(BASE, '项目', 'DSH 插件', { mode: 'remove' })
   assert.equal(result.replaced, 1)
-  assert.equal(result.text, BASE.replace('- DSH 插件\n', '\n'))
+  // The section had one entry: removing it must not leave an empty line where
+  // it stood, and the file keeps exactly one trailing line ending.
+  assert.equal(result.text, BASE.replace('- DSH 插件\n', ''))
 })
 
 test('find is exact first, then case-insensitive', () => {
@@ -94,7 +96,7 @@ test('editEntryAt rewrites only the addressed row', () => {
   assert.equal(result.text, '## A\n- ONE\n- two\n')
 
   const removal = editEntryAt(text, 'A', 2, { mode: 'remove' })
-  assert.equal(removal.text, '## A\n- one\n\n')
+  assert.equal(removal.text, '## A\n- one\n')
 })
 
 test('editEntryAt refuses a line that is not the entry it was told', () => {

@@ -428,7 +428,17 @@ export function createStore({ cfg, stateDir }) {
     const resolved = resolveTarget(input.target, probe, input.date)
     if (!resolved.path) return fail(resolved.error ?? 'no_store', { target: input.target })
     if (!resolved.dir) return fail('no_store', { target: input.target })
-    if (!existsSync(resolved.dir)) return fail('no_store', { target: input.target, dir: resolved.dir })
+    if (!existsSync(resolved.dir)) {
+      // `write.ensureLayout` is off by default: inventing a hidden `.workbuddy`
+      // in someone's workspace can race WorkBuddy's own setup, so the refusal is
+      // the default. When it is on, the first write bootstraps the folder.
+      if (!cfg.write.ensureLayout) return fail('no_store', { target: input.target, dir: resolved.dir })
+      try {
+        mkdirSync(resolved.dir, { recursive: true })
+      } catch (error) {
+        return fail('no_store', { target: input.target, dir: resolved.dir, error: String(error?.message ?? error) })
+      }
+    }
 
     const replay = seenOperation(input.operationId)
     if (replay?.status === 'committed') return { ok: true, duplicate: true, revision: replay.after, path: resolved.path }

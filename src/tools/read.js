@@ -36,7 +36,14 @@ export function readTool({ cfg, t }) {
       if (!resolved.path) return { ok: false, code: resolved.error ?? 'unknown_target', targets: TARGETS }
 
       if (!existsSync(resolved.path)) {
-        return { ok: false, code: 'not_found', path: resolved.path, hint: 'the file does not exist yet; memory_append creates it' }
+        // Do not promise that memory_append creates the file: it only does when
+        // `write.ensureLayout` is on and the project has a memory directory.
+        return {
+          ok: false,
+          code: 'not_found',
+          path: resolved.path,
+          hint: 'the file does not exist yet; memory_append creates it when the memory directory exists or write.ensureLayout is on',
+        }
       }
 
       const file = readTextSafe(resolved.path, { maxBytes: 2 * 1024 * 1024 })

@@ -252,6 +252,43 @@ test('a read-only panel offers no write controls', async () => {
   }
 })
 
+test('a daily note is browsable but offers no row editing', async () => {
+  // The store refuses every daily edit with bad_target, so the panel must not
+  // draw ✎/✕ on those rows — an affordance that always fails is a bug.
+  const dailyText = '# 2026-11-09\n\n- 上午：写代码\n'
+  const calls = installFetch({
+    content: {
+      ok: true,
+      target: 'project-daily',
+      date: '2026-11-09',
+      path: 'C:\\repo\\.workbuddy\\memory\\2026-11-09.md',
+      bytes: dailyText.length,
+      revision: 'rev-daily',
+      entries: 1,
+      truncated: false,
+      text: dailyText,
+      sections: [],
+      writable: false,
+    },
+  })
+  const restore = installTimers()
+  try {
+    let tree = await runtime.settle(MemoryPanel, {})
+    const row = walk(tree).find((node) => node.type?.name === 'Row' && node.props.label === '2026-11-09')
+    tree = await runtime.fire(row, 'onClick', MemoryPanel, {})
+    const body = text(expand(tree))
+
+    assert.ok(calls.gets.some((url) => url.includes('target=project-daily')))
+    assert.equal(walk(tree).some((node) => node.props?.title === '删除'), false, 'no delete control on an append-only file')
+    assert.equal(walk(tree).some((node) => node.props?.title === '点击编辑'), false, 'no inline edit on an append-only file')
+    assert.match(body, /日期笔记是追加写的/)
+    // 整理 still applies: folding daily notes is exactly what it is for.
+    assert.ok(walk(tree).some((node) => node.type?.name === 'Btn' && node.props.label === '整理…'))
+  } finally {
+    restore()
+  }
+})
+
 test('a conflict keeps the draft and offers the three ways out', async () => {
   const calls = installFetch({
     actionResult: () => ({ ok: false, code: 'conflict', revision: 'rev-other', expectedRevision: 'rev-project' }),
