@@ -197,3 +197,70 @@ test('the write surface refuses what it did not open', async () => {
     s.close()
   }
 })
+
+test('a retried action replays instead of writing twice', async () => {
+  const s = await server()
+  try {
+    const content = await s.get('/workbuddy-memory/content?target=project-memory')
+    const payload = {
+      type: 'add',
+      target: 'project-memory',
+      section: '环境',
+      text: '- 重试一次',
+      expectedRevision: content.body.revision,
+      operationId: 'click-7f3a',
+    }
+
+    const first = await s.post(payload)
+    assert.equal(first.body.ok, true)
+    const afterFirst = readFileSync(s.projectMemory, 'utf8')
+    assert.equal(afterFirst.match(/重试一次/g).length, 1)
+
+    // The same click sent again — a timeout retry — must not append a second
+    // copy. The id is the client's, so the store recognises the replay.
+    const again = await s.post(payload)
+    assert.equal(again.body.ok, true)
+    assert.equal(again.body.duplicate, true)
+    assert.equal(readFileSync(s.projectMemory, 'utf8'), afterFirst)
+  } finally {
+    s.close()
+  }
+})
+
+test('a document too large for the panel cannot be edited from it', async () => {
+  const s = await server()
+  try {
+    // Past MAX_TEXT_CHARS the panel only holds a prefix. Writing that prefix
+    // back would splice a truncated body into the full file and delete the
+    // tail, so both document-level actions refuse instead.
+    const filler = '- filler\n'.repeat(30000)
+    writeFileSync(s.projectMemory, `# T\n\n## 环境\n${filler}`, 'utf8')
+    const before = readFileSync(s.projectMemory, 'utf8')
+
+    const content = await s.get('/workbuddy-memory/content?target=project-memory')
+    assert.equal(content.body.truncated, true)
+    assert.equal(content.body.revision, null, 'a truncated read has no revision to save with')
+
+    const section = await s.post({
+      type: 'replace-section',
+      target: 'project-memory',
+      section: '环境',
+      body: '- only-one',
+      expectedRevision: content.body.revision,
+    })
+    assert.equal(section.status, 413)
+    assert.equal(section.body.code, 'too_large')
+
+    const document = await s.post({
+      type: 'replace-document',
+      target: 'project-memory',
+      text: '# T\n\n## 环境\n- only-one\n',
+      expectedRevision: content.body.revision,
+    })
+    assert.equal(document.body.code, 'too_large')
+
+    assert.equal(readFileSync(s.projectMemory, 'utf8'), before, 'the file is untouched')
+  } finally {
+    s.close()
+  }
+})

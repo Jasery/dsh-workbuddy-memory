@@ -13,7 +13,7 @@ import { registerRoutes } from '../src/host/routes.js'
 import { createStore } from '../src/write/store.js'
 
 /** Capture the registered route and answer one request against it. */
-async function harness({ readOnly = false, allowWriteActions = false, recent = { cwd: null } } = {}) {
+async function harness({ readOnly = false, allowWriteActions = false, recent = { cwd: null }, connection } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'wbm-routes-'))
   const home = join(root, 'home')
   mkdirSync(join(home, 'memory'), { recursive: true })
@@ -34,6 +34,9 @@ async function harness({ readOnly = false, allowWriteActions = false, recent = {
       return fn()
     },
     logger: { warn() {} },
+    get(name) {
+      return name === 'connection' ? connection : undefined
+    },
   }
 
   const registered = registerRoutes(ctx, { cfg, recent, stateDir, version: 'test', store })
@@ -123,6 +126,35 @@ test('read routes only answer GET, and only the panel may write', async () => {
 
   const same = await call('/workbuddy-memory/state', { headers: { origin: 'http://127.0.0.1:1', host: '127.0.0.1:1' } })
   assert.equal(same.status, 200)
+})
+
+test('the connection trust fence decides before any routing', async () => {
+  // A DNS-rebinding page sends a matching Host and Origin, so the local origin
+  // check cannot see it. The host's own fence can, and it is asked first.
+  const rejected = await harness({ connection: { requestRejection: () => 403 } })
+  const blocked = await rejected.call('/workbuddy-memory/state', {
+    headers: { origin: 'http://evil.tld:1234', host: 'evil.tld:1234' },
+  })
+  assert.equal(blocked.status, 403)
+  assert.equal(JSON.parse(blocked.body).code, 'untrusted')
+
+  const unauthenticated = await harness({ connection: { requestRejection: () => 401 } })
+  const anonymous = await unauthenticated.call('/workbuddy-memory/content?target=user-memory')
+  assert.equal(anonymous.status, 401)
+
+  // A fence that throws must fail closed, not open.
+  const broken = await harness({
+    connection: {
+      requestRejection() {
+        throw new Error('connection torn down')
+      },
+    },
+  })
+  assert.equal((await broken.call('/workbuddy-memory/state')).status, 403)
+
+  // An admitted request passes through to the normal routing.
+  const admitted = await harness({ connection: { requestRejection: () => undefined } })
+  assert.equal((await admitted.call('/workbuddy-memory/state')).status, 200)
 })
 
 test('read-only config is reported', async () => {

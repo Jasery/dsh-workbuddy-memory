@@ -94,7 +94,7 @@ function stateFor(overrides = {}) {
     allowFullTextEdit: true,
     limits: { project: 10000, user: 4000, profile: 2000, rules: 2000 },
     dataFolderName: '.workbuddy',
-    home: { path: 'C:\\Users\\admin\\.workbuddy', source: 'env', detail: 'WORKBUDDY_CONFIG_DIR' },
+    home: { path: 'C:\\Users\\me\\.workbuddy', source: 'env', detail: 'WORKBUDDY_CONFIG_DIR' },
     projects: [
       {
         key: 'proj-a',
@@ -154,7 +154,7 @@ function stateFor(overrides = {}) {
       },
       user: {
         target: 'user-memory',
-        memory: 'C:\\Users\\admin\\.workbuddy\\MEMORY.md',
+        memory: 'C:\\Users\\me\\.workbuddy\\MEMORY.md',
         exists: true,
         memoryExists: true,
         bytes: 23743,
@@ -268,7 +268,12 @@ test('editing an entry posts one edit with the revision it saw', async () => {
     await runtime.fire(save, 'onClick', MemoryOverviewPanel, {})
 
     assert.equal(calls.actions.length, 1)
-    assert.deepEqual(calls.actions[0], {
+    // The click carries an idempotency key so the store can tell a retry from a
+    // deliberate second write; the rest of the body is unchanged.
+    const { operationId, ...rest } = calls.actions[0]
+    assert.equal(typeof operationId, 'string')
+    assert.ok(operationId.length > 0, 'every action carries an operationId')
+    assert.deepEqual(rest, {
       type: 'edit',
       target: 'project-memory',
       section: '环境',

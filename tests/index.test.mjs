@@ -10,7 +10,7 @@ import { apply, inject, name } from '../src/index.js'
 
 /** Context that records every registration instead of mounting a real host. */
 function fakeCtx({ withWebServer = true, withGuard = true, withSlots = false } = {}) {
-  const record = { sections: [], tools: [], routes: [], injected: [], guards: 0 }
+  const record = { sections: [], tools: [], routes: [], injected: [], guards: 0, toolDefs: [], sectionDefs: [] }
 
   const ctx = {
     logger: { warn() {} },
@@ -20,12 +20,14 @@ function fakeCtx({ withWebServer = true, withGuard = true, withSlots = false } =
     systemPrompt: {
       section(definition) {
         record.sections.push(definition.name)
+        record.sectionDefs.push(definition)
         return () => {}
       },
     },
     tools: {
       register(tool) {
         record.tools.push(tool.name)
+        record.toolDefs.push(tool)
         return () => {}
       },
       ...(withGuard
@@ -157,4 +159,42 @@ test('read-only mode still mounts the tools that can explain it', () => {
 
   assert.equal(record.tools.includes('memory_append'), true)
   assert.equal(record.tools.includes('memory_status'), true)
+})
+
+test('a tool write reaches the prompt even with a frozen snapshot', async () => {
+  // `refresh: first-turn` freezes the injected text. The model must still see
+  // what it just wrote, so a committed write has to invalidate that snapshot.
+  const { home, root, cwd, config } = workspace()
+  const { ctx, record } = fakeCtx()
+  apply(ctx, { ...config, inject: { refresh: 'first-turn' } })
+
+  const projectSection = record.sectionDefs.find((definition) => definition.name === 'workbuddy-memory:project')
+  const context = { agent: { session: { header: { cwd } } } }
+  const before = projectSection.text(context)
+  assert.match(before, /- a/)
+
+  const append = record.toolDefs.find((tool) => tool.name === 'memory_append')
+  const result = await append.execute({ target: 'project-memory', section: '偏好', text: 'b' }, { agent: { session: { header: { cwd } } } })
+  assert.equal(result.ok, true)
+
+  const after = projectSection.text(context)
+  assert.match(after, /- b/)
+  void home
+  void root
+})
+
+test('a read does not invalidate the frozen snapshot', async () => {
+  const { cwd, config } = workspace()
+  const { ctx, record } = fakeCtx()
+  apply(ctx, { ...config, inject: { refresh: 'first-turn' } })
+
+  const projectSection = record.sectionDefs.find((definition) => definition.name === 'workbuddy-memory:project')
+  const context = { agent: { session: { header: { cwd } } } }
+  const before = projectSection.text(context)
+
+  const read = record.toolDefs.find((tool) => tool.name === 'memory_read')
+  await read.execute({ target: 'project-memory' }, { agent: { session: { header: { cwd } } } })
+
+  // Reading changes nothing on disk, so the frozen text is still the same object.
+  assert.equal(projectSection.text(context), before)
 })

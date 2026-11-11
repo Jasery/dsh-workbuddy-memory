@@ -81,7 +81,8 @@ npm test
 npm run test:coverage
 ```
 
-设计文档：[`docs/2026-11-09-dsh-workbuddy-memory-design.html`](docs/2026-11-09-dsh-workbuddy-memory-design.html)
+设计笔记在 [`docs/`](https://github.com/Jasery/dsh-workbuddy-memory/tree/main/docs)：实现笔记
+（`implementation-notes.md`）与设计文档（HTML）。
 
 ## 许可
 

@@ -149,3 +149,60 @@ test('a host without tools.guard is left alone', () => {
   const ctx = { effect: (fn) => fn() }
   assert.equal(registerWriteGuard(ctx, { cfg, t }), false)
 })
+
+test('apply_patch is refused for every file its patch touches', () => {
+  const { cfg, cwd } = fixture()
+  const { ctx, captured } = fakeCtx()
+  registerWriteGuard(ctx, { cfg, t })
+  const agent = { session: { header: { cwd } } }
+  const memory = join(cwd, '.workbuddy', 'memory', 'MEMORY.md')
+
+  // A patch names its targets inside the patch text, not in `file_path`; the
+  // guard read only `file_path` before, so a patch walked straight past it.
+  const denied = captured.guard({
+    name: 'apply_patch',
+    arguments: { input: `*** Begin Patch\n*** Update File: ${memory}\n@@\n-- 中文\n+- English\n*** End Patch` },
+    agent,
+  })
+  assert.match(denied, /memory_append/)
+
+  const allowed = captured.guard({
+    name: 'apply_patch',
+    arguments: { input: `*** Begin Patch\n*** Update File: ${join(cwd, 'src', 'index.js')}\n@@\n-export {}\n+export default {}\n*** End Patch` },
+    agent,
+  })
+  assert.equal(allowed, undefined)
+
+  // One memory target among several is enough to refuse the whole patch.
+  const mixed = captured.guard({
+    name: 'apply_patch',
+    arguments: {
+      input: [
+        '*** Begin Patch',
+        `*** Update File: ${join(cwd, 'src', 'index.js')}`,
+        '@@',
+        '-export {}',
+        '+export default {}',
+        `*** Add File: ${join(cwd, '.workbuddy', 'memory', 'NEW.md')}`,
+        '+## A',
+        '*** End Patch',
+      ].join('\n'),
+    },
+    agent,
+  })
+  assert.match(mixed, /memory_append/)
+})
+
+test('a differently-cased memory path is still refused on Windows', () => {
+  const { cfg, cwd } = fixture()
+  const { ctx, captured } = fakeCtx()
+  registerWriteGuard(ctx, { cfg, t })
+  const agent = { session: { header: { cwd } } }
+
+  // The memory directory itself does not exist under this spelling, so canon()
+  // falls back to the caller's case. On Windows that is the same directory.
+  const variant = join(cwd, '.WORKBUDDY', 'memory', 'NEW.md')
+  const denied = captured.guard({ name: 'write', arguments: { file_path: variant }, agent })
+  if (process.platform === 'win32') assert.match(denied ?? '', /memory_append/)
+  else assert.equal(denied, undefined)
+})

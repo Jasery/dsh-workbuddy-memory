@@ -10,15 +10,29 @@
     "memory"
   ],
   "license": "MIT",
+  "author": "Jasery <jaserydev@163.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jasery/dsh-workbuddy-memory.git"
+  },
+  "homepage": "https://github.com/Jasery/dsh-workbuddy-memory#readme",
+  "bugs": {
+    "url": "https://github.com/Jasery/dsh-workbuddy-memory/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "main": "./src/index.js",
   "exports": {
     ".": "./src/index.js",
     "./package.json": "./package.json",
-    "./client": "./src/client.js"
+    "./client": "./src/client.js",
+    "./locale/*.json": "./locale/*.json"
   },
   "engines": {
     "node": ">=20",
-    "dsh": ">=0.2.0-0"
+    "dsh": ">=0.2.0"
   },
   "dsh": {
     "bundle": {
@@ -30,7 +44,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
-    "@deepseek-ai/dsh-tools": ">=0.1.5-rc.2"
+    "@deepseek-ai/dsh-tools": ">=0.2.0-rc.2"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.4"

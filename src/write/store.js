@@ -26,6 +26,18 @@ export const TARGETS = ['project-memory', 'project-daily', 'user-memory']
 /** Actions the panel may ask for. Anything not here is refused before it runs. */
 export const ACTIONS = ['add', 'edit', 'remove', 'replace-section', 'replace-document', 'remove-section', 'prune', 'restore']
 
+/** The ledger is append-only and read per write; rotate it at this size. */
+const LEDGER_ROTATE_BYTES = 2 * 1024 * 1024
+
+/**
+ * Section used when an append names none.
+ *
+ * Deliberately language-neutral: writing a hardcoded Chinese heading into an
+ * English memory file would be a silent surprise, and the caller can always
+ * pass `section` instead.
+ */
+export const DEFAULT_SECTION = 'Notes'
+
 /**
  * Today as `YYYY-MM-DD` in the machine's own timezone.
  *
@@ -295,27 +307,63 @@ export function createStore({ cfg, stateDir }) {
   }
 
   /**
+   * The ledger file, with rotation.
+   *
+   * It is append-only and read on every write, so an unbounded file eventually
+   * costs a full read per operation. Rotation keeps one previous generation —
+   * enough for duplicate detection, which only ever looks at recent ids.
+   */
+  function ledgerPath() {
+    return join(logDir, 'operations.jsonl')
+  }
+
+  function rotateLedger() {
+    const file = ledgerPath()
+    try {
+      const stat = statSync(file)
+      if (stat.size < LEDGER_ROTATE_BYTES) return
+      renameSync(file, `${file}.1`)
+    } catch {
+      // Missing file or a concurrent rotation: both are fine.
+    }
+  }
+
+  /**
+   * The tail of the ledger, newest last.
+   *
+   * @param {number} max - how many trailing records to keep.
+   * @returns {string[]} non-empty lines.
+   */
+  function ledgerTail(max) {
+    const file = ledgerPath()
+    if (!existsSync(file)) return []
+    let lines = []
+    try {
+      lines = readFileSync(file, 'utf8').split('\n')
+    } catch {
+      return []
+    }
+    const kept = []
+    for (let index = lines.length - 1; index >= 0 && kept.length < max; index -= 1) {
+      const line = lines[index]
+      if (line) kept.push(line)
+    }
+    return kept.reverse()
+  }
+
+  /**
    * Whether this write is a replay of an operation already committed.
    * @param {string} operationId
    */
   function seenOperation(operationId) {
     if (!operationId || !cfg.write.operationLog) return null
-    const file = join(logDir, 'operations.jsonl')
-    if (!existsSync(file)) return null
-    try {
-      const lines = readFileSync(file, 'utf8').trim().split('\n')
-      for (let index = lines.length - 1; index >= 0 && index > lines.length - 501; index -= 1) {
-        const line = lines[index]
-        if (!line) continue
-        try {
-          const record = JSON.parse(line)
-          if (record.id === operationId) return record
-        } catch {
-          // A torn last line from a crash; keep scanning older records.
-        }
+    for (const line of ledgerTail(500)) {
+      try {
+        const record = JSON.parse(line)
+        if (record.id === operationId) return record
+      } catch {
+        // A torn last line from a crash; keep scanning older records.
       }
-    } catch {
-      return null
     }
     return null
   }
@@ -324,16 +372,23 @@ export function createStore({ cfg, stateDir }) {
     if (!cfg.write.operationLog) return
     try {
       mkdirSync(logDir, { recursive: true })
-      appendFileSync(join(logDir, 'operations.jsonl'), `${JSON.stringify(record)}\n`, 'utf8')
+      rotateLedger()
+      appendFileSync(ledgerPath(), `${JSON.stringify(record)}\n`, 'utf8')
     } catch {
       // The log is an optimization for duplicate detection, not the truth.
     }
   }
 
-  /** Copy the current file next to its siblings, keeping at most N. */
+  /**
+   * Copy the current file next to its siblings, keeping at most N.
+   *
+   * Returns `{ ok: true, path }` or `{ ok: false }`. A failure is reported
+   * rather than swallowed: the caller refuses the write instead of performing
+   * the one destructive step in the chain with no way back.
+   */
   function backup(path) {
-    if (cfg.write.backupKeep <= 0) return null
-    if (!existsSync(path)) return null
+    if (cfg.write.backupKeep <= 0) return { ok: true, path: null }
+    if (!existsSync(path)) return { ok: true, path: null }
     try {
       const stamp = new Date().toISOString().replace(/[:.]/g, '-')
       const dir = backupDirFor(path)
@@ -341,9 +396,9 @@ export function createStore({ cfg, stateDir }) {
       const target = join(dir, `${stamp}.md`)
       writeFileAtomic(target, readFileSync(path, 'utf8'), { fsync: false, mode: 0o600 })
       pruneBackups(dir)
-      return target
-    } catch {
-      return null
+      return { ok: true, path: target }
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) }
     }
   }
 
@@ -397,15 +452,9 @@ export function createStore({ cfg, stateDir }) {
    * like a write that never happened.
    */
   function operationStats(max = 500) {
-    const file = join(logDir, 'operations.jsonl')
     const empty = { total: 0, conflicts: 0, lastConflictAt: null, lastCommitAt: null }
-    if (!existsSync(file)) return empty
-    let lines = []
-    try {
-      lines = readFileSync(file, 'utf8').trim().split('\n').slice(-max)
-    } catch {
-      return empty
-    }
+    const lines = ledgerTail(max)
+    if (lines.length === 0) return empty
     let conflicts = 0
     let lastConflictAt = null
     let lastCommitAt = null
@@ -472,6 +521,8 @@ export function createStore({ cfg, stateDir }) {
 
     if (resolved.mode === 'append') {
       // Daily files: pure append, so another writer's bytes cannot be lost.
+      // The catch mirrors `writeEverywhere`: a lock timeout is a refusal with a
+      // code, not a rejected promise the tool layer would surface as a crash.
       return withLock(join(lockDir, `${pathKey(resolved.path)}.lock`), cfg.write.lockWaitMs, () => {
         const current = existsSync(resolved.path) ? readTextSafe(resolved.path) : { text: '', bytes: 0 }
         const eol = current.text.includes('\r\n') ? '\r\n' : '\n'
@@ -482,11 +533,17 @@ export function createStore({ cfg, stateDir }) {
         const revision = contentRevision(after.text)
         recordOperation({ id: input.operationId, at: Date.now(), target: input.target, path: resolved.path, status: 'committed', after: revision })
         return { ok: true, revision, path: resolved.path, bytes: after.bytes, appended: true }
+      }).catch((error) => {
+        if (error?.code === 'lock_timeout') return fail('lock_timeout', { owner: error.owner })
+        return fail('write_failed', { message: error?.message ?? String(error) })
       })
     }
 
     return writeEverywhere(resolved.path, input.target, input.expectedRevision, input.operationId, (current) => {
-      if (!input.section) return { text: appendToSection(current, '记录', text).text, created: true }
+      if (!input.section) {
+        const result = appendToSection(current, DEFAULT_SECTION, text)
+        return { text: result.text, created: result.created }
+      }
       const result = appendToSection(current, input.section, text)
       return { text: result.text, created: result.created }
     })
@@ -548,7 +605,13 @@ export function createStore({ cfg, stateDir }) {
       const result = transform(current.text)
       if (result.replaced === 0) return fail(result.reason ?? 'no_match', { path, hits: result.hits ?? [], issues: result.issues ?? [] })
 
-      const backupPath = backup(path)
+      const snapshot = backup(path)
+      // No backup, no destructive write: the atomic replace is the one step
+      // that cannot be undone, so a full disk or a locked state directory must
+      // stop here rather than quietly leave nothing to restore from.
+      if (!snapshot.ok) return fail('backup_failed', { path, error: snapshot.error })
+      const backupPath = snapshot.path
+
       writeFileAtomic(path, result.text, { fsync: cfg.write.fsync })
       const after = readTextSafe(path)
       const revision = contentRevision(after.text)

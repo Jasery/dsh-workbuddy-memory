@@ -217,3 +217,39 @@ test('the frozen store keeps one value per key and clears on demand', () => {
   frozen.clear()
   assert.equal(frozen.get('b', compute), 4)
 })
+
+test('profileUid matches the account uid exactly, never a substring', () => {
+  // Two accounts. `a` is a prefix of both ids, so a substring test would have
+  // picked the first and injected the wrong person's profile.
+  const root = mkdtempSync(join(tmpdir(), 'wbm-uid-'))
+  const home = join(root, 'home')
+  const cwd = join(root, 'repo')
+  mkdirSync(join(home, 'user-abc-personal'), { recursive: true })
+  mkdirSync(join(home, 'user-xyz-personal'), { recursive: true })
+  mkdirSync(join(cwd, '.workbuddy', 'memory'), { recursive: true })
+  writeFileSync(join(home, 'user-abc-personal', 'USER.md'), '# 画像 abc\n', 'utf8')
+  writeFileSync(join(home, 'user-xyz-personal', 'USER.md'), '# 画像 xyz\n', 'utf8')
+
+  const ambiguous = normalizeConfig({ workbuddyHome: home, stateDir: join(root, 'state') })
+  const first = fakeCtx()
+  registerSections(first.ctx, { cfg: ambiguous, t })
+  // No uid: two candidates are ambiguity, not a guess.
+  assert.match(textOf(first.sections.get('workbuddy-memory:profile'), contextFor(cwd)), /多个候选|未指定/)
+
+  const partial = normalizeConfig({ workbuddyHome: home, stateDir: join(root, 'state'), inject: { profileUid: 'a' } })
+  const second = fakeCtx()
+  registerSections(second.ctx, { cfg: partial, t })
+  const prefixText = textOf(second.sections.get('workbuddy-memory:profile'), contextFor(cwd))
+  // A prefix is not a uid: the plugin says it cannot choose, rather than
+  // silently injecting whichever account sorts first.
+  assert.match(prefixText, /多个候选|未指定/)
+  assert.doesNotMatch(prefixText, /画像 abc/)
+  assert.doesNotMatch(prefixText, /画像 xyz/)
+
+  const exact = normalizeConfig({ workbuddyHome: home, stateDir: join(root, 'state'), inject: { profileUid: 'xyz' } })
+  const third = fakeCtx()
+  registerSections(third.ctx, { cfg: exact, t })
+  const text = textOf(third.sections.get('workbuddy-memory:profile'), contextFor(cwd))
+  assert.match(text, /画像 xyz/)
+  assert.doesNotMatch(text, /画像 abc/)
+})

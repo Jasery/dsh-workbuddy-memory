@@ -7,6 +7,7 @@
 
 import { readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { dirname } from 'node:path'
 import { isWritable, statSafe } from './fsx.js'
 import {
   listProfileCandidates,
@@ -110,11 +111,15 @@ function resolveProfile({ cfg, candidates, layout }) {
   }
 
   if (cfg.inject.profileUid) {
+    // Compare against the uid parsed out of the owning `user-<uid>-personal`
+    // directory, never against the whole path: a substring test would let `a`
+    // match any account whose path happens to contain that letter, injecting
+    // one account's profile into another account's session.
+    //
+    // The uid lives in the directory, not in the file name, so the parent is
+    // what gets parsed — parsing `USER.md` would yield nothing at all.
     const wanted = cfg.inject.profileUid
-    const match = candidates.find((path) => {
-      const uid = uidFromPersonalDir(path)
-      return uid === wanted || path.includes(wanted)
-    })
+    const match = candidates.find((path) => uidFromPersonalDir(dirname(path)) === wanted)
     if (match) {
       const stat = statSafe(match)
       return { path: match, exists: true, bytes: stat?.size ?? 0, source: 'uid', ambiguous: false, uid: wanted }

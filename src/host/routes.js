@@ -39,8 +39,57 @@ function send(res, status, body) {
   res.end(payload)
 }
 
-/** Only answer same-origin pages and non-browser clients that send no Origin. */
-function sameOrigin(req) {
+/**
+ * Whether the composition's connection service refuses this request.
+ *
+ * `connection.requestRejection` is the host's own Host/Origin fence plus the
+ * browser-authentication check: it defeats DNS rebinding (a hostile page served
+ * from `http://evil.tld:<port>` sends a matching `Host` and `Origin`, so an
+ * origin-vs-host comparison alone cannot tell it apart) and rejects a caller
+ * that never logged in. Every host-owned route asks it first; this plugin's
+ * routes must too, because a write here lands in `MEMORY.md`, which the next
+ * turn injects into the system prompt.
+ *
+ * The service is read lazily and without `inject`: headless and test profiles
+ * compose a web server without a connection service, and that must degrade to
+ * the local origin check rather than fail the plugin.
+ *
+ * @returns {number|undefined} HTTP status to answer with, or `undefined` to continue.
+ */
+function trustRejection(ctx, req) {
+  let connection = null
+  try {
+    connection = ctx.get?.('connection') ?? null
+  } catch {
+    connection = null
+  }
+  if (!connection || typeof connection.requestRejection !== 'function') return undefined
+  try {
+    return connection.requestRejection(req)
+  } catch {
+    // A fence that throws must not become an open door.
+    return 403
+  }
+}
+
+/**
+ * A caller-supplied idempotency key, when it looks like one.
+ *
+ * The panel sends one per click; a retry of that click therefore replays
+ * instead of writing the same text twice. Anything unusable is ignored and the
+ * route mints its own id, which is the safe default.
+ *
+ * @param {object} input - the `/action` body.
+ * @returns {string|undefined}
+ */
+function clientOperationId(input) {
+  const raw = input?.operationId
+  if (typeof raw !== 'string') return undefined
+  const trimmed = raw.trim()
+  return trimmed.length > 0 && trimmed.length <= 128 ? trimmed : undefined
+}
+
+/** Only answer same-origin pages and non-browser clients that send no Origin. */function sameOrigin(req) {
   const origin = req.headers?.origin
   if (typeof origin !== 'string' || origin.length === 0) return true
   const host = req.headers?.host
@@ -84,6 +133,11 @@ function statSafe(path) {
  * Shape one document for the panel: section list, entries with line numbers,
  * byte count, revision. The panel renders rows by line, so it can name exactly
  * the row a person clicked instead of quoting text that may repeat.
+ *
+ * `truncated` is load-bearing, not cosmetic: a body sliced at `MAX_TEXT_CHARS`
+ * must never be written back. The section editor splices the body it shows into
+ * the full file, so sending a truncated body would silently delete the tail —
+ * the panel disables L2/L3 when this flag is set, and `/action` refuses too.
  */
 function describe(path, limit = MAX_TEXT_CHARS) {
   if (!path || !existsSync(path)) return null
@@ -110,9 +164,11 @@ function describe(path, limit = MAX_TEXT_CHARS) {
     readable: true,
     bytes: file.bytes,
     chars: file.text.length,
-    // Hash the bytes we actually read, not the display prefix: a save carries
-    // this revision and must match what the store hashes on disk.
-    revision: contentRevision(file.text),
+    // A revision must identify the bytes the store will hash. When either the
+    // read or the display was capped, the full text is unavailable, so no
+    // revision is reported rather than a hash of a prefix the store could never
+    // match — that mismatch is what left the panel permanently on `conflict`.
+    revision: truncated || file.truncated ? null : contentRevision(file.text),
     truncated,
     text,
     entries: sections.reduce((sum, section) => sum + section.entries.length, 0),
@@ -164,6 +220,8 @@ function statusFor(body) {
     case 'write_actions_disabled':
     case 'full_text_disabled':
       return 403
+    case 'too_large':
+      return 413
     case 'not_found':
     case 'no_store':
     case 'no_revision':
@@ -401,10 +459,20 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
     }
     if (target === 'profile') return { ok: false, code: 'read_only_target' }
 
-    // Server-generated: a panel that retries a request must not look like a
-    // deliberate second write of the same text.
-    const operationId = `${type}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    // An operation id the client supplies makes a retried request a replay
+    // instead of a second write. Without one, a fresh id is minted — which is
+    // correct for a new click and wrong for a retry, so the client sends one.
+    const operationId = clientOperationId(input) ?? `${type}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
     const expectedRevision = typeof input?.expectedRevision === 'string' ? input.expectedRevision : undefined
+
+    // Both document-level edits rewrite the file from what the panel shows. A
+    // body the panel only holds a prefix of must never be written back: the
+    // splice would drop everything past the truncation point.
+    if (type === 'replace-section' || type === 'replace-document') {
+      const resolvedPath = pathFor(target, date, probe)
+      const described = resolvedPath ? describe(resolvedPath) : null
+      if (described?.truncated) return { ok: false, code: 'too_large', target, bytes: described.bytes }
+    }
 
     try {
       switch (type) {
@@ -484,6 +552,11 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
         path: PREFIX,
         handler: async (req, res) => {
           try {
+            // The host fence first: it owns DNS rebinding and login. The local
+            // origin check below stays as a second gate for profiles that
+            // compose a web server without a connection service.
+            const rejection = trustRejection(ctx, req)
+            if (rejection !== undefined) return send(res, rejection, { ok: false, code: 'untrusted' })
             if (!sameOrigin(req)) return send(res, 403, { ok: false, code: 'cross_origin' })
             const url = new URL(req.url ?? '/', 'http://127.0.0.1')
             const route = url.pathname.slice(PREFIX.length) || '/'

@@ -746,6 +746,22 @@ window.__ModuleLoader__.load({
       return MESSAGES[code] ?? String(code ?? '未知错误')
     }
 
+    /**
+     * One idempotency key per click.
+     *
+     * `crypto.randomUUID` is missing in a non-secure context on some hosts, so
+     * this falls back to random base36. Uniqueness is all that matters: the
+     * store only compares the id against its recent ledger.
+     */
+    function newOperationId() {
+      try {
+        if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
+      } catch {
+        // Fall through to the manual form.
+      }
+      return `op-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+    }
+
     /** Last two segments of a long path; short paths are left readable. */
     function shortPath(path) {
       if (!path) return '—'
@@ -1227,6 +1243,10 @@ window.__ModuleLoader__.load({
         const key = payload.key ?? selected?.key ?? effectiveKey
         const body = { ...payload }
         delete body.key
+        // One id per click. A caller that supplies its own (the conflict
+        // dialog's retry) keeps it, so a retried request replays the operation
+        // the store may already have committed instead of writing twice.
+        if (!body.operationId) body.operationId = newOperationId()
         const suffix = key ? `?project=${encodeURIComponent(key)}` : ''
         try {
           const response = await postJson(`${API}/action${suffix}`, body)

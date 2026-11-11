@@ -90,9 +90,11 @@ export function apply(ctx, config) {
   try {
     stateDir = resolveStateDir(cfg.stateDir).path
     store = createStore({ cfg, stateDir })
-    registerTools(ctx, { cfg, t, store })
+    // A write through this plugin must be visible to the next assembly. Without
+    // this, `inject.refresh: 'first-turn'` keeps the snapshot it froze and the
+    // model never sees what it just wrote.
+    registerTools(ctx, { cfg, t, store, onWrite: () => sections?.invalidate?.() })
     registerWriteGuard(ctx, { cfg, t })
-    void sections
   } catch (error) {
     ctx.logger?.warn?.(`[workbuddy-memory] tool registration failed: ${error?.message ?? error}`)
   }

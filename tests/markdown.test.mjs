@@ -181,3 +181,45 @@ test('all=true rewrites every matching bullet and nothing else', () => {
   assert.equal(result.replaced, 2)
   assert.equal(result.text, '## A\n- X\n说明 same\n- X\n')
 })
+
+test('a removal only tidies blanks inside the section it edited', () => {
+  // Two blank lines separate B's entries. Editing A must not touch them: the
+  // file is shared with another client, so unrelated bytes stay put.
+  const text = '## A\n- a1\n- a2\n\n## B\n- b1\n\n\n- b2\n'
+  const expected = '## A\n\n- a2\n\n## B\n- b1\n\n\n- b2\n'
+
+  const removed = editEntry(text, 'A', 'a1', { mode: 'remove' })
+  assert.equal(removed.text, expected)
+  assert.ok(removed.text.includes('- b1\n\n\n- b2'), 'B keeps its own blank run')
+
+  const atLine = editEntryAt(text, 'A', 1, { mode: 'remove' })
+  assert.equal(atLine.text, expected)
+  assert.ok(atLine.text.includes('- b1\n\n\n- b2'), 'B keeps its own blank run')
+})
+
+test('section ends are resolved in one pass, not by rescanning the tail', () => {
+  // The panel parses every memory file on a 3-second poll; a quadratic parser
+  // blocked the event loop for seconds on a large file.
+  const rows = Array.from({ length: 20000 }, (_, index) => `## h${index}\n- e${index}\n`)
+  const text = rows.join('')
+  const started = performance.now()
+  const sections = parseSections(text)
+  const elapsed = performance.now() - started
+
+  assert.equal(sections.length, 20000)
+  assert.equal(sections[0].heading, 'h0')
+  assert.equal(sections[19999].heading, 'h19999')
+  // Flat headings: every section runs to the line before the next one.
+  assert.equal(sections[0].endLine, sections[1].line - 1)
+  assert.ok(elapsed < 2000, `parsing ${(text.length / 1024).toFixed(0)} KB took ${elapsed.toFixed(0)}ms`)
+})
+
+test('a nested heading ends its parent section, a deeper one does not', () => {
+  const text = '## A\n- a\n### A1\n- a1\n## B\n- b\n'
+  const sections = parseSections(text)
+  const byName = new Map(sections.map((section) => [section.heading, section]))
+  // A1 is nested inside A: it does not close A, so A runs to the line before B.
+  assert.equal(byName.get('A').endLine, 3)
+  assert.equal(byName.get('A1').endLine, 3)
+  assert.equal(byName.get('B').endLine, 5)
+})

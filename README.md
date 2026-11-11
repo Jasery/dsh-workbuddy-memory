@@ -81,7 +81,8 @@ npm test
 npm run test:coverage
 ```
 
-Design doc (Chinese): [`docs/2026-11-09-dsh-workbuddy-memory-design.html`](docs/2026-11-09-dsh-workbuddy-memory-design.html)
+Design notes live in [`docs/`](https://github.com/Jasery/dsh-workbuddy-memory/tree/main/docs): an implementation log
+(`implementation-notes.md`) and the design documents (HTML).
 
 ## License
 

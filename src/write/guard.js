@@ -18,6 +18,31 @@ import { resolveCwd } from '../inject.js'
 
 const BARE_WRITERS = new Set(['write', 'edit', 'str_replace_editor', 'apply_patch'])
 
+/** `apply_patch` names its targets inside patch text, not in a path argument. */
+const PATCH_TARGET = /^\*\*\*[ \t]+(?:Update|Add|Delete)[ \t]+File:[ \t]*(.+?)[ \t]*$/gm
+
+/**
+ * Every path a tool invocation would write, as written by the caller.
+ *
+ * `write`/`edit` carry one `file_path`; `apply_patch` carries a patch document
+ * whose `*** Update File:` / `*** Add File:` / `*** Delete File:` lines each name
+ * a target. Reading only `file_path` let a patch walk straight past the guard
+ * and bypass the lock, the revision check and the backups.
+ *
+ * @param {string} name - tool name.
+ * @param {object} args - tool arguments.
+ * @returns {string[]}
+ */
+export function writeTargets(name, args) {
+  if (name === 'apply_patch') {
+    const patch = args?.input ?? args?.patch ?? args?.text
+    if (typeof patch !== 'string') return []
+    return [...patch.matchAll(PATCH_TARGET)].map((match) => match[1].trim()).filter(Boolean)
+  }
+  const raw = args?.file_path ?? args?.path ?? args?.file
+  return typeof raw === 'string' && raw.trim() ? [raw.trim()] : []
+}
+
 /** Resolve a path as far as it exists, so links are compared by target. */
 export function canon(path) {
   if (!path) return ''
@@ -32,14 +57,24 @@ export function canon(path) {
   }
 }
 
+/** Fold the parts of a path the platform itself ignores. */
+export function foldCase(path) {
+  return process.platform === 'win32' ? String(path).toLowerCase() : String(path)
+}
+
 /** Whether `child` is `parent` or lives under it. */
 export function isUnder(child, parent) {
   const a = canon(child)
   const b = canon(parent)
   if (!a || !b) return false
-  if (a === b) return true
-  const prefix = b.endsWith(sep) ? b : `${b}${sep}`
-  return a.startsWith(prefix)
+  // Windows compares paths case-insensitively. Without folding here, a caller
+  // that spells the memory folder differently (`.WORKBUDDY`) walks past a
+  // guard whose `realpath` fallback preserved the caller's case.
+  const left = foldCase(a)
+  const right = foldCase(b)
+  if (left === right) return true
+  const prefix = right.endsWith(sep) ? right : `${right}${sep}`
+  return left.startsWith(prefix)
 }
 
 /**
@@ -66,7 +101,8 @@ export function protectedPaths(probe) {
  */
 export function isMemoryTarget(target, probe) {
   const { files, dirs } = protectedPaths(probe)
-  if (files.some((file) => canon(file) === canon(target))) return true
+  const wanted = foldCase(canon(target))
+  if (files.some((file) => foldCase(canon(file)) === wanted)) return true
   return dirs.some((dir) => isUnder(target, dir))
 }
 
@@ -85,17 +121,19 @@ export function registerWriteGuard(ctx, { cfg, t }) {
       // Read-only means nothing is being written anyway; let a person fix a
       // broken file by hand instead of blocking them twice.
       if (cfg.readOnly) return undefined
-      if (!BARE_WRITERS.has(String(exec?.name ?? ''))) return undefined
+      const name = String(exec?.name ?? '')
+      if (!BARE_WRITERS.has(name)) return undefined
 
-      const args = exec?.arguments
-      const raw = args?.file_path ?? args?.path ?? args?.file
-      if (typeof raw !== 'string' || !raw.trim()) return undefined
+      const raw = writeTargets(name, exec?.arguments)
+      if (raw.length === 0) return undefined
 
       const cwd = resolveCwd({ agent: exec?.agent }) ?? process.cwd()
-      const target = isAbsolute(raw) ? raw : resolve(cwd, raw)
       const probe = probeEnvironment({ cfg, cwd, detail: false })
-
-      return isMemoryTarget(target, probe) ? t('guard.refused', { path: raw }) : undefined
+      for (const candidate of raw) {
+        const target = isAbsolute(candidate) ? candidate : resolve(cwd, candidate)
+        if (isMemoryTarget(target, probe)) return t('guard.refused', { path: candidate })
+      }
+      return undefined
     }),
   )
   return true

@@ -305,3 +305,66 @@ test('the ledger counts conflicts, not just commits', async () => {
   assert.equal(typeof stats.lastConflictAt, 'number')
   assert.equal(typeof stats.lastCommitAt, 'number')
 })
+
+test('a lock timeout is a refusal, not a rejected promise', async () => {
+  const s = setup({ write: { lockWaitMs: 40 } })
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- one\n', 'utf8')
+  const daily = join(s.memoryDir, `${localDateStamp()}.md`)
+  writeFileSync(daily, '- 今天的\n', 'utf8')
+
+  // Hold the daily file's lock the way another process would, then write.
+  const { pathKey } = await import('../src/write/fslock.js')
+  const lock = join(s.root, 'state', 'locks', `${pathKey(daily)}.lock`)
+  mkdirSync(lock, { recursive: true })
+
+  const dailyResult = await s.store.append({ target: 'project-daily', text: '第二条' }, s.probe)
+  assert.equal(dailyResult.ok, false)
+  assert.equal(dailyResult.code, 'lock_timeout')
+
+  const memoryLock = join(s.root, 'state', 'locks', `${pathKey(file)}.lock`)
+  mkdirSync(memoryLock, { recursive: true })
+  const memoryResult = await s.store.append({ target: 'project-memory', section: 'A', text: 'two' }, s.probe)
+  assert.equal(memoryResult.ok, false)
+  assert.equal(memoryResult.code, 'lock_timeout')
+})
+
+test('a lock held by a live process is never stolen, however old it is', async () => {
+  const s = setup({ write: { lockWaitMs: 30 } })
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- one\n', 'utf8')
+
+  const { pathKey } = await import('../src/write/fslock.js')
+  const lock = join(s.root, 'state', 'locks', `${pathKey(file)}.lock`)
+  mkdirSync(lock, { recursive: true })
+  // This process is alive, but the owner file claims a very old timestamp. Age
+  // alone must not be read as "dead": stealing here would corrupt a live write.
+  writeFileSync(
+    join(lock, 'owner'),
+    JSON.stringify({ pid: process.pid, at: Date.now() - 3600_000, host: process.env.COMPUTERNAME ?? '', token: 'other' }),
+    'utf8',
+  )
+
+  const result = await s.store.append({ target: 'project-memory', section: 'A', text: 'two' }, s.probe)
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'lock_timeout')
+  assert.equal(readFileSync(file, 'utf8'), '## A\n- one\n', 'the file was not touched')
+})
+
+test('a failed backup refuses the write instead of replacing without one', async () => {
+  const s = setup({ write: { backupKeep: 3 } })
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- one\n', 'utf8')
+
+  // Make the backup directory unwritable by occupying its name with a file:
+  // mkdir then fails, so no snapshot can be taken.
+  const { pathKey } = await import('../src/write/fslock.js')
+  const backupRoot = join(s.root, 'state', 'backups')
+  mkdirSync(backupRoot, { recursive: true })
+  writeFileSync(join(backupRoot, pathKey(file)), 'not a directory', 'utf8')
+
+  const result = await s.store.editAt({ target: 'project-memory', section: 'A', line: 1, replacement: '- two' }, s.probe)
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'backup_failed')
+  assert.equal(readFileSync(file, 'utf8'), '## A\n- one\n', 'the destructive step did not run')
+})

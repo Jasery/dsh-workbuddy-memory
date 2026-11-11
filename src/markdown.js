@@ -31,6 +31,12 @@ export function splitLines(text) {
 /**
  * Locate level-2..6 headings, ignoring anything inside a fenced code block.
  *
+ * Section ends are resolved with one backward pass over the heading list: a
+ * section ends just before the next heading at the same or a shallower level.
+ * The previous forward version re-scanned the whole tail for every heading,
+ * which is quadratic — a 900 KB file blocked the event loop for 15 seconds, and
+ * the panel calls this per file on a 3-second poll.
+ *
  * @param {string} text
  * @returns {{ heading: string, level: number, line: number, endLine: number, start: number, end: number }[]}
  */
@@ -68,13 +74,20 @@ export function parseSections(text) {
     offset += line.length
   }
 
-  for (let index = 0; index < sections.length; index += 1) {
+  // Backward pass with a stack of open headings. Walking from the end, the top
+  // of the stack is always the nearest heading that follows the current one:
+  // deeper headings cannot close it, so they are popped first, and whatever is
+  // left at the same or a shallower level is exactly the section boundary.
+  const open = []
+  for (let index = sections.length - 1; index >= 0; index -= 1) {
     const current = sections[index]
-    const next = sections.slice(index + 1).find((candidate) => candidate.level <= current.level)
+    while (open.length > 0 && open[open.length - 1].level > current.level) open.pop()
+    const next = open[open.length - 1]
     if (next) {
       current.endLine = next.line - 1
       current.end = next.start
     }
+    open.push(current)
   }
 
   return sections
@@ -149,19 +162,28 @@ function removeBulletLine(lines, index, eol) {
 }
 
 /**
- * Tidy the blank lines a removal can leave behind.
+ * Tidy the blank lines a removal can leave behind, inside one line range.
  *
  * Deleting every entry of a section should not leave a growing column of empty
- * lines: consecutive blanks collapse to one, and the document keeps exactly one
- * trailing line ending. Non-blank lines are untouched byte for byte.
+ * lines: consecutive blanks collapse to one. Only the given span is rewritten —
+ * collapsing the whole document would rewrite bytes in sections the caller
+ * never touched, which is exactly what makes a shared file conflict.
  *
  * @param {string[]} lines - lines with terminators.
  * @param {string} eol - the document's line ending.
+ * @param {number} [from] - first line index that may be rewritten.
+ * @param {number} [to] - last line index (inclusive) that may be rewritten.
  * @returns {string[]}
  */
-function collapseBlankRuns(lines, eol) {
+function collapseBlankRuns(lines, eol, from = 0, to = lines.length - 1) {
+  const start = Math.max(0, Math.min(from, lines.length))
+  const end = Math.max(start - 1, Math.min(to, lines.length - 1))
+  const head = lines.slice(0, start)
+  const span = lines.slice(start, end + 1)
+  const tail = lines.slice(end + 1)
+
   const out = []
-  for (const raw of lines) {
+  for (const raw of span) {
     const body = raw.replace(/\r?\n$/, '')
     if (body.trim() === '') {
       if (out.length === 0 || out[out.length - 1].replace(/\r?\n$/, '').trim() === '') continue
@@ -170,8 +192,13 @@ function collapseBlankRuns(lines, eol) {
     }
     out.push(raw.endsWith('\n') ? raw : `${raw}${eol}`)
   }
-  while (out.length > 0 && out[out.length - 1].replace(/\r?\n$/, '').trim() === '') out.pop()
-  return out
+
+  // Only trim a trailing blank run when the span reaches the end of the file:
+  // otherwise the next line belongs to another section.
+  if (end === lines.length - 1) {
+    while (out.length > 0 && out[out.length - 1].replace(/\r?\n$/, '').trim() === '') out.pop()
+  }
+  return [...head, ...out, ...tail]
 }
 
 /**
@@ -249,7 +276,11 @@ export function editEntry(text, heading, match, options = {}) {
   if (mode === 'remove') {
     // Highest first, so splicing one row cannot shift the next index.
     for (const index of [...targets].sort((a, b) => b - a)) removeBulletLine(lines, index, eol)
-    return { text: collapseBlankRuns(lines, eol).join(''), replaced: targets.length, lines: targets }
+    return {
+      text: collapseBlankRuns(lines, eol, section.line, section.endLine).join(''),
+      replaced: targets.length,
+      lines: targets,
+    }
   }
 
   // Validate every target before touching the document: a replace that cannot
@@ -299,7 +330,11 @@ export function editEntryAt(text, heading, line, options = {}) {
 
   const eol = detectEol(text)
   if ((options.mode ?? 'replace') === 'remove') {
-    return { text: collapseBlankRuns(removeBulletLine(lines, line, eol), eol).join(''), replaced: 1, lines: [line] }
+    return {
+      text: collapseBlankRuns(removeBulletLine(lines, line, eol), eol, section.line, section.endLine).join(''),
+      replaced: 1,
+      lines: [line],
+    }
   }
   // The marker is the document's, not the caller's: it is preserved here so a
   // replacement written as plain text cannot demote the entry to a paragraph.

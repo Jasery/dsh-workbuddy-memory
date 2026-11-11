@@ -16,6 +16,7 @@ import {
 } from '../src/paths.js'
 import { truncateChars, truncateHead } from '../src/fsx.js'
 import { redact } from '../src/render.js'
+import { pathKey } from '../src/write/fslock.js'
 
 const HOME = resolve('/home/tester')
 
@@ -97,4 +98,16 @@ test('redaction replaces the home prefix in every separator style', () => {
   assert.equal(redact('/home/tester/notes', '/home/tester'), '~/notes')
   assert.equal(redact('C:\\Users\\me\\notes', 'C:\\Users\\me'), '~\\notes')
   assert.equal(redact('nothing here', '/home/tester'), 'nothing here')
+})
+
+test('pathKey folds the differences the platform itself ignores', () => {
+  // Two spellings of one Windows file must share a lock and a backup directory,
+  // or two writers targeting it never serialize.
+  if (process.platform === 'win32') {
+    assert.equal(pathKey('C:\\x\\MEMORY.md'), pathKey('c:/x/memory.md'))
+    assert.notEqual(pathKey('C:\\x\\MEMORY.md'), pathKey('C:\\x\\OTHER.md'))
+  } else {
+    assert.equal(pathKey('/x/MEMORY.md'), pathKey('/x/MEMORY.md'))
+    assert.notEqual(pathKey('/x/MEMORY.md'), pathKey('/x/memory.md'))
+  }
 })
