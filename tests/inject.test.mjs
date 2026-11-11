@@ -253,3 +253,46 @@ test('profileUid matches the account uid exactly, never a substring', () => {
   assert.match(text, /画像 xyz/)
   assert.doesNotMatch(text, /画像 abc/)
 })
+
+test('the injected rules say when to write, not only how', () => {
+  // The plugin used to ship only "how to write" rules (which tool, how to avoid
+  // conflicts, how to archive). Nothing told the model *when* to record
+  // anything, so a long task could finish with no memory written at all.
+  const { cfg, cwd } = fixture()
+  const { ctx, sections } = fakeCtx()
+  registerSections(ctx, { cfg, t })
+  const text = textOf(sections.get('workbuddy-memory:rules'), contextFor(cwd))
+
+  assert.match(text, /什么时候该写/)
+  // The four triggers and the explicit "do not write" list both matter: a rule
+  // that only says "record useful things" is what produced the silent gap.
+  assert.match(text, /环境|工具链/)
+  assert.match(text, /凭据|配置/)
+  assert.match(text, /踩过的坑|重犯/)
+  assert.match(text, /偏好|规范/)
+  assert.match(text, /不写/)
+})
+
+test('the English rules carry the same trigger', () => {
+  const english = createTranslator('en')
+  const { cfg, cwd } = fixture()
+  const { ctx, sections } = fakeCtx()
+  registerSections(ctx, { cfg, t: english })
+  const text = textOf(sections.get('workbuddy-memory:rules'), contextFor(cwd))
+
+  assert.match(text, /When to write/)
+  assert.match(text, /Do not write/)
+})
+
+test('read-only rules do not instruct writes, and carry no trigger', () => {
+  // A read-only session must not be told when to write: every attempt returns
+  // read_only, so a trigger there would only burn turns.
+  const { home, cfg } = fixture()
+  const readOnly = normalizeConfig({ ...cfg, workbuddyHome: home, readOnly: true })
+  const { ctx, sections } = fakeCtx()
+  registerSections(ctx, { cfg: readOnly, t })
+  const text = textOf(sections.get('workbuddy-memory:rules'), contextFor(null))
+
+  assert.match(text, /只读/)
+  assert.doesNotMatch(text, /什么时候该写/)
+})

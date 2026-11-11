@@ -616,7 +616,10 @@ export function createStore({ cfg, stateDir }) {
       const after = readTextSafe(path)
       const revision = contentRevision(after.text)
       recordOperation({ id: operationId, at: Date.now(), target, path, status: 'committed', before, after: revision, backup: backupPath })
-      return { ok: true, revision, previous: before, path, bytes: after.bytes, backup: backupPath ?? undefined, created: result.created }
+      // `null`, never `undefined`: the host validates a tool result as lossless
+      // JSON, and a single undefined property makes the whole output illegal —
+      // the write succeeds but the caller sees "value is not lossless JSON".
+      return { ok: true, revision, previous: before, path, bytes: after.bytes, backup: backupPath ?? null, created: Boolean(result.created) }
     }).catch((error) => {
       if (error?.code === 'lock_timeout') return fail('lock_timeout', { owner: error.owner })
       return fail('write_failed', { message: error?.message ?? String(error) })

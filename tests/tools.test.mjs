@@ -374,3 +374,73 @@ test('memory_append bootstraps the memory directory only when ensureLayout is on
   assert.equal(created.ok, true)
   assert.match(readFileSync(join(onCwd, '.workbuddy', 'memory', 'MEMORY.md'), 'utf8'), /- x/)
 })
+
+/** The host rejects a tool result with any undefined / non-finite / -0 field. */
+function losslessViolations(value, path = 'root') {
+  if (value === null) return []
+  if (typeof value === 'string' || typeof value === 'boolean') return []
+  if (typeof value === 'number') return Number.isFinite(value) && !Object.is(value, -0) ? [] : [`${path}=${value}`]
+  if (value === undefined) return [`${path} is undefined`]
+  if (typeof value !== 'object') return [`${path} is ${typeof value}`]
+  return Object.entries(value).flatMap(([key, child]) => losslessViolations(child, `${path}.${key}`))
+}
+
+test('every write tool returns a result the host can snapshot', async () => {
+  // The host validates each tool result as lossless JSON and rejects it when a
+  // single property is undefined — *after* the write already landed. The caller
+  // then sees "value is not lossless JSON" for a successful write, and a retry
+  // without the same idempotency key writes twice.
+  const f = fixture()
+  // A brand-new file has nothing to back up, which is exactly the case that
+  // produced `backup: undefined` and the rejected snapshot.
+  const fresh = join(f.root, 'fresh')
+  mkdirSync(join(fresh, '.workbuddy', 'memory'), { recursive: true })
+  const freshExec = { agent: { session: { header: { cwd: fresh } } } }
+
+  const first = await f.tools.append.execute({ target: 'project-memory', section: 'A', text: '第一条' }, freshExec)
+  assert.equal(first.ok, true)
+  assert.deepEqual(losslessViolations(first), [], 'first write has no backup, and must still be lossless')
+  assert.equal(first.backup, null, 'an absent backup is null, not a missing key')
+  assert.equal(first.created, true)
+
+  const second = await f.tools.append.execute({ target: 'project-memory', section: 'A', text: '第二条' }, freshExec)
+  assert.deepEqual(losslessViolations(second), [])
+  assert.equal(typeof second.backup, 'string')
+  assert.equal(second.created, false)
+
+  const edited = await f.tools.edit.execute({ target: 'project-memory', section: 'A', match: '第一条', replacement: '第一条改' }, freshExec)
+  assert.equal(edited.ok, true)
+  assert.deepEqual(losslessViolations(edited), [], 'edit reports created only sometimes; it must not leak undefined')
+  assert.equal(edited.created, false)
+
+  const pruned = await f.tools.prune.execute({ dryRun: true }, freshExec)
+  assert.deepEqual(losslessViolations(pruned), [])
+
+  const status = await f.tools.status.execute({}, freshExec)
+  assert.deepEqual(losslessViolations(status), [])
+
+  const read = await f.tools.read.execute({ target: 'project-memory' }, freshExec)
+  assert.deepEqual(losslessViolations(read), [])
+
+  const search = await f.tools.search.execute({ query: '第一条' }, freshExec)
+  assert.deepEqual(losslessViolations(search), [])
+})
+
+test('the lossless guard coerces what the host would reject', async () => {
+  const { lossless } = await import('../src/tools/index.js')
+
+  assert.equal(lossless(undefined), null)
+  assert.equal(lossless(Number.NaN), null)
+  assert.equal(lossless(Number.POSITIVE_INFINITY), null)
+  assert.equal(lossless(-0), null)
+  assert.equal(lossless(0), 0)
+  assert.deepEqual(lossless({ a: undefined, b: 1 }), { a: null, b: 1 })
+  assert.deepEqual(lossless([1, undefined, 3]), [1, null, 3])
+  assert.deepEqual(lossless({ nested: { deep: undefined } }), { nested: { deep: null } })
+  // A cycle would make JSON.stringify throw; it is cut rather than followed.
+  const cyclic = { name: 'x' }
+  cyclic.self = cyclic
+  assert.deepEqual(lossless(cyclic), { name: 'x', self: null })
+  // A bigint is not JSON at all; the string form keeps it readable.
+  assert.equal(lossless(10n), '10')
+})
