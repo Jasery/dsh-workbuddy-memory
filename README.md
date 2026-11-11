@@ -10,7 +10,7 @@ Share one set of memory files between DSH and WorkBuddy: the `MEMORY.md`, daily 
 |---|---|
 | Injection (project / rules / user / profile sections) | done |
 | `memory_status` / `memory_read` / `memory_search` | done |
-| Write tools (`memory_append` / `memory_edit` / `memory_consolidate`) and the bare-write guard | done |
+| Write tools (`memory_append` / `memory_edit` / `memory_prune`) and the bare-write guard | done |
 | Revision fence, backups, operation log | done |
 | Config card on the Plugins page | done |
 | Sidebar memory panel (browse, edit, search) | done |
@@ -56,8 +56,13 @@ An empty `workbuddyHome` follows WorkBuddy's own order: `WORKBUDDY_CONFIG_DIR` �
 | `inject.limits.*` | 10000 / 4000 / 2000 | character limits per block |
 | `stateDir` | `''` | index and backups root; defaults to `~/.dsh/workbuddy-memory` |
 | `ui.enabled` | `true` | when off, the sidebar panel gets no data (the `/workbuddy-memory` routes stay unregistered) |
-| `ui.allowWriteActions` | `false` | master switch for panel writes; while off the panel is read-only and `/action` refuses everything |
-| `ui.allowFullTextEdit` | `false` | whole-file editing (no panel UI yet) |
+| `ui.allowWriteActions` | `true` | master switch for panel writes; while off the panel is read-only and `/action` refuses everything; the panel can turn it on in place |
+| `ui.allowFullTextEdit` | `true` | source mode (whole-file edit); the first entry asks for confirmation, and the entry guides you to enable it when off |
+| `ui.globalPanel` | `true` | left-rail `记忆` overview entry |
+| `ui.projectTab` | `true` | native right-sidebar project-memory tab |
+| `ui.sessionAction` | `true` | session-header memory button |
+| `ui.refreshMs` | `3000` | `/state` polling interval |
+| `ui.maxProjects` | `50` | maximum projects shown in the overview |
 | `write.ensureLayout` | `false` | create `<cwd>/<dataFolder>/memory` on first write |
 | `search.enabled` | `true` | when off, `memory_search` is not registered at all |
 
@@ -65,51 +70,58 @@ Keys editable from the plugin page carry `.volatile()`; `stateDir` and `locale` 
 
 ## Sidebar panel
 
-The `记忆` icon at the bottom of the sidebar opens it. Three bands:
+There is one left entry; project memory lives in the right sidebar:
 
-- **Status**: home, current project, read-only or not, limit meters for project and user memory, backup and conflict counts
-- **Tree**: project `MEMORY.md`, daily notes (anything over 30 days is flagged "suggest merging"), user `MEMORY.md`, profile (read-only)
-- **Detail**: rows grouped by `## section`, with a search box (local filter and highlight), plus "整理…", "历史…" and "reload"
+- **记忆 (overview)**: aggregates every DSH workspace plus recently seen session directories, with per-project entries, bytes, daily files and health; expanding a project lists `MEMORY.md` and its daily notes
+- **Right-sidebar project tab**: a native tab next to files/changes, bound to its session's project; it uses the same two-column layout as the overview, but the rail only lists the current project's `MEMORY.md`, daily notes and the global stores
+- **Session-header memory button**: opens or focuses that tab
 
-Writes are off by default; turn on "面板写操作" on the Plugins page. With it on:
+Opening the project tab selects `MEMORY.md`; when it does not exist it selects the latest daily note instead of stopping on a file picker or an empty summary.
 
-| Action | Interaction | Route |
+Detail groups rows by `## section`, with a local search box and `源码`, `归档旧日期`, `重新加载`.
+
+Editing is on by default:
+
+| Layer | Interaction | Route |
 |---|---|---|
-| Edit a row | click the row, Enter saves, Esc cancels | `POST /action {type:'edit'}` |
-| Delete a row | the `✕` at the end of the row | `POST /action {type:'remove'}` |
-| Add a row | the `＋` next to a section heading | `POST /action {type:'add'}` |
-| Undo | within 10 s of a save, "撤销" restores that backup | `POST /action {type:'restore'}` |
-| Consolidate | plan first, tick the dates, then merge | `POST /action {type:'consolidate'}` |
-| Roll back | pick a backup, read the line diff, confirm | `POST /action {type:'restore'}` |
+| L1 entry | click a row, Enter saves, Esc cancels | `POST /action {type:'edit'}` |
+| L1 delete | delete icon at the end of the row | `POST /action {type:'remove'}` |
+| L1 add | `＋` next to a section; daily notes use `添加一条` | `POST /action {type:'add'}` |
+| L2 section | `编辑小节` → that section's raw body → save | `POST /action {type:'replace-section'}` |
+| L3 source | document header `源码` → whole file → structure check | `POST /action {type:'replace-document'}` |
+| Delete section | delete icon next to a section heading → confirm | `POST /action {type:'remove-section'}` |
+| Undo | within 10 s of a save, `撤销` restores that backup | `POST /action {type:'restore'}` |
+| Archive old dailies | plan first, tick the dates, then move them to `memory/archive/` (never writes MEMORY) | `POST /action {type:'prune'}` |
 
-Three data routes, all same-origin checked: `GET /state`, `GET /content`, `GET /revisions` + `/revision` (read-only), and `POST /action` (off by default). Targets are an enum (`project-memory` / `project-daily` / `user-memory` / `profile`) and dates must be `YYYY-MM-DD`; no path is ever accepted, so it cannot serve as a file browser. A cross-origin `Origin` is 403, and `/action` additionally requires `content-type: application/json` and a body of at most 64 KB.
+The history browser / roll-back entry was removed; pre-write backups remain for undo and conflict recovery.
 
-The panel is not a second write path: every action goes through the same store as the tools — same lock, same revision CAS, same backup, same ledger. It sends the revision it displayed, so a file changed underneath it returns `conflict` and the panel offers three exits (reload / keep the draft / overwrite after backing up).
+Panel data routes, all same-origin checked: `GET /state`, `GET /content`, and `POST /action`. Targets are an enum (`project-memory` / `project-daily` / `user-memory` / `profile`) and dates must be `YYYY-MM-DD`; no path is ever accepted, so it cannot serve as a file browser. A cross-origin `Origin` is 403, and `/action` additionally requires `content-type: application/json` and a body of at most 512 KB (source mode carries a whole file). The host still keeps the read-only `/revisions` and `/revision` routes and pre-write backups for undo and diagnostics; the panel no longer exposes a history browser.
 
-"Current project" is the working directory the last prompt assembly saw, so the panel only knows which project to show after a session has talked to it once.
+The panel is not a second write path: every action goes through the same store as the tools — same lock, same revision CAS, same backup, same ledger. It sends the revision it displayed, so a file changed underneath it returns `conflict` and the panel offers reload, disk diff, keep the draft, or overwrite after backing up.
 
-### Choosing a project
+"Current project" prefers the viewed session's workspace (the right tab resolves its own session), then the last prompt assembly. The overview does not need a session: every workspace in the registry appears.
 
-The panel has no session of its own; it only knows which working directories this plugin has assembled a prompt for. So:
+### Where projects come from
 
-- talk to a session in a project → that project becomes a candidate, and the top bar shows its name (a label when there is one, a dropdown when there are several)
-- changing the dropdown moves the whole panel — tree, detail, consolidate and restore all follow it
-- a directory never opened in a session is not a candidate: `/content` only accepts the keys in that list (first 8 hex of the cwd's sha1), so this is still not a file browser
+- The overview merges the DSH **workspace registry** (`ctx.workspaceRegistry`) with directories this plugin has **assembled a prompt for**; the registry covers projects that were registered but never chatted with
+- The right tab prefers its own session's workspace, then the last assembly
+- The overview does not need a session; project keys still resolve only inside that whitelist (first 8 hex of the cwd's sha1), never an arbitrary path
+- No recursive disk scan: the registry is authoritative, and walking the disk would cross permissions, symlinks and large trees
 
 Project memory lives in `<project>/.workbuddy/memory/`. `MEMORY.md` (long-term) and `YYYY-MM-DD.md` (that day's log) are separate files — **a missing MEMORY.md does not mean the project has no memory**, the daily notes are listed on their own.
 
 ## Tests
 
 ```bash
-npm test               # 159 cases
+npm test               # 157 cases
 npm run test:coverage  # with coverage
 ```
 
-Current: **93.2% lines / 79.8% branches / 81.0% functions** (all 20 files under `src/` are counted).
+Current: **81.7% lines / 76.6% branches / 66.2% functions** (all files under `src/`; the panel rewrite added interaction branches that are not all covered yet).
 
 What the suite pins down: the path resolution chain and the six-step capability matrix, byte-stable markdown edits (including that a rewritten entry keeps its `- ` marker and that an empty replacement is refused instead of deleting the row), the write chain (lock, revision fence, backups, `read_only`, local-calendar daily files), the real-path classification behind the bare-write guard, section ordering and truncation (no half surrogate pairs), the refresh modes and cache keys, all five tools including conflict and idempotent replay, the panel routes' JSON shape and 405/403 edges, and the config card rendered through a four-hook React stand-in — which is what catches a host dropping a snapshot field.
 
-Two suites go further than units: `tests/e2e.test.mjs` boots a real HTTP server over real files in a temp dir (JSON in, bytes out, conflict, restore, consolidate), and `tests/panel.test.mjs` drives the panel through a minimal hooks runtime, so a click → fetch → re-render round trip is asserted rather than assumed.
+Two suites go further than units: `tests/e2e.test.mjs` boots a real HTTP server over real files in a temp dir (JSON in, bytes out, conflict, restore, prune), and `tests/panel.test.mjs` drives the overview and project surfaces through a minimal hooks runtime, so a click → fetch → re-render round trip is asserted rather than assumed.
 
 Not covered automatically: real browser focus and drag behaviour, and cross-process contention (only half of `fslock`'s wait and timeout paths run).
 

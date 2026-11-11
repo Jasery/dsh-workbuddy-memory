@@ -77,11 +77,18 @@ export const Config = z.object({
     enabled: z.boolean().default(true).volatile(),
   }),
 
-  ui: z.object({
-    enabled: z.boolean().default(true).volatile(),
-    allowWriteActions: z.boolean().default(false).volatile(),
-    allowFullTextEdit: z.boolean().default(false).volatile(),
-  }),
+  ui: z
+    .object({
+      enabled: z.boolean().default(true).volatile(),
+      allowWriteActions: z.boolean().default(true).volatile(),
+      allowFullTextEdit: z.boolean().default(true).volatile(),
+      globalPanel: z.boolean().default(true).volatile(),
+      projectTab: z.boolean().default(true).volatile(),
+      sessionAction: z.boolean().default(true).volatile(),
+      refreshMs: z.number().default(3000).volatile(),
+      maxProjects: z.number().default(50).volatile(),
+    })
+    .description('Panel entries, polling and scan bounds.'),
 
   search: z
     .object({
@@ -169,8 +176,13 @@ export function normalizeConfig(raw) {
 
     ui: {
       enabled: bool(ui.enabled, true),
-      allowWriteActions: bool(ui.allowWriteActions, false),
-      allowFullTextEdit: bool(ui.allowFullTextEdit, false),
+      allowWriteActions: bool(ui.allowWriteActions, true),
+      allowFullTextEdit: bool(ui.allowFullTextEdit, true),
+      globalPanel: bool(ui.globalPanel, true),
+      projectTab: bool(ui.projectTab, true),
+      sessionAction: bool(ui.sessionAction, true),
+      refreshMs: num(ui.refreshMs, 3000, 500, 60000),
+      maxProjects: num(ui.maxProjects, 50, 1, 500),
     },
 
     search: {

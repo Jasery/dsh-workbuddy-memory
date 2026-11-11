@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import test from 'node:test'
@@ -263,35 +263,34 @@ test('restore puts the snapshot back and backs up what it replaced', async () =>
   assert.equal(missing.code, 'no_revision')
 })
 
-test('consolidate plans by age, then moves entries instead of copying them', async () => {
+test('prune plans by age, then archives old dailies without touching MEMORY', async () => {
   const s = setup()
   const file = join(s.memoryDir, 'MEMORY.md')
   writeFileSync(file, '## 环境\n- Node 22\n', 'utf8')
   writeFileSync(join(s.memoryDir, '2026-01-02.md'), '- 老的一\n- 老的二\n', 'utf8')
   writeFileSync(join(s.memoryDir, '2099-01-01.md'), '- 未来的\n', 'utf8')
 
-  const plan = await s.store.consolidate({ beforeDays: 30, dryRun: true }, s.probe)
+  const plan = await s.store.prune({ beforeDays: 30, dryRun: true }, s.probe)
   assert.equal(plan.ok, true)
   assert.equal(plan.dryRun, true)
   assert.deepEqual(plan.candidates.map((row) => row.date), ['2026-01-02'])
   assert.equal(plan.entries, 2)
 
-  const merged = await s.store.consolidate({ beforeDays: 30, dryRun: false, dates: ['2026-01-02'] }, s.probe)
-  assert.equal(merged.ok, true)
-  const text = readFileSync(file, 'utf8')
-  assert.match(text, /## 2026-01-02/)
-  assert.match(text, /- 老的一/)
-  assert.match(text, /- 老的二/)
-  assert.doesNotMatch(readFileSync(join(s.memoryDir, '2026-01-02.md'), 'utf8'), /老的一/)
+  const done = await s.store.prune({ beforeDays: 30, dryRun: false, dates: ['2026-01-02'] }, s.probe)
+  assert.equal(done.ok, true)
+  // MEMORY is untouched; the raw log is moved to archive/, future file stays.
+  assert.equal(readFileSync(file, 'utf8'), '## 环境\n- Node 22\n')
+  assert.equal(existsSync(join(s.memoryDir, '2026-01-02.md')), false)
+  assert.match(readFileSync(join(s.memoryDir, 'archive', '2026-01-02.md'), 'utf8'), /老的一/)
   assert.match(readFileSync(join(s.memoryDir, '2099-01-01.md'), 'utf8'), /未来的/)
 })
 
-test('consolidate with nothing old enough says so instead of writing', async () => {
+test('prune with nothing old enough says so instead of moving', async () => {
   const s = setup()
   writeFileSync(join(s.memoryDir, '2099-01-01.md'), '- 未来的\n', 'utf8')
-  const result = await s.store.consolidate({ beforeDays: 30, dryRun: false }, s.probe)
+  const result = await s.store.prune({ beforeDays: 30, dryRun: false }, s.probe)
   assert.equal(result.ok, false)
-  assert.equal(result.code, 'nothing_to_consolidate')
+  assert.equal(result.code, 'nothing_to_prune')
 })
 
 test('the ledger counts conflicts, not just commits', async () => {

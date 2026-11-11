@@ -15,16 +15,16 @@
  */
 
 import { appendFileDurable, contentRevision, pathKey, withLock, writeFileAtomic } from './fslock.js'
-import { allEntries, appendToSection, editEntry, editEntryAt, removeLines } from '../markdown.js'
+import { allEntries, appendToSection, editEntry, editEntryAt, removeSection, replaceSectionBody, validateDocument } from '../markdown.js'
 import { ageInDays } from '../env.js'
 import { readTextSafe } from '../fsx.js'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, readdirSync, statSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 export const TARGETS = ['project-memory', 'project-daily', 'user-memory']
 
 /** Actions the panel may ask for. Anything not here is refused before it runs. */
-export const ACTIONS = ['add', 'edit', 'remove', 'consolidate', 'restore']
+export const ACTIONS = ['add', 'edit', 'remove', 'replace-section', 'replace-document', 'remove-section', 'prune', 'restore']
 
 /**
  * Today as `YYYY-MM-DD` in the machine's own timezone.
@@ -117,6 +117,80 @@ export function createStore({ cfg, stateDir }) {
   }
 
   /**
+   * Replace one section body (L2).
+   *
+   * The section heading and every line outside the section are kept byte for
+   * byte; only the body the editor showed is swapped. Validation lives in
+   * `replaceSectionBody`, so an invalid body is refused before any write.
+   *
+   * @param {{ target: string, section: string, body: string, expectedRevision?: string, operationId?: string }} input
+   */
+  async function replaceSection(input, probe) {
+    if (cfg.readOnly) return fail('read_only')
+    if (!cfg.write.enabled) return fail('write_disabled')
+
+    const resolved = resolveTarget(input.target, probe)
+    if (!resolved.path || resolved.mode !== 'rewrite') return fail('bad_target', { target: input.target })
+
+    const replay = seenOperation(input.operationId)
+    if (replay?.status === 'committed') return { ok: true, duplicate: true, revision: replay.after, path: resolved.path }
+
+    return writeEverywhere(resolved.path, input.target, input.expectedRevision, input.operationId, (current) => {
+      const result = replaceSectionBody(current, String(input.section ?? ''), String(input.body ?? ''))
+      if (!result.ok) return { text: current, replaced: 0, reason: result.reason, issues: result.issues }
+      return { text: result.text, replaced: 1, entries: result.entries }
+    })
+  }
+
+  /**
+   * Replace the whole document (L3).
+   *
+   * Off unless `ui.allowFullTextEdit` is on: this bypasses the entry model, so
+   * the only structural guarantees left are the checks in `validateDocument`.
+   * The writer still runs the same lock, CAS, backup and ledger chain.
+   *
+   * @param {{ target: string, text: string, expectedRevision?: string, operationId?: string }} input
+   */
+  async function replaceDocument(input, probe) {
+    if (cfg.readOnly) return fail('read_only')
+    if (!cfg.write.enabled) return fail('write_disabled')
+    if (!cfg.ui.allowFullTextEdit) return fail('full_text_disabled')
+
+    const resolved = resolveTarget(input.target, probe)
+    if (!resolved.path || resolved.mode !== 'rewrite') return fail('bad_target', { target: input.target })
+
+    const text = String(input.text ?? '')
+    const validation = validateDocument(text)
+    if (!validation.ok) return fail('invalid_structure', { issues: validation.issues })
+
+    const replay = seenOperation(input.operationId)
+    if (replay?.status === 'committed') return { ok: true, duplicate: true, revision: replay.after, path: resolved.path }
+
+    return writeEverywhere(resolved.path, input.target, input.expectedRevision, input.operationId, () => ({
+      text,
+      replaced: 1,
+    }))
+  }
+
+  /** Delete one whole section (heading and body) with the usual backup chain. */
+  async function removeSectionAction(input, probe) {
+    if (cfg.readOnly) return fail('read_only')
+    if (!cfg.write.enabled) return fail('write_disabled')
+
+    const resolved = resolveTarget(input.target, probe)
+    if (!resolved.path || resolved.mode !== 'rewrite') return fail('bad_target', { target: input.target })
+
+    const replay = seenOperation(input.operationId)
+    if (replay?.status === 'committed') return { ok: true, duplicate: true, revision: replay.after, path: resolved.path }
+
+    return writeEverywhere(resolved.path, input.target, input.expectedRevision, input.operationId, (current) => {
+      const result = removeSection(current, String(input.section ?? ''))
+      if (!result.ok) return { text: current, replaced: 0, reason: result.reason }
+      return { text: result.text, replaced: result.removed, removed: result.removed }
+    })
+  }
+
+  /**
    * Put a file back to one of its own backups.
    *
    * The caller must name the revision it saw (`expectedRevision`), so a restore
@@ -144,27 +218,22 @@ export function createStore({ cfg, stateDir }) {
   }
 
   /**
-   * Fold old daily files into the project's long-term memory.
+   * Archive old daily files. WorkBuddy-aligned: the *model* distills durable
+   * conclusions into MEMORY.md first (via append/edit); this action only moves
+   * the raw daily logs out of the active memory dir into `archive/`. It never
+   * writes MEMORY.md, so it cannot bloat the injected long-term store.
    *
-   * `dryRun` is the default: the panel shows the plan first, and running it
-   * means sending the same request with `dryRun: false`. Each daily file lands
-   * under its own `## YYYY-MM-DD` heading, so the archive keeps its dates
-   * instead of inventing topics the plugin cannot infer.
+   * `dryRun` is the default: the caller sees the plan before anything moves.
+   * Moving (not deleting) keeps the raw logs recoverable.
    *
-   * Two files are touched, so the journal records which sources were already
-   * cleared — a crash between the target write and the source cleanup resumes
-   * without writing the same entries twice.
-   *
-   * @param {{ beforeDays?: number, dates?: string[], dryRun?: boolean, expectedRevision?: string, operationId?: string }} input
+   * @param {{ beforeDays?: number, dates?: string[], dryRun?: boolean, operationId?: string }} input
    */
-  async function consolidate(input, probe) {
+  async function prune(input, probe) {
     if (cfg.readOnly) return fail('read_only')
     if (!cfg.write.enabled) return fail('write_disabled')
 
     const dir = probe.project.dir
     if (!dir || !existsSync(dir)) return fail('no_store', { dir })
-    const targetPath = probe.project.memoryPath
-    if (!targetPath) return fail('no_store')
 
     const beforeDays = Math.min(Math.max(Number(input.beforeDays ?? 30) || 0, 1), 3650)
     const wanted = Array.isArray(input.dates) && input.dates.length > 0 ? new Set(input.dates.map(String)) : null
@@ -181,88 +250,43 @@ export function createStore({ cfg, stateDir }) {
       const date = name.slice(0, 10)
       if (wanted ? !wanted.has(date) : ageInDays(date) < beforeDays) continue
       const file = readTextSafe(join(dir, name), { maxBytes: 2 * 1024 * 1024 })
-      if (!file.ok) continue
-      const entries = allEntries(file.text).map((entry) => entry.text)
-      if (entries.length === 0) continue
-      candidates.push({ date, name, bytes: file.bytes, revision: contentRevision(file.text), entries })
+      candidates.push({ date, name, bytes: file.ok ? file.bytes : 0, entries: file.ok ? allEntries(file.text).length : 0 })
     }
 
     const plan = {
       ok: true,
       dryRun: input.dryRun !== false,
       beforeDays,
-      target: 'project-memory',
-      targetPath,
+      target: 'project-daily',
       candidates,
-      entries: candidates.reduce((sum, row) => sum + row.entries.length, 0),
+      entries: candidates.reduce((sum, row) => sum + row.entries, 0),
     }
     if (plan.dryRun) return plan
-    if (candidates.length === 0) return fail('nothing_to_consolidate', { beforeDays })
+    if (candidates.length === 0) return fail('nothing_to_prune', { beforeDays })
 
-    const operationId = input.operationId || `consolidate-${Date.now()}`
+    const operationId = input.operationId || `prune-${Date.now()}`
     const replay = seenOperation(operationId)
-    if (replay?.status === 'committed') return { ok: true, duplicate: true, revision: replay.after, path: targetPath }
+    if (replay?.status === 'committed') return { ok: true, duplicate: true, pruned: [] }
 
-    // 1. Write every entry into the target under its date heading.
-    const written = await writeEverywhere(targetPath, 'project-memory', input.expectedRevision, operationId, (current) => {
-      let text = current
-      for (const row of candidates) {
-        for (const entry of row.entries) {
-          text = appendToSection(text, row.date, entry).text
-        }
-      }
-      return { text, replaced: 1, created: true }
-    })
-    if (!written.ok) return written
-
-    // 2. Clear the folded entries from each source, highest line first.
-    const journalPath = join(logDir, `${operationId.replace(/[^\w.-]/g, '_')}.json`)
-    const cleared = []
+    const archiveDir = join(dir, 'archive')
+    mkdirSync(archiveDir, { recursive: true })
+    const pruned = []
     const failed = []
     for (const row of candidates) {
       const sourcePath = join(dir, row.name)
       try {
-        const current = readTextSafe(sourcePath)
-        if (!current.ok) {
-          failed.push({ date: row.date, code: 'unreadable' })
-          continue
-        }
-        const lines = allEntries(current.text)
-          .filter((entry) => row.entries.includes(entry.text))
-          .map((entry) => entry.line)
-        if (lines.length === 0) {
-          cleared.push(row.date)
-          continue
-        }
-        backup(sourcePath)
-        writeFileAtomic(sourcePath, removeLines(current.text, lines), { fsync: cfg.write.fsync })
-        cleared.push(row.date)
+        let dest = join(archiveDir, row.name)
+        let n = 1
+        while (existsSync(dest)) dest = join(archiveDir, `${row.date}-${n++}.md`)
+        renameSync(sourcePath, dest)
+        pruned.push({ date: row.date, name: row.name, archivePath: dest })
       } catch (error) {
         failed.push({ date: row.date, code: String(error?.message ?? error) })
       }
     }
 
-    try {
-      mkdirSync(logDir, { recursive: true })
-      writeFileAtomic(
-        journalPath,
-        `${JSON.stringify({ id: operationId, at: Date.now(), beforeDays, target: targetPath, revision: written.revision, candidates: candidates.map((row) => ({ date: row.date, name: row.name, entries: row.entries.length })), cleared, failed }, null, 2)}\n`,
-        { fsync: false },
-      )
-    } catch {
-      // The journal is for forensics; the write already committed.
-    }
-
-    return {
-      ok: true,
-      revision: written.revision,
-      path: targetPath,
-      backup: written.backup,
-      consolidated: candidates.map((row) => ({ date: row.date, entries: row.entries.length })),
-      cleared,
-      failed,
-      journal: journalPath,
-    }
+    recordOperation({ id: operationId, at: Date.now(), target: 'project-daily', path: archiveDir, status: 'committed', pruned: pruned.map((row) => row.date) })
+    return { ok: true, pruned, failed, archive: archiveDir }
   }
 
   /** Result helper so every refusal has the same shape. */
@@ -522,7 +546,7 @@ export function createStore({ cfg, stateDir }) {
       }
 
       const result = transform(current.text)
-      if (result.replaced === 0) return fail(result.reason ?? 'no_match', { path, hits: result.hits ?? [] })
+      if (result.replaced === 0) return fail(result.reason ?? 'no_match', { path, hits: result.hits ?? [], issues: result.issues ?? [] })
 
       const backupPath = backup(path)
       writeFileAtomic(path, result.text, { fsync: cfg.write.fsync })
@@ -536,7 +560,7 @@ export function createStore({ cfg, stateDir }) {
     })
   }
 
-  return { append, edit, editAt, remove, restore, consolidate, listRevisions, readRevision, operationStats, backupDirFor }
+  return { append, edit, editAt, remove, replaceSection, replaceDocument, removeSection: removeSectionAction, restore, prune, listRevisions, readRevision, operationStats, backupDirFor }
 }
 
 /** `statSync` that answers null instead of throwing. */

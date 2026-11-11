@@ -8,7 +8,7 @@ import test from 'node:test'
 
 import { normalizeConfig } from '../src/config.js'
 import { createTranslator } from '../src/locale.js'
-import { appendTool, consolidateTool, editTool } from '../src/tools/write.js'
+import { appendTool, editTool, pruneTool } from '../src/tools/write.js'
 import { readTool } from '../src/tools/read.js'
 import { searchTool } from '../src/tools/search.js'
 import { statusTool } from '../src/tools/status.js'
@@ -47,7 +47,7 @@ function fixture(config = {}) {
       search: searchTool(deps),
       append: appendTool(deps),
       edit: editTool(deps),
-      consolidate: consolidateTool(deps),
+      prune: pruneTool(deps),
     },
   }
 }
@@ -318,32 +318,35 @@ test('a write survives a round trip through read', async () => {
   assert.match(file.content, /往返一条/)
 })
 
-test('memory_consolidate plans first and only writes when told to', async () => {
+test('memory_prune plans first and only archives when told to', async () => {
   const { tools, exec, dir } = fixture()
   writeFileSync(join(dir, '2026-01-02.md'), '- 很久以前的一条\n', 'utf8')
 
-  const plan = await tools.consolidate.execute({ beforeDays: 30 }, exec)
+  const plan = await tools.prune.execute({ beforeDays: 30 }, exec)
   assert.equal(plan.ok, true)
   assert.equal(plan.dryRun, true)
   assert.deepEqual(plan.candidates.map((row) => row.date), ['2026-01-02'])
-  // A dry run must not touch either file.
+  // A dry run must not move the file or touch MEMORY.
   assert.equal(readFileSync(join(dir, '2026-01-02.md'), 'utf8'), '- 很久以前的一条\n')
-  assert.equal(readFileSync(join(dir, 'MEMORY.md'), 'utf8').includes('2026-01-02'), false)
+  assert.equal(readFileSync(join(dir, 'MEMORY.md'), 'utf8').includes('很久以前的一条'), false)
 
-  const done = await tools.consolidate.execute({ beforeDays: 30, dryRun: false, operationId: 'op-1' }, exec)
+  const done = await tools.prune.execute({ beforeDays: 30, dryRun: false, operationId: 'op-1' }, exec)
   assert.equal(done.ok, true)
-  assert.deepEqual(done.cleared, ['2026-01-02'])
+  assert.deepEqual(done.pruned.map((row) => row.date), ['2026-01-02'])
+  // The raw log is archived, not folded into MEMORY.
+  assert.equal(existsSync(join(dir, '2026-01-02.md')), false)
+  assert.equal(existsSync(join(dir, 'archive', '2026-01-02.md')), true)
   const memory = readFileSync(join(dir, 'MEMORY.md'), 'utf8')
-  assert.match(memory, /## 2026-01-02/)
-  assert.match(memory, /很久以前的一条/)
+  assert.equal(memory.includes('很久以前的一条'), false)
+  assert.equal(memory.includes('2026-01-02'), false)
 })
 
-test('memory_consolidate accepts an explicit date list', async () => {
+test('memory_prune accepts an explicit date list', async () => {
   const { tools, exec, dir } = fixture()
   writeFileSync(join(dir, '2026-01-02.md'), '- 甲\n', 'utf8')
   writeFileSync(join(dir, '2026-01-03.md'), '- 乙\n', 'utf8')
 
-  const plan = await tools.consolidate.execute({ dates: '2026-01-03', dryRun: true }, exec)
+  const plan = await tools.prune.execute({ dates: '2026-01-03', dryRun: true }, exec)
   assert.deepEqual(plan.candidates.map((row) => row.date), ['2026-01-03'])
 })
 

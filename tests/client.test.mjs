@@ -77,12 +77,12 @@ function text(node) {
 }
 
 const module = await loadClient()
-const { humanBytes, getJson, MemoryPanel, MemoryIcon, SettingsCard, PANEL, API } = module.__internals
+const { humanBytes, getJson, MemoryOverviewPanel, OverviewIcon, SettingsCard, PANEL_OVERVIEW, API } = module.__internals
 
 test('the module exports what the host mounts', () => {
   assert.equal(typeof module.apply, 'function')
   assert.deepEqual(module.inject, ['slots'])
-  assert.equal(PANEL, 'workbuddy-memory-panel')
+  assert.equal(PANEL_OVERVIEW, 'workbuddy-memory')
   assert.equal(API, '/workbuddy-memory')
 })
 
@@ -112,16 +112,15 @@ test('getJson reports the host error code, not an opaque failure', async () => {
   }
 })
 
-test('the panel explains the project before anything is selected', () => {
-  const tree = expand(MemoryPanel({}))
+test('the overview names the aggregate scope before anything is selected', () => {
+  const tree = expand(MemoryOverviewPanel({}))
   const body = text(tree)
-  assert.match(body, /面板还不知道你在哪个项目/)
-  assert.match(body, /项目记忆在左边/)
-  assert.match(body, /刷新/)
+  assert.match(body, /全部项目/)
+  assert.match(body, /还没有任何项目写过记忆/)
 })
 
-test('the panel icon is a standalone svg', () => {
-  const icon = MemoryIcon()
+test('the overview icon is a standalone svg', () => {
+  const icon = expand(OverviewIcon())
   assert.equal(icon.type, 'svg')
   assert.equal(icon.props.viewBox, '0 0 24 24')
 })
@@ -153,12 +152,26 @@ test('a writable snapshot leaves every control enabled', () => {
   assert.match(text(tree), /可写/)
 })
 
-test('full-text editing stays off until panel writes are on', () => {
-  const tree = expand(SettingsCard({ form: fakeForm(snapshot()) }))
-  const inputs = walk(tree).filter((node) => node.type === 'input')
-  // 只读 + 两个路径 + 五个能力开关 + 面板写操作 stay usable; 全文编辑 does not.
-  assert.equal(inputs.filter((node) => node.props.disabled === false).length, 9)
-  assert.equal(inputs.filter((node) => node.props.disabled === true).length, 1)
+test('full-text editing follows the panel write switch', () => {
+  const on = expand(
+    SettingsCard({
+      form: fakeForm(
+        snapshot({
+          value: { inject: {}, write: {}, search: {}, guard: {}, ui: { allowWriteActions: true, allowFullTextEdit: true } },
+        }),
+      ),
+    }),
+  )
+  const onInputs = walk(on).filter((node) => node.type === 'input')
+  assert.equal(onInputs.every((node) => node.props.disabled === false), true, 'write + full text on leaves every control enabled')
+
+  const off = expand(
+    SettingsCard({
+      form: fakeForm(snapshot({ value: { inject: {}, write: {}, search: {}, guard: {}, ui: { allowWriteActions: false } } })),
+    }),
+  )
+  const disabled = walk(off).filter((node) => node.type === 'input' && node.props.disabled === true)
+  assert.equal(disabled.length >= 1, true, 'full text cannot be enabled while panel writes are off')
 })
 
 test('the card keys editability off `writable`, not off a mode field', () => {

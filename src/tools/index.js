@@ -2,7 +2,7 @@
 
 import { statusTool } from './status.js'
 import { readTool } from './read.js'
-import { appendTool, consolidateTool, editTool } from './write.js'
+import { appendTool, editTool, pruneTool } from './write.js'
 import { searchTool } from './search.js'
 
 /**
@@ -22,7 +22,7 @@ import { searchTool } from './search.js'
 export function registerTools(ctx, deps) {
   const tools = [statusTool(deps), readTool(deps)]
   if (deps.cfg.search.enabled) tools.push(searchTool(deps))
-  tools.push(appendTool(deps), editTool(deps), consolidateTool(deps))
+  tools.push(appendTool(deps), editTool(deps), pruneTool(deps))
   for (const tool of tools) ctx.tools.register(tool)
   return { names: tools.map((tool) => tool.name) }
 }

@@ -25,8 +25,8 @@ import { ACTIONS, resolveTarget, TARGETS } from '../write/store.js'
 const PREFIX = '/workbuddy-memory'
 const MAX_BODY_BYTES = 2 * 1024 * 1024
 const MAX_TEXT_CHARS = 262144
-/** A panel request is a few hundred bytes; anything larger is not a panel. */
-const MAX_ACTION_BYTES = 64 * 1024
+/** A panel request is usually a few hundred bytes; L3 carries one whole file. */
+const MAX_ACTION_BYTES = 512 * 1024
 
 /** JSON response with the headers a live panel needs. */
 function send(res, status, body) {
@@ -110,7 +110,9 @@ function describe(path, limit = MAX_TEXT_CHARS) {
     readable: true,
     bytes: file.bytes,
     chars: file.text.length,
-    revision: contentRevision(text),
+    // Hash the bytes we actually read, not the display prefix: a save carries
+    // this revision and must match what the store hashes on disk.
+    revision: contentRevision(file.text),
     truncated,
     text,
     entries: sections.reduce((sum, section) => sum + section.entries.length, 0),
@@ -160,6 +162,7 @@ function statusFor(body) {
     case 'read_only':
     case 'write_disabled':
     case 'write_actions_disabled':
+    case 'full_text_disabled':
       return 403
     case 'not_found':
     case 'no_store':
@@ -182,20 +185,33 @@ function statusFor(body) {
  * @param {string} deps.stateDir
  * @param {string} deps.version
  * @param {object} [deps.store] - the write path; without it `/action` is refused.
+ * @param {object} [deps.catalog] - project list and stats; falls back to `recent`.
  * @returns {boolean} whether routes were registered.
  */
-export function registerRoutes(ctx, { cfg, recent, stateDir, version, store }) {
+export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, catalog }) {
   const server = ctx.webServer
   if (!server || typeof server.register !== 'function') return false
 
   /** Stable, non-reversible handle for a workspace path. */
   const keyFor = (cwd) => createHash('sha1').update(String(cwd)).digest('hex').slice(0, 8)
 
-  /** Every workspace this plugin has assembled a prompt for, newest first. */
-  const projects = () => {
+  /** Options every catalog read shares; the probe owns home and folder name. */
+  const catalogOptions = (probe) => ({
+    home: probe.home.path,
+    dataFolderName: probe.dataFolderName,
+    limits: cfg.inject.limits,
+    current: recent?.cwd ?? null,
+  })
+
+  /** Projects from the catalog, or the original recent-only list as a fallback. */
+  const projectRows = (probe) => {
+    if (catalog?.list) {
+      const result = catalog.list({ ...catalogOptions(probe), limit: cfg.ui.maxProjects })
+      return { rows: result.rows, total: result.total, truncated: result.truncated }
+    }
     const seen = recent?.seen instanceof Map ? [...recent.seen.entries()] : []
     if (recent?.cwd && !seen.some(([cwd]) => cwd === recent.cwd)) seen.push([recent.cwd, Date.now()])
-    return seen
+    const rows = seen
       .sort((a, b) => b[1] - a[1])
       .map(([cwd, at]) => {
         const memoryDir = join(cwd, cfg.dataFolderName || '.workbuddy', 'memory')
@@ -215,18 +231,23 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store }) {
           daily,
         }
       })
+    return { rows, total: rows.length, truncated: false }
   }
 
   /**
    * Which workspace a request is about.
    *
-   * A `project` key is only honoured when this plugin has seen that workspace
-   * during a prompt assembly — the set is finite and lived, so it cannot be
-   * used to read an arbitrary path.
+   * A `project` key is only honoured for a path this plugin can enumerate — one
+   * DSH registered as a workspace or one it saw during a prompt assembly. The
+   * set is finite and lived, so it cannot be used to read an arbitrary path.
    */
   const pickCwd = (key) => {
     if (!key) return { ok: true, cwd: recent?.cwd ?? null }
     if (key === keyFor(recent?.cwd ?? '')) return { ok: true, cwd: recent.cwd }
+    if (catalog?.resolve) {
+      const row = catalog.resolve(key, catalogOptions(probeNow(null)))
+      if (row) return { ok: true, cwd: row.path }
+    }
     if (recent?.seen instanceof Map) {
       for (const cwd of recent.seen.keys()) if (keyFor(cwd) === key) return { ok: true, cwd }
     }
@@ -253,15 +274,30 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store }) {
     return { count, latest }
   }
 
+  /** Aggregate counters for the global overview. */
+  const totalsOf = (rows) => ({
+    projects: rows.length,
+    withMemory: rows.filter((row) => row.hasMemory).length,
+    entries: rows.reduce((sum, row) => sum + (Number(row.entries) || 0), 0),
+    dailyFiles: rows.reduce((sum, row) => sum + (Number(row.daily) || 0), 0),
+    overLimit: rows.filter((row) => row.overLimit).length,
+    stale: rows.filter((row) => row.stale).length,
+  })
+
   const state = (cwd) => {
     const probe = probeNow(cwd)
     const project = describe(probe.project.memoryPath)
     const user = describe(probe.user.memoryPath)
+    const list = projectRows(probe)
     return {
       ok: true,
       version,
       cwd: cwd ?? null,
-      projects: projects(),
+      selected: cwd ?? null,
+      projects: list.rows,
+      projectsTotal: list.total,
+      projectsTruncated: list.truncated,
+      totals: { ...totalsOf(list.rows), projects: list.total },
       readOnly: cfg.readOnly,
       writeEnabled: cfg.write.enabled,
       allowWriteActions: cfg.ui.allowWriteActions,
@@ -398,15 +434,37 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store }) {
           )
         case 'remove':
           return await store.remove({ target, section: String(input.section ?? ''), line: Number(input.line), expectedRevision, operationId }, probe)
+        case 'replace-section':
+          return await store.replaceSection(
+            {
+              target,
+              section: String(input.section ?? ''),
+              body: String(input.body ?? ''),
+              expectedRevision,
+              operationId,
+            },
+            probe,
+          )
+        case 'replace-document':
+          return await store.replaceDocument(
+            {
+              target,
+              text: String(input.text ?? ''),
+              expectedRevision,
+              operationId,
+            },
+            probe,
+          )
+        case 'remove-section':
+          return await store.removeSection({ target, section: String(input.section ?? ''), expectedRevision, operationId }, probe)
         case 'restore':
           return await store.restore({ target, name: String(input.name ?? ''), expectedRevision, operationId }, probe)
-        case 'consolidate':
-          return await store.consolidate(
+        case 'prune':
+          return await store.prune(
             {
               beforeDays: Number(input.beforeDays ?? 30),
               dates: Array.isArray(input.dates) ? input.dates : undefined,
               dryRun: input.dryRun !== false,
-              expectedRevision,
               operationId,
             },
             probe,
@@ -443,6 +501,7 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store }) {
               const body = await readBody(req, MAX_ACTION_BYTES)
               if (!body.ok) return send(res, body.code === 'body_too_large' ? 413 : 400, body)
               const result = await runAction(body.value, picked.cwd)
+              if (result?.ok) catalog?.invalidate?.()
               return send(res, statusFor(result), result)
             }
 

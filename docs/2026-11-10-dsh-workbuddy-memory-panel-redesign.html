@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dsh-workbuddy-memory 记忆面板改造方案 · 2026-11-10</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --bg-soft: #141922;
+    --panel: #171d27;
+    --panel-2: #1c232f;
+    --border: #242c3a;
+    --border-soft: #1d242f;
+    --text: #e4e8ef;
+    --text-dim: #a3adbd;
+    --text-faint: #747e8e;
+    --blue: #6ea8fe;
+    --green: #7dd3a0;
+    --amber: #e8b96a;
+    --red: #ef8080;
+    --purple: #b39ddb;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { display: flex; max-width: 1460px; margin: 0 auto; }
+  nav {
+    width: 260px; flex: 0 0 260px;
+    padding: 36px 18px 60px 26px;
+    position: sticky; top: 0; align-self: flex-start;
+    max-height: 100vh; overflow-y: auto;
+    border-right: 1px solid var(--border-soft);
+  }
+  nav .nav-title { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 14px; }
+  nav a {
+    display: block; padding: 5px 0 5px 11px;
+    color: var(--text-dim); text-decoration: none; font-size: 13px;
+    border-left: 2px solid transparent; line-height: 1.5;
+  }
+  nav a:hover { color: var(--text); border-left-color: var(--border); }
+  nav a.sub { padding-left: 24px; font-size: 12.5px; color: var(--text-faint); }
+  main { flex: 1; min-width: 0; padding: 36px 52px 120px 52px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 26px; margin-bottom: 34px; }
+  h1 { font-size: 26px; font-weight: 600; margin: 0 0 10px; letter-spacing: -.01em; }
+  .subtitle { color: var(--text-dim); font-size: 13.5px; margin: 0; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+  .chip {
+    font-size: 11.5px; padding: 3px 9px; border-radius: 5px;
+    background: var(--panel); border: 1px solid var(--border); color: var(--text-dim);
+    font-family: var(--mono);
+  }
+  .chip.on { color: var(--green); border-color: #2c4438; background: #121e19; }
+  .chip.warn { color: var(--amber); border-color: #3a3220; background: #1f1c16; }
+  h2 {
+    font-size: 19px; font-weight: 600; margin: 54px 0 6px;
+    padding-bottom: 9px; border-bottom: 1px solid var(--border-soft);
+    letter-spacing: -.005em;
+  }
+  h2 .num { color: var(--blue); font-family: var(--mono); font-size: 15px; margin-right: 9px; font-weight: 400; }
+  h3 { font-size: 15px; font-weight: 600; margin: 28px 0 8px; color: #d6dbe4; }
+  h4 { font-size: 13.5px; font-weight: 600; margin: 20px 0 6px; color: var(--text-dim); }
+  p { margin: 10px 0; }
+  ul, ol { margin: 10px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+  code {
+    font-family: var(--mono); font-size: 12.5px;
+    background: var(--panel-2); padding: 1.5px 5px; border-radius: 4px;
+    color: #c9d3e2; border: 1px solid var(--border-soft);
+  }
+  pre {
+    background: var(--bg-soft); border: 1px solid var(--border);
+    border-radius: 8px; padding: 15px 17px; overflow-x: auto;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
+    margin: 12px 0; color: #c2ccdb;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: inherit; color: inherit; }
+  .cmt { color: #5f6b7e; }
+  .kw { color: var(--purple); }
+  .str { color: var(--green); }
+  .fn { color: var(--blue); }
+  .amber { color: var(--amber); }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  th { color: var(--text-faint); font-weight: 500; font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; background: var(--bg-soft); }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #131821; }
+  td code { font-size: 11.8px; }
+  .lead {
+    background: var(--panel); border: 1px solid var(--border);
+    border-left: 3px solid var(--blue);
+    border-radius: 8px; padding: 16px 20px; margin: 20px 0;
+  }
+  .lead p { margin: 6px 0; }
+  .warn-box {
+    background: #1c1614; border: 1px solid #3a2a20; border-left: 3px solid var(--amber);
+    border-radius: 8px; padding: 14px 18px; margin: 16px 0; font-size: 13px;
+  }
+  .warn-box .t { color: var(--amber); font-weight: 600; }
+  .ok-box {
+    background: #121e19; border: 1px solid #2c4438; border-left: 3px solid var(--green);
+    border-radius: 8px; padding: 14px 18px; margin: 16px 0; font-size: 13px;
+  }
+  .ok-box .t { color: var(--green); font-weight: 600; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(205px, 1fr)); gap: 12px; margin: 18px 0; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .card .k { font-size: 11.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 5px; }
+  .card .v { font-size: 19px; font-weight: 600; font-family: var(--mono); color: var(--text); }
+  .card .n { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
+  .figure { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin: 22px 0; }
+  .figure .cap { font-size: 12px; color: var(--text-faint); text-align: center; margin-top: 12px; }
+  details { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; margin: 12px 0; }
+  details summary { cursor: pointer; font-size: 13px; color: var(--text-dim); outline: none; }
+  details summary:hover { color: var(--text); }
+  details[open] summary { margin-bottom: 10px; color: var(--text); }
+  details pre { margin: 8px 0 4px; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 4px; font-family: var(--mono); white-space: nowrap; }
+  .tag.copy { background: #1e2530; color: var(--blue); border: 1px solid #2a3a52; }
+  .tag.borrow { background: #1f1c16; color: var(--amber); border: 1px solid #3a3220; }
+  .tag.better { background: #1a2419; color: var(--green); border: 1px solid #2c4438; }
+  .tag.no { background: #231818; color: var(--red); border: 1px solid #3d2626; }
+  .flow-step { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px dashed var(--border-soft); }
+  .flow-step:last-child { border-bottom: none; }
+  .flow-num {
+    flex: 0 0 26px; height: 26px; border-radius: 50%;
+    background: var(--panel-2); border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 12px; color: var(--blue);
+  }
+  .flow-body { flex: 1; min-width: 0; }
+  .flow-body .t { font-weight: 600; font-size: 13.5px; margin-bottom: 3px; }
+  .flow-body .d { font-size: 12.8px; color: var(--text-dim); }
+  .flow-body .d code { font-size: 11.8px; }
+  footer { margin-top: 70px; padding-top: 22px; border-top: 1px solid var(--border); color: var(--text-faint); font-size: 12px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 16px 0; }
+  .box { border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; background: var(--panel); }
+  .box h4 { margin-top: 0; }
+  .box.do { border-left: 3px solid var(--green); }
+  .box.dont { border-left: 3px solid var(--red); }
+  .swatch { display: inline-block; width: 13px; height: 13px; border-radius: 3px; border: 1px solid rgba(255,255,255,.18); vertical-align: -2px; margin-right: 7px; }
+  .map { display: flex; flex-direction: column; gap: 10px; }
+  .map-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .map-pill {
+    font-size: 12px; padding: 5px 10px; border-radius: 6px;
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  }
+  .map-pill.p { border-color: #2a3a52; color: var(--blue); }
+  .map-pill.g { border-color: #2c4438; color: var(--green); }
+  .map-arrow { color: var(--text-faint); font-family: var(--mono); font-size: 12px; }
+  .map-note { color: var(--text-dim); font-size: 12.5px; }
+  .mock {
+    background: #10141b; border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; font-size: 12px; color: var(--text-dim);
+  }
+  .mock-top {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+    border-bottom: 1px solid var(--border); background: var(--panel);
+  }
+  .mock-title { color: var(--text); font-weight: 600; font-size: 12.5px; }
+  .mock-sub { color: var(--text-faint); font-size: 11px; }
+  .mock-spacer { flex: 1; }
+  .mock-btn { border: 1px solid var(--border); border-radius: 5px; padding: 1px 8px; color: var(--text-dim); font-size: 11px; }
+  .mock-body { display: flex; min-height: 250px; }
+  .mock-rail { width: 232px; flex: 0 0 232px; border-right: 1px solid var(--border); padding: 8px; background: #121720; }
+  .mock-main { flex: 1; min-width: 0; padding: 10px 12px; }
+  .mock-search { border: 1px solid var(--border); border-radius: 5px; padding: 4px 8px; color: var(--text-faint); font-size: 11px; margin-bottom: 8px; }
+  .tree-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 5px; line-height: 1.4; }
+  .tree-row.active { background: rgba(110,168,254,.10); color: var(--text); }
+  .tree-row.indent { padding-left: 24px; color: var(--text-dim); }
+  .tree-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tree-meta { margin-left: auto; color: var(--text-faint); font-size: 10.5px; white-space: nowrap; }
+  .tree-meta.warn { color: var(--amber); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex: 0 0 6px; }
+  .dot.off { background: #3a4352; }
+  .rail-group { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-faint); padding: 10px 6px 4px; }
+  .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+  .stat { border: 1px solid var(--border); border-radius: 7px; padding: 7px 9px; background: var(--panel); }
+  .stat .k { font-size: 10px; color: var(--text-faint); }
+  .stat .v { font-size: 15px; color: var(--text); font-family: var(--mono); }
+  .mock-h { color: var(--text); font-weight: 600; font-size: 11.5px; margin: 8px 0 4px; }
+  .mock-line { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; border-bottom: 1px dashed var(--border-soft); font-size: 11px; }
+  .mock-line:last-child { border-bottom: none; }
+  .mock-line .a { margin-left: auto; color: var(--blue); font-size: 10.5px; }
+  .doc-head { border-bottom: 1px solid var(--border); padding-bottom: 7px; margin-bottom: 8px; }
+  .doc-title { color: var(--text); font-size: 13px; font-weight: 600; }
+  .doc-meta { color: var(--text-faint); font-size: 10.5px; margin-top: 2px; }
+  .doc-banner { border: 1px solid #3a3220; background: #1c1812; color: var(--amber); border-radius: 5px; padding: 4px 8px; font-size: 10.5px; margin: 6px 0; }
+  .doc-sec { margin-top: 8px; }
+  .doc-sec-h { display: flex; align-items: center; gap: 6px; color: var(--text); font-weight: 600; font-size: 11.5px; }
+  .doc-sec-h .add { margin-left: auto; color: var(--text-faint); }
+  .doc-entry { padding: 3px 0 3px 12px; border-bottom: 1px dashed var(--border-soft); font-size: 11px; }
+  .doc-entry .acts { float: right; color: var(--text-faint); }
+  .mock-narrow { max-width: 440px; }
+  .mock-narrow .mock-rail { display: none; }
+  .mock-narrow .mock-body { display: block; }
+  .q { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); padding: 14px 18px; margin: 12px 0; }
+  .q .t { font-weight: 600; font-size: 13.5px; margin-bottom: 6px; }
+  .q .d { color: var(--text-dim); font-size: 12.8px; }
+  .q .opt { display: flex; gap: 8px; padding: 5px 0; font-size: 12.8px; }
+  .q .opt .l { flex: 0 0 auto; color: var(--blue); font-family: var(--mono); }
+  .q .rec { color: var(--green); font-size: 11px; border: 1px solid #2c4438; background: #121e19; border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
+  .phase { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); padding: 14px 18px; margin: 12px 0; }
+  .phase .ph { display: flex; align-items: center; gap: 10px; }
+  .phase .ph .p { font-family: var(--mono); color: var(--blue); font-size: 12px; border: 1px solid #2a3a52; background: #1e2530; border-radius: 5px; padding: 1px 7px; }
+  .phase .ph .t { font-weight: 600; font-size: 13.5px; }
+  .phase .ph .e { margin-left: auto; color: var(--text-faint); font-size: 11px; }
+  .phase ul { margin: 8px 0 0; }
+  .phase li { font-size: 12.8px; color: var(--text-dim); }
+  @media (max-width: 1040px) {
+    nav { display: none; }
+    main { padding: 26px 20px 80px; }
+    .grid2 { grid-template-columns: 1fr; }
+    .mock-rail { width: 190px; flex-basis: 190px; }
+    .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <div class="nav-title">目录</div>
+  <a href="#s0">核心结论</a>
+  <a href="#s1">一、现状诊断</a>
+  <a href="#s2">二、目标与边界</a>
+  <a href="#s3">三、入口设计</a>
+  <a href="#s3-1" class="sub">入口地图</a>
+  <a href="#s4">四、数据层</a>
+  <a href="#s4-1" class="sub">项目来源</a>
+  <a href="#s4-2" class="sub">/state 形状</a>
+  <a href="#s4-3" class="sub">缓存与安全</a>
+  <a href="#s5">五、页面设计</a>
+  <a href="#s5-1" class="sub">全局总览</a>
+  <a href="#s5-2" class="sub">项目记忆（宽）</a>
+  <a href="#s5-3" class="sub">项目记忆（窄）</a>
+  <a href="#s5-4" class="sub">组件复用</a>
+  <a href="#s6">六、视觉规范</a>
+  <a href="#s6-1" class="sub">设计 token</a>
+  <a href="#s6-2" class="sub">排版与状态</a>
+  <a href="#s7">七、编辑能力</a>
+  <a href="#s7-1" class="sub">L1 / L2 / L3</a>
+  <a href="#s7-2" class="sub">保存流程</a>
+  <a href="#s8">八、配置项</a>
+  <a href="#s9">九、实施拆分</a>
+  <a href="#s9-1" class="sub">P1 数据与双入口</a>
+  <a href="#s9-2" class="sub">P2 右栏页签</a>
+  <a href="#s9-3" class="sub">P3 视觉与编辑</a>
+  <a href="#s10">十、风险与降级</a>
+  <a href="#s11">十一、待确认</a>
+</nav>
+<main>
+
+<header>
+  <h1>dsh-workbuddy-memory · 记忆面板改造方案</h1>
+  <p class="subtitle">左栏「记忆」改为全项目总览；新增项目级记忆页（右栏页签 + 会话头按钮）；面板视觉与编辑能力重做。</p>
+  <div class="meta">
+    <span class="chip on">状态：已确认 · 待验收</span>
+    <span class="chip">2026-11-10</span>
+    <span class="chip">已落地 · 待验收</span>
+    <span class="chip">不升版本号</span>
+    <span class="chip on">零新依赖</span>
+    <span class="chip on">仍走同一写入链</span>
+  </div>
+</header>
+
+<div class="lead">
+  <p><strong>一句话：</strong>左侧「记忆」不再只是当前项目，而是所有 DSH 工作区的汇总；项目级记忆按 Git 面板的方式进入右栏页签，点击后只看<strong>当前项目 + 全局记忆</strong>；面板改用宿主主题 token，并把原设计里没落地的 L2 / L3 编辑补上。</p>
+  <p>这份文档只做方案与取舍说明。已确认：入口按 A（右栏页签 + 会话头按钮）、项目来源按 A（已登记工作区 + 最近会话）、编辑默认按 C（面板写操作与全文编辑默认开，全文编辑首次进入二次确认）。代码已按 P1 → P2 → P3 落地，待验收。</p>
+</div>
+
+<h2 id="s0">核心结论</h2>
+<div class="cards">
+  <div class="card">
+    <div class="k">汇总范围</div>
+    <div class="v">全部工作区</div>
+    <div class="n">DSH 已登记工作区 + 最近会话目录；不递归扫盘</div>
+  </div>
+  <div class="card">
+    <div class="k">项目级入口</div>
+    <div class="v">2</div>
+    <div class="n">右栏页签 + 会话头按钮</div>
+  </div>
+  <div class="card">
+    <div class="k">编辑层级</div>
+    <div class="v">L1 / L2 / L3</div>
+    <div class="n">条目 / 小节 / 源码；L3 默认开、首次确认</div>
+  </div>
+  <div class="card">
+    <div class="k">新增写路径</div>
+    <div class="v">0</div>
+    <div class="n">同一把锁、同一个 revision、同一份备份</div>
+  </div>
+</div>
+
+<h2 id="s1"><span class="num">01</span>现状诊断</h2>
+<p>现在的面板不是「没做完」，而是「入口模型」和「视觉语言」都停在第一版：</p>
+<table>
+  <thead><tr><th>问题</th><th>证据</th><th>影响</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>项目范围只有最近装配过提示词的 12 个目录</td>
+      <td><code>src/host/routes.js</code> 的 <code>projects()</code> / <code>pickCwd()</code>；<code>src/index.js</code> 的 <code>recent.seen</code> 上限 12</td>
+      <td>工作区里已登记、但还没说过话的项目根本不出现</td>
+    </tr>
+    <tr>
+      <td>没有项目级入口</td>
+      <td><code>src/client.js</code> 的 <code>apply()</code> 只注册了一个 panellist 条目和一个 main 面板</td>
+      <td>项目记忆只能靠面板内下拉切换，不能独立打开、不能边聊边看</td>
+    </tr>
+    <tr>
+      <td>视觉全部是硬编码灰色内联样式</td>
+      <td><code>client.js</code> 的 <code>P</code> 样式表：<code>rgba(127,127,127,x)</code> 铺满</td>
+      <td>暗色下发灰、对比度低、层级弱，和宿主其他面板不像一套 UI</td>
+    </tr>
+    <tr>
+      <td>顶栏信息过载</td>
+      <td>11.5px 一行塞入 home、项目、读写状态、两个限额条、备份数、冲突数、刷新</td>
+      <td>看不出重点是「哪个项目、还差多少、能不能改」</td>
+    </tr>
+    <tr>
+      <td>L2 / L3 编辑没有落地</td>
+      <td><code>ACTIONS</code> 只有 add / edit / remove / consolidate / restore；<code>ui.allowFullTextEdit</code> 只有配置和设置卡，没有客户端实现</td>
+      <td>改一个小节或整份文件只能一条条点；「全文编辑」是空开关</td>
+    </tr>
+    <tr>
+      <td>空态 / 只读 / 冲突都是长段文字</td>
+      <td>详情区用 <code>P.note</code> 连续解释「去哪开开关」「为什么会只读」</td>
+      <td>用户读完仍不知道该点哪</td>
+    </tr>
+    <tr>
+      <td>详情区没有内容宽度上限</td>
+      <td>两栏布局右侧直接铺满</td>
+      <td>宽屏下每行 200+ 字符，阅读疲劳，条目操作按钮漂在最右</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="s2"><span class="num">02</span>目标与边界</h2>
+<div class="grid2">
+  <div class="box do">
+    <h4>这次要做</h4>
+    <ul>
+      <li>左栏「记忆」→ 全项目汇总总览</li>
+      <li>新增项目级记忆页：与总览同构的两栏布局，右栏页签 + 会话头按钮</li>
+      <li>右栏原生页签、会话头按钮，全部可配置</li>
+      <li>面板视觉重构，改用宿主主题 token</li>
+      <li>L1 交互优化，补齐 L2 小节编辑与 L3 源码模式</li>
+      <li>一键启用编辑，不再让用户去翻设置页</li>
+    </ul>
+  </div>
+  <div class="box dont">
+    <h4>这次不做</h4>
+    <ul>
+      <li>不递归扫描磁盘找 <code>.workbuddy/memory</code>（权限、软链、性能都不可控）</li>
+      <li>不依赖 <code>dsh-better-sidebar</code>；只用宿主原生右侧栏</li>
+      <li>不新开写文件通道，不动工具语义与注入策略</li>
+      <li>不自动生成 / 蒸馏记忆内容</li>
+      <li>不改 package.json 版本号</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="s3"><span class="num">03</span>入口设计（学习 Git 面板）</h2>
+<p>宿主已经提供完整的原生挂载点。入口不做「自绘侧栏」，全部注册进宿主槽位，缺失时自动降级：</p>
+<table>
+  <thead><tr><th>入口</th><th>宿主槽位 / 服务</th><th>行为</th><th>配置项</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>左栏「记忆」</strong>（改造）</td>
+      <td><code>sidebar.panellist</code> + <code>main</code></td>
+      <td>全局总览：所有项目汇总 + 用户记忆 + 画像</td>
+      <td><code>ui.globalPanel</code></td>
+    </tr>
+    <tr>
+      <td><strong>右栏「项目记忆」页签</strong>（新增）</td>
+      <td><code>sidebarRightTabs</code> + <code>sidebar.right.pane.tab</code> / <code>.title</code> + <code>guide</code></td>
+      <td>当前会话项目 + 全局；与总览同构的两栏布局，可边聊边看</td>
+      <td><code>ui.projectTab</code></td>
+    </tr>
+    <tr>
+      <td><strong>会话头「记忆」按钮</strong>（新增）</td>
+      <td><code>conversation.session.header.utilities</code></td>
+      <td>打开 / 聚焦右栏项目记忆页签</td>
+      <td><code>ui.sessionAction</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="ok-box">
+  <div class="t">v2 反馈调整</div>
+  左栏不再提供「项目记忆」入口，也不提供会话行入口；项目记忆只保留右侧栏页签和会话头按钮。页签内部与「记忆」总览同构：左侧文件列表 + 右侧文档，只是文件列表只含当前项目的 <code>MEMORY.md</code>、日期笔记和全局记忆；打开时自动选中 <code>MEMORY.md</code>，没有就选最新日期笔记。
+</div>
+
+<div class="ok-box">
+  <div class="t">v3 反馈调整</div>
+  全部项目树改成带辅助线的树形展开，去掉「这个项目还没有记忆」提示；移除面板里的「历史」浏览/回滚入口（写入前备份仍保留，用于撤销和冲突恢复）。「整理」改为 WorkBuddy 同款：注入 30 天维护规则让模型先把结论蒸馏进 <code>MEMORY.md</code>，代码只提供 <code>memory_prune</code> / 面板「归档旧日期」，把旧日期流水移动到 <code>memory/archive/</code>，绝不写 MEMORY，避免撑爆注入限额。
+</div>
+
+<h3 id="s3-1">入口地图</h3>
+<div class="figure">
+  <div class="map">
+    <div class="map-row">
+      <span class="map-pill p">左栏页签 · 记忆</span>
+      <span class="map-arrow">──▶</span>
+      <span class="map-pill">主区 · 全局总览</span>
+      <span class="map-note">所有项目汇总；点项目展开文件树</span>
+    </div>
+    <div class="map-row">
+      <span class="map-pill g">右栏页签 · 项目记忆</span>
+      <span class="map-arrow">──▶</span>
+      <span class="map-pill">右栏 · 当前会话项目</span>
+      <span class="map-note">与总览同构的两栏；左栏只列当前项目 + 全局</span>
+    </div>
+    <div class="map-row">
+      <span class="map-pill g">会话头 · 记忆按钮</span>
+      <span class="map-arrow">──▶</span>
+      <span class="map-pill">打开 / 聚焦右栏页签</span>
+      <span class="map-note">不切换会话，不丢当前输入</span>
+    </div>
+  </div>
+  <div class="cap">图 1 · 三个入口共用同一套数据与文档组件，区别只在「项目」的解析来源。</div>
+</div>
+
+<div class="ok-box">
+  <div class="t">为什么这样映射</div>
+  右栏页签天生是 per-session 的，正好承载「当前项目的记忆」；左栏页签是全局页面，适合做跨项目汇总。两者共用同一份 <code>/state</code> 与 <code>/content</code>，不产生第二套数据逻辑。panellist 条目还会自动进入宿主「更多」菜单，用户可以自行固定或收起。
+</div>
+
+<h2 id="s4"><span class="num">04</span>数据层</h2>
+
+<h3 id="s4-1">4.1 项目来源</h3>
+<p>新增 <code>src/host/catalog.js</code>，合并两个来源并按路径去重：</p>
+<ul>
+  <li><strong><code>ctx.workspaceRegistry.list()</code></strong>：DSH 已登记的全部工作区，包含 <code>path</code>、<code>title</code>、<code>sessionIds</code>、<code>updatedAt</code>。这是「所有项目」的主来源。</li>
+  <li><strong><code>recent.seen</code></strong>：最近装配过提示词、但可能未登记为工作区的目录，作为兜底。</li>
+</ul>
+<p>Windows 下按大小写不敏感、斜杠归一化去重；目录已删除的工作区标记 <code>missing</code>，不把整个汇总接口打挂。</p>
+
+<h3 id="s4-2">4.2 <code>/state</code> 形状</h3>
+<p>保持向后兼容：<code>cwd</code>、<code>stores</code>、<code>hasMemory</code>、<code>daily</code> 等旧字段都保留，只新增汇总字段。</p>
+<pre><code>{
+  <span class="str">"cwd"</span>: <span class="str">"当前会话项目路径"</span>,
+  <span class="str">"selected"</span>: <span class="str">"本次请求选中的项目 key"</span>,
+  <span class="str">"projects"</span>: [{
+    <span class="str">"key"</span>: <span class="str">"sha1(path).slice(0,8)"</span>,
+    <span class="str">"path"</span>: <span class="str">"D:\\git\\dsh-workbuddy-memory"</span>,
+    <span class="str">"name"</span>: <span class="str">"dsh-workbuddy-memory"</span>,
+    <span class="str">"title"</span>: <span class="str">"工作区显示名"</span>,
+    <span class="str">"source"</span>: <span class="str">"workspace | recent"</span>,
+    <span class="str">"current"</span>: <span class="kw">true</span>,
+    <span class="str">"hasMemory"</span>: <span class="kw">true</span>,
+    <span class="str">"daily"</span>: <span class="num2">2</span>,
+    <span class="str">"entries"</span>: <span class="num2">167</span>,
+    <span class="str">"chars"</span>: <span class="num2">21000</span>,
+    <span class="str">"revision"</span>: <span class="str">"43c4891"</span>,
+    <span class="str">"latestDaily"</span>: <span class="str">"2026-11-10"</span>,
+    <span class="str">"oldestDailyAgeDays"</span>: <span class="num2">1</span>,
+    <span class="str">"status"</span>: <span class="str">"ok | empty | daily-only | over-limit | stale | missing | unreadable"</span>
+  }],
+  <span class="str">"totals"</span>: { <span class="str">"projects"</span>: <span class="num2">7</span>, <span class="str">"withMemory"</span>: <span class="num2">5</span>, <span class="str">"entries"</span>: <span class="num2">412</span>, <span class="str">"dailyFiles"</span>: <span class="num2">18</span>, <span class="str">"overLimit"</span>: <span class="num2">1</span>, <span class="str">"stale"</span>: <span class="num2">2</span> },
+  <span class="str">"stores"</span>: { <span class="str">"project"</span>: {}, <span class="str">"user"</span>: {}, <span class="str">"profile"</span>: {} },
+  <span class="str">"backups"</span>: {}, <span class="str">"operations"</span>: {}, <span class="str">"limits"</span>: {}
+}</code></pre>
+<ul>
+  <li><code>/state?project=&lt;key&gt;</code>：<code>stores.project</code> 换成选中项目的详情（含完整日期文件列表）；<code>projects</code> 汇总始终返回。</li>
+  <li><code>/content</code>、<code>/action</code>、<code>/revisions</code> 的路径和参数不变。</li>
+  <li>汇总接口<strong>不返回条目正文</strong>，只返回计数、路径、revision；正文继续按需走 <code>/content</code>。</li>
+</ul>
+
+<h3 id="s4-3">4.3 缓存、性能与安全</h3>
+<table>
+  <thead><tr><th>点</th><th>做法</th></tr></thead>
+  <tbody>
+    <tr><td>统计缓存</td><td>按 <code>MEMORY.md</code> 的 <code>mtime + size</code> 缓存；文件没变时只 <code>stat</code> 不读正文</td></tr>
+    <tr><td>项目上限</td><td><code>ui.maxProjects</code> 默认 50，超出截断并返回 <code>truncated</code></td></tr>
+    <tr><td>轮询间隔</td><td><code>ui.refreshMs</code> 默认 3000，替代客户端硬编码</td></tr>
+    <tr><td>写入失效</td><td>任意 action 成功后 <code>catalog.invalidate()</code>，下一次 <code>/state</code> 立即反映新 revision</td></tr>
+    <tr><td>路径白名单</td><td><code>project</code> key 只在「工作区注册表 + 最近会话」内解析，不能借 key 读任意路径</td></tr>
+    <tr><td>暴露范围</td><td>汇总只暴露路径、字节数、条数、revision；不暴露条目文本</td></tr>
+  </tbody>
+</table>
+
+<h2 id="s5"><span class="num">05</span>页面设计</h2>
+
+<h3 id="s5-1">5.1 全局总览（左栏「记忆」）</h3>
+<p>左栏从「当前项目文件树」改成「项目树」：每个项目可展开，展开后看到 <code>MEMORY.md</code> 与日期笔记；当前项目有实心圆点和「当前」标记；无记忆项目用空心圆点，不消失。</p>
+<div class="figure">
+  <div class="mock">
+    <div class="mock-top">
+      <span class="mock-title">记忆 · 全部项目</span>
+      <span class="mock-sub">7 个项目 · 5 个有记忆 · 214 条 · 12 个日期文件</span>
+      <span class="mock-spacer"></span>
+      <span class="mock-btn">刷新</span>
+    </div>
+    <div class="mock-body">
+      <div class="mock-rail">
+        <div class="mock-search">搜索项目…  ·  只看有记忆</div>
+        <div class="tree-row active"><span class="dot"></span><span class="tree-name">dsh-workbuddy-memory</span><span class="tree-meta">90 条</span></div>
+        <div class="tree-row indent">MEMORY.md <span class="tree-meta">90 条</span></div>
+        <div class="tree-row indent">2026-11-10 <span class="tree-meta">7 条</span></div>
+        <div class="tree-row indent">2026-11-09 <span class="tree-meta">77 条</span></div>
+        <div class="tree-row"><span class="dot off"></span><span class="tree-name">fq-service-weapp</span><span class="tree-meta">48 条</span></div>
+        <div class="tree-row"><span class="dot off"></span><span class="tree-name">3D-Breakout</span><span class="tree-meta">无记忆</span></div>
+        <div class="rail-group">全局</div>
+        <div class="tree-row">用户 MEMORY.md <span class="tree-meta warn">203%</span></div>
+        <div class="tree-row">画像（只读） <span class="tree-meta">1.5 KB</span></div>
+      </div>
+      <div class="mock-main">
+        <div class="stat-grid">
+          <div class="stat"><div class="k">项目</div><div class="v">7</div></div>
+          <div class="stat"><div class="k">条目</div><div class="v">214</div></div>
+          <div class="stat"><div class="k">日期文件</div><div class="v">12</div></div>
+          <div class="stat"><div class="k">待归档</div><div class="v">3</div></div>
+        </div>
+        <div class="mock-h">需要关注</div>
+        <div class="mock-line"><span>2026-09-30.md 已 41 天未归档</span><span class="a">去归档</span></div>
+        <div class="mock-line"><span>用户记忆已用 203%，注入会截断</span><span class="a">查看</span></div>
+        <div class="mock-h">最近活跃</div>
+        <div class="mock-line"><span>dsh-workbuddy-memory · 90 条 · 19.7 KB</span><span class="a">打开</span></div>
+        <div class="mock-line"><span>fq-service-weapp · 48 条 · 8.2 KB</span><span class="a">打开</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="cap">图 2 · 全局总览：左树是项目，右区先给汇总与「需要关注」，选中文件后切成文档视图。</div>
+</div>
+
+<h3 id="s5-2">5.2 项目记忆（右栏页签，两栏布局）</h3>
+<div class="figure">
+  <div class="mock">
+    <div class="mock-top">
+      <span class="mock-title">项目记忆 · dsh-workbuddy-memory</span>
+      <span class="mock-sub">90 条 · 23.9 KB · rev 43c4891</span>
+      <span class="mock-spacer"></span>
+      <span class="mock-btn">刷新</span>
+      <span class="mock-btn">归档旧日期</span>
+    </div>
+    <div class="mock-body">
+      <div class="mock-rail">
+        <div class="tree-row active">MEMORY.md <span class="tree-meta">90 条</span></div>
+        <div class="tree-row">2026-11-10 <span class="tree-meta">7 条</span></div>
+        <div class="tree-row">2026-11-09 <span class="tree-meta">77 条</span></div>
+        <div class="rail-group">全局</div>
+        <div class="tree-row">用户 MEMORY.md <span class="tree-meta warn">203%</span></div>
+        <div class="tree-row">画像（只读） <span class="tree-meta">1.5 KB</span></div>
+      </div>
+      <div class="mock-main">
+        <div class="doc-head">
+          <div class="doc-title">MEMORY.md</div>
+          <div class="doc-meta">D:\git\dsh-workbuddy-memory\.workbuddy\memory\MEMORY.md · 今天 14:07</div>
+        </div>
+        <div class="doc-banner">ⓘ 面板编辑未开启　　[ 启用编辑 ]</div>
+        <div class="doc-sec">
+          <div class="doc-sec-h">▾ 方案设计 <span style="color:var(--text-faint);font-weight:400">10 条</span><span class="add">＋</span></div>
+          <div class="doc-entry">参考 D:\git\...\design.html 产出插件方案 <span class="acts">✎ ✕</span></div>
+          <div class="doc-entry">定位确定：独立注入型，不依赖 dsh-mnemory <span class="acts">✎ ✕</span></div>
+        </div>
+        <div class="doc-sec">
+          <div class="doc-sec-h">▸ 方向调整 <span style="color:var(--text-faint);font-weight:400">9 条</span><span class="add">＋</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="cap">图 3 · 项目页签与总览同构：左侧只列当前项目的文件 + 全局，不再分「本项目」分组；打开时自动选中 MEMORY.md 或最新日期笔记。</div>
+</div>
+
+<h3 id="s5-3">5.3 右栏页签的窄宽度回退</h3>
+<p>页签默认是两栏布局。只有右栏被拖到 820px 以下时，左树才收成顶部文件选择器，文档与编辑交互不变。</p>
+<div class="figure">
+  <div class="mock mock-narrow">
+    <div class="mock-top">
+      <span class="mock-title">dsh-workbuddy-memory</span>
+      <span class="mock-sub">MEMORY ▾</span>
+      <span class="mock-spacer"></span>
+      <span class="mock-btn">＋</span>
+    </div>
+    <div class="mock-body">
+      <div class="mock-main">
+        <div class="doc-meta">90 条 · 23.9 KB · rev 43c4891</div>
+        <div class="doc-banner">ⓘ 只读　　[ 启用编辑 ]</div>
+        <div class="mock-search">搜索条目…</div>
+        <div class="doc-sec">
+          <div class="doc-sec-h">▾ 方案设计 <span style="color:var(--text-faint);font-weight:400">10 条</span><span class="add">＋</span></div>
+          <div class="doc-entry">参考 design.html 产出插件方案 <span class="acts">✎ ✕</span></div>
+          <div class="doc-entry">定位确定：独立注入型 <span class="acts">✎ ✕</span></div>
+        </div>
+        <div class="doc-sec">
+          <div class="doc-sec-h">▸ 方向调整 <span style="color:var(--text-faint);font-weight:400">9 条</span><span class="add">＋</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="cap">图 4 · 右栏被拖窄时的回退：文件选择器替代左树，一个页签跟一个会话走。</div>
+</div>
+
+<h3 id="s5-4">5.4 组件复用</h3>
+<p>不允许复制两套页面。实现上只有一个 <code>MemoryWorkspace</code>：</p>
+<pre><code><span class="fn">MemoryWorkspace</span>({ mode, layout, sessionId })
+  <span class="cmt">// mode: 'overview' | 'project'</span>
+  <span class="cmt">// layout: 'wide' | 'narrow'</span>
+  <span class="cmt">// sessionId: 右栏页签用于解析「当前项目」；主面板可缺省</span>
+  <span class="cmt">// 左树：overview 显示项目树；project 只显示当前项目 + 全局</span>
+  <span class="cmt">// 右区：同一个 DocView / SectionCard / EntryRow</span></code></pre>
+<p>差异收敛在「左树数据源」和「是否显示项目列表」两个参数里，文档、小节、条目、编辑、冲突、归档全部共享。</p>
+
+<h2 id="s6"><span class="num">06</span>视觉规范</h2>
+
+<h3 id="s6-1">6.1 设计 token</h3>
+<p>不再用 <code>rgba(127,127,127,x)</code>，全部映射到宿主主题变量，亮色 / 暗色自动跟随：</p>
+<table>
+  <thead><tr><th>用途</th><th>变量</th><th>备注</th></tr></thead>
+  <tbody>
+    <tr><td>页面背景</td><td><span class="swatch" style="background:#0e1116"></span><code>--dsw-alias-bg-base</code></td><td>主内容区</td></tr>
+    <tr><td>卡片 / 侧栏底</td><td><span class="swatch" style="background:#171d27"></span><code>--dsw-alias-bg-layer-1</code> / <code>-layer-2</code></td><td>两级层次即可</td></tr>
+    <tr><td>边框</td><td><span class="swatch" style="background:#242c3a"></span><code>--dsw-alias-border-l1</code> / <code>-l2</code></td><td>不用纯灰</td></tr>
+    <tr><td>主 / 次 / 弱文本</td><td><span class="swatch" style="background:#e4e8ef"></span><code>--dsw-alias-label-primary</code> / <code>-secondary</code> / <code>-tertiary</code></td><td>三档字色</td></tr>
+    <tr><td>强调 / 链接</td><td><span class="swatch" style="background:#6ea8fe"></span><code>--dsw-alias-state-business-primary</code>、<code>--dsw-alias-link</code></td><td>只用于主操作与链接</td></tr>
+    <tr><td>成功 / 警告 / 错误</td><td><span class="swatch" style="background:#7dd3a0"></span><span class="swatch" style="background:#e8b96a"></span><span class="swatch" style="background:#ef8080"></span><code>--dsw-alias-state-success-primary</code> / <code>warn-primary</code> / <code>error-primary</code></td><td>状态音只用于状态</td></tr>
+    <tr><td>悬停</td><td><code>--dsw-alias-interactive-bg-hover</code></td><td>条目、列表行、图标按钮</td></tr>
+    <tr><td>圆角 / 阴影</td><td><code>--dsw-radius-sm/md/lg</code>、<code>--dsw-elevation-panel</code></td><td>弹层才用阴影</td></tr>
+    <tr><td>Toast</td><td><code>--dsw-alias-toast-bg</code> / <code>-toast-label</code></td><td>保存 / 删除 / 撤销</td></tr>
+  </tbody>
+</table>
+
+<h3 id="s6-2">6.2 排版、间距与状态</h3>
+<ul>
+  <li>13px 正文、12px 元信息、11px 弱提示；行高 1.6。</li>
+  <li>8px 间距网格：区块 16–20px，行内 6–8px。</li>
+  <li>内容区最大宽度 920px，正文最大 76ch；宽屏不再让一行跑 200 个字符。</li>
+  <li>样式从内联对象迁到注入的 <code>&lt;style&gt;</code>，统一 <code>wbm-</code> 前缀，才能做 hover / focus-visible / media query。</li>
+  <li>所有可点元素有 <code>aria-label</code> 与 focus ring；<code>✎</code> / <code>✕</code> 不再作为唯一视觉线索，配 title 与 hover 背景。</li>
+</ul>
+<table>
+  <thead><tr><th>状态</th><th>表现</th></tr></thead>
+  <tbody>
+    <tr><td>加载中</td><td>骨架行，不显示「读取中…」</td></tr>
+    <tr><td>空文件</td><td>图标 + 「还没有条目」+ 主按钮「添加第一条」</td></tr>
+    <tr><td>文件不存在</td><td>「还没有 MEMORY.md」+「创建并添加第一条」</td></tr>
+    <tr><td>只读</td><td>顶部细条：锁图标 + 「面板编辑未开启」+「启用编辑」</td></tr>
+    <tr><td>超限</td><td>琥珀 / 红限额条 + 「下次注入会截断」，允许保存</td></tr>
+    <tr><td>冲突</td><td>三选一 + 「查看差异」，草稿不丢</td></tr>
+    <tr><td>外部改动</td><td>琥珀条 + 「重新加载」，不自动覆盖</td></tr>
+    <tr><td>项目目录丢失</td><td>行内「目录不存在」，不显示成「无记忆」</td></tr>
+    <tr><td>没有任何项目</td><td>说明「新建会话选择项目后自动出现」，不引导手填路径</td></tr>
+  </tbody>
+</table>
+
+<h2 id="s7"><span class="num">07</span>编辑能力</h2>
+
+<h3 id="s7-1">7.1 三层编辑</h3>
+<table>
+  <thead><tr><th>层级</th><th>交互</th><th>改动范围</th><th>宿主动作</th><th>默认</th></tr></thead>
+  <tbody>
+    <tr><td><strong>L1 条目</strong></td><td>点条目进入单行编辑，Enter 保存 / Esc 取消；行尾编辑、删除</td><td>单条</td><td><code>edit</code> / <code>remove</code></td><td>开（已有，优化交互）</td></tr>
+    <tr><td><strong>L2 小节</strong></td><td>小节标题右侧「编辑小节」→ 该小节原始内容 textarea → 保存</td><td>一个小节</td><td>新增 <code>replace-section</code></td><td>开（需面板写操作）</td></tr>
+    <tr><td><strong>L3 源码</strong></td><td>文档头「源码」→ 整文件 textarea + 结构校验 + diff 统计</td><td>整个文件</td><td>新增 <code>replace-document</code></td><td>开（首次进入二次确认）</td></tr>
+    <tr><td>新建小节</td><td>文档头「新建小节」→ 标题 + 第一条</td><td>新增 <code>##</code></td><td>复用 <code>add</code></td><td>开</td></tr>
+    <tr><td>删除小节</td><td>小节菜单「删除小节」→ 确认 + 备份</td><td>一个小节</td><td>新增 <code>remove-section</code></td><td>开</td></tr>
+    <tr><td>撤销</td><td>保存 / 删除后 Toast「撤销」，10 秒</td><td>整文件</td><td>复用 <code>restore</code></td><td>开</td></tr>
+  </tbody>
+</table>
+
+<div class="warn-box">
+  <div class="t">L1 为什么不做多行</div>
+  Markdown 解析器只把 <code>- </code> 开头的行当条目；多行 textarea 写进去的续行不会被解析，等于写入「看不见的死内容」。所以 L1 保持单行输入，多行需求走 L2 小节编辑。
+</div>
+
+<h3 id="s7-2">7.2 一次保存的完整流程</h3>
+<div class="flow-step"><div class="flow-num">1</div><div class="flow-body"><div class="t">进入编辑态，锁定 revision</div><div class="d">面板记住当前文件 revision 与该条目行号；不锁文件，只记「我看到的是这一版」。</div></div></div>
+<div class="flow-step"><div class="flow-num">2</div><div class="flow-body"><div class="t">本地草稿</div><div class="d">输入即草稿，不自动保存；切换文件时若有未保存内容先确认。</div></div></div>
+<div class="flow-step"><div class="flow-num">3</div><div class="flow-body"><div class="t">提交 <code>POST /action</code></div><div class="d">带 <code>expectedRevision</code>、<code>target</code>、<code>section</code>、<code>line</code> / <code>replacement</code>；进同一个 <code>write()</code>：加锁 → 锁内二次哈希 → 备份 → 原子写。</div></div></div>
+<div class="flow-step"><div class="flow-num">4</div><div class="flow-body"><div class="t">成功：Toast + 撤销</div><div class="d">行闪一次高亮，状态条刷新，10 秒内可撤销；提示「已保存，下一轮对话生效」。</div></div></div>
+<div class="flow-step"><div class="flow-num">5</div><div class="flow-body"><div class="t">冲突：草稿不丢</div><div class="d">二次哈希不符不写；弹「重新加载 / 查看差异 / 覆盖（先备份）」三选一，默认聚焦重新加载。</div></div></div>
+
+<h3 id="s7-3">7.3 新增宿主动作与校验</h3>
+<table>
+  <thead><tr><th>动作</th><th>参数</th><th>校验</th></tr></thead>
+  <tbody>
+    <tr><td><code>replace-section</code></td><td><code>target</code>、<code>section</code>、<code>body</code>、<code>expectedRevision</code></td><td>小节仍存在；正文里没有新的 <code>#</code> 标题；非空行必须是 <code>- </code> 条目（允许缩进子项）</td></tr>
+    <tr><td><code>replace-document</code></td><td><code>target</code>、<code>text</code>、<code>expectedRevision</code></td><td>UTF-8、无 NUL、代码围栏成对、大小 ≤ 256KB；保存前显示「+N / -M 条」变化量</td></tr>
+    <tr><td><code>remove-section</code></td><td><code>target</code>、<code>section</code>、<code>expectedRevision</code></td><td>小节存在；删除前备份；返回被删条目数</td></tr>
+  </tbody>
+</table>
+<div class="ok-box">
+  <div class="t">安全边界不变</div>
+  所有新动作仍然走 <code>writeEverywhere</code>：同一把锁、同一个 <code>expectedRevision</code>、同一份备份、同一本 operation log。UI 只负责把参数填好，不新增任何写文件通道。
+</div>
+
+<h2 id="s8"><span class="num">08</span>配置项</h2>
+<p><code>ui</code> 下新增的开关全部是独立 volatile 叶子，避免嵌套 volatile 导致 Config 校验失败（已知宿主坑）。</p>
+<table>
+  <thead><tr><th>配置</th><th>默认</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>ui.globalPanel</code></td><td><code>true</code></td><td>左栏「记忆」全局总览入口</td></tr>
+    <tr><td><code>ui.projectTab</code></td><td><code>true</code></td><td>右栏原生「项目记忆」页签</td></tr>
+    <tr><td><code>ui.sessionAction</code></td><td><code>true</code></td><td>会话头「记忆」快捷按钮</td></tr>
+    <tr><td><code>ui.refreshMs</code></td><td><code>3000</code></td><td>面板轮询间隔</td></tr>
+    <tr><td><code>ui.maxProjects</code></td><td><code>50</code></td><td>汇总最多展示项目数</td></tr>
+    <tr><td><code>ui.allowWriteActions</code></td><td><code>true</code></td><td>面板写操作总闸；面板内可一键开启</td></tr>
+    <tr><td><code>ui.allowFullTextEdit</code></td><td><code>true</code></td><td>L3 源码模式；首次进入二次确认风险</td></tr>
+  </tbody>
+</table>
+<p>关闭入口只隐藏 UI，不删除任何记忆文件。入口开关保存后按宿主的配置热重载策略生效；未热重载时刷新页面即可。面板内的读写/全文开关会即时生效。</p>
+
+<h2 id="s9"><span class="num">09</span>实施拆分</h2>
+
+<div class="phase" id="s9-1">
+  <div class="ph"><span class="p">P1</span><span class="t">数据与全局入口</span><span class="e">先把「看得到」做对</span></div>
+  <ul>
+    <li><code>src/host/catalog.js</code>（新增）：工作区注册表 + 最近会话合并、路径归一化、统计缓存、key 解析。</li>
+    <li><code>src/index.js</code>：可选注入 <code>workspaceRegistry</code>，创建 catalog，传给路由。</li>
+    <li><code>src/host/routes.js</code>：<code>/state</code> 返回全量 <code>projects</code> + <code>totals</code>；<code>pickCwd</code> 走 catalog；写入后失效缓存。</li>
+    <li><code>src/config.js</code>：新增 <code>ui.*</code> 配置与 normalize。</li>
+    <li><code>src/client.js</code>：配置读取、入口开关、全局树 / 项目树、当前项目解析。</li>
+  </ul>
+  <p><strong>验收：</strong>新建工作区但不在会话里说话，刷新面板也能出现在汇总；项目页签只显示当前项目 + 全局，并自动落到 MEMORY.md 或最新日期笔记。</p>
+</div>
+
+<div class="phase" id="s9-2">
+  <div class="ph"><span class="p">P2</span><span class="t">右栏页签与快捷入口</span><span class="e">边聊边看</span></div>
+  <ul>
+    <li><code>client.js</code>：可选注入 <code>sidebarRightTabs</code> / <code>sidebarRight</code>；注册 tab 定义、body / title / guide；会话头按钮；两栏布局与窄宽度回退。</li>
+    <li><code>config.js</code>：<code>ui.projectTab</code>、<code>ui.sessionAction</code>。</li>
+  </ul>
+  <p><strong>验收：</strong>右侧栏「+」菜单能看到「项目记忆」，打开后标题是当前项目名，切换会话不串项目；右栏 360px 宽时仍可编辑。</p>
+</div>
+
+<div class="phase" id="s9-3">
+  <div class="ph"><span class="p">P3</span><span class="t">视觉重构与 L2 / L3 编辑</span><span class="e">好用的那一半</span></div>
+  <ul>
+    <li><code>client.js</code>：样式注入、布局重构、状态组件、Toast、骨架、空态、快捷键。</li>
+    <li><code>src/markdown.js</code>：<code>replaceSectionBody</code>、结构校验、整文件校验。</li>
+    <li><code>src/write/store.js</code>：<code>replace-section</code>、<code>replace-document</code>、<code>remove-section</code>；<code>ACTIONS</code> 扩展。</li>
+    <li><code>src/host/routes.js</code>：新动作分发与错误码。</li>
+  </ul>
+  <p><strong>验收：</strong>L2 只改一个小节时其他小节字节不变；L3 保存前能看到结构校验与增删统计；所有写入都会先备份，撤销可恢复最近一次写入。</p>
+</div>
+
+<h2 id="s10"><span class="num">10</span>风险与降级</h2>
+<table>
+  <thead><tr><th>风险</th><th>降级 / 处理</th></tr></thead>
+  <tbody>
+    <tr><td><code>workspaceRegistry</code> 不存在</td><td>降级到 <code>recent.seen</code>，面板提示「当前宿主只能看到最近会话项目」</td></tr>
+    <tr><td>宿主没有右侧栏</td><td>项目记忆页不可用；全局总览照常工作</td></tr>
+    <tr><td>没有 <code>configForms</code> 的旧宿主</td><td>入口按默认值注册；「启用编辑」退化为文字指引</td></tr>
+    <tr><td>项目很多</td><td><code>maxProjects</code> + 缓存 + 只读计数，不一次读所有正文</td></tr>
+    <tr><td>全文编辑改坏结构</td><td>默认开；首次进入二次确认，保存前结构校验 + 备份 + 撤销</td></tr>
+    <tr><td>两个客户端同时写</td><td>仍是现有 CAS + 冲突三选一，不新增竞态</td></tr>
+    <tr><td>入口开关热重载失败</td><td>刷新页面；配置本身已落盘，不影响下次启动</td></tr>
+  </tbody>
+</table>
+
+<h2 id="s11"><span class="num">11</span>确认结果</h2>
+<p>三点已按下列口径确认，代码按 P1 → P2 → P3 落地，等待验收。</p>
+
+<div class="q">
+  <div class="t">1. 入口落点</div>
+  <div class="d">项目级记忆页放在哪些位置？</div>
+  <div class="opt"><span class="l">A</span><span>右栏原生页签 + 会话头按钮<span class="rec">已确认</span></span></div>
+  <div class="opt"><span class="l">B</span><span>只做左栏「项目记忆」全页，先不碰右栏</span></div>
+  <div class="opt"><span class="l">C</span><span>A 再加会话行悬浮 / 右键入口（默认关）</span></div>
+</div>
+
+<div class="q">
+  <div class="t">2. 项目范围</div>
+  <div class="d">「扫描所有项目」的范围怎么定？</div>
+  <div class="opt"><span class="l">A</span><span>DSH 已登记工作区 + 最近会话目录<span class="rec">已确认</span></span></div>
+  <div class="opt"><span class="l">B</span><span>只扫 DSH 已登记工作区，不合并最近会话目录</span></div>
+  <div class="opt"><span class="l">C</span><span>A 再加一个「指定根目录递归扫描」配置项</span></div>
+</div>
+
+<div class="q">
+  <div class="t">3. 编辑默认值</div>
+  <div class="d">面板写操作和全文编辑默认开还是关？</div>
+  <div class="opt"><span class="l">A</span><span>保持默认关，面板内提供「一键启用编辑」</span></div>
+  <div class="opt"><span class="l">B</span><span>面板写操作默认开，全文编辑仍默认关</span></div>
+  <div class="opt"><span class="l">C</span><span>两者都默认开，并在开启全文编辑时二次确认<span class="rec">已确认</span></span></div>
+</div>
+
+<div class="ok-box" style="margin-top:20px">
+  <div class="t">已确认的执行口径</div>
+  入口 A + 项目来源 A + 编辑默认 C。代码已按 P1 → P2 → P3 落地；未升版本号，仍走同一写入链。验收通过后再讨论是否升版与提交。
+</div>
+
+<footer>
+  dsh-workbuddy-memory · 记忆面板改造方案 · 2026-11-10 · 状态：已确认 · 待验收
+</footer>
+</main>
+</div>
+</body>
+</html>

@@ -163,9 +163,11 @@ npm-prefix-bin=$(dirname $(which node))/node      # 换成 runtime 的 node.exe
 
 工具用「关键词 + 唯一性检查」定位条目，这对模型够用；面板握着的是「我渲染的是第 3 行」，用文本匹配反而会在两行内容相同时报 `ambiguous`。所以 `editEntryAt(text, heading, line)` 先校验该行仍在小节范围内、且确实是一个 `- ` 条目，否则 `stale_line`。文件在别处被改过时，行号校验会先失败，比 revision 检查更早给出可读原因。
 
-### 12.4 整理是跨文件事务，先写目标再清源
+### 12.4 旧日期只归档，不搬进 MEMORY（WorkBuddy 同款）
 
-`consolidate` 动两个文件：项目 `MEMORY.md`（写）与各日期文件（清行）。顺序固定 —— 先把条目按 `## YYYY-MM-DD` 写进目标（一次锁、一次 CAS、一次备份），再逐源文件逆序删行，最后把 `journal/<opId>.json` 落到 `log/`。崩在中间时账本里有 `cleared` / `failed`，人能看出哪一步没做完；重复执行要带同一个 `operationId`，否则会重复写入（这一点比设计文档的「按 journal 续跑」弱一级，已写在 README 的限制里）。
+早期版本有个 `consolidate`：把 30 天前的日期条目**原样**按 `## YYYY-MM-DD` 成节 append 进 `MEMORY.md` 再清源行。这是错的——WorkBuddy 的 30 天维护是**提示词指令**，由模型按主题**蒸馏**进 MEMORY 后**删除旧文件**，靠语义压缩控制体积；原样搬运只会撑爆 10000 字符注入限额。
+
+现已改为 `prune`（工具 `memory_prune` / 面板「归档旧日期」）：只把旧日期文件 `rename` 到 `memory/archive/`，**绝不写 MEMORY.md**。蒸馏交给模型（注入规则里写明先蒸馏再归档）。移动而非删除，原始流水可找回；`dryRun` 默认 true 先出计划。注入规则同步改为「先蒸馏进 MEMORY，再 memory_prune 归档；不要原样搬流水」。
 
 ### 12.5 面板测试需要一个 hooks 运行时
 
@@ -216,3 +218,53 @@ npm-prefix-bin=$(dirname $(which node))/node      # 换成 runtime 的 node.exe
 ### 13.4 修改入口要写全路径
 
 「面板只读」这种提示等于没说。现在详情区顶部直接给路径：**插件页 → dsh-workbuddy-memory → 记忆面板 → 面板写操作**，并补一句「不想开也可以让智能体调 memory_append / memory_edit」。
+
+
+## 14. 面板 v2：项目目录、右栏页签与编辑
+
+### 14.1 工作区注册表要「读」不要「inject」
+
+`ctx.workspaceRegistry.list()` 是宿主侧拿全部项目的权威来源。不要在插件里 `ctx.inject(['workspaceRegistry'])`：那会把它记成硬依赖，`ui.enabled: false` 或没有工作区服务的 profile 也会被牵连。用 `ctx.get('workspaceRegistry')` 在每次需要时懒读，拿不到就退回 `recent.seen`。
+
+返回值：`{ id, path, title, sessionIds, createdAt, updatedAt }`。`updatedAt` 适合做「最近活跃」排序，`path` 是 canonical realpath。
+
+### 14.2 右栏页签是两段式注册
+
+```js
+ctx.sidebarRightTabs.register({
+  id: '<包名>', kind: '<kind>', priority: 'extension',
+  title: () => '项目记忆',
+  guide: [{ id: 'memory', order: 40, title: () => '项目记忆' }],
+})
+ctx.slots.inject('sidebar.right.pane.tab', () =>
+  ctx.slots.register({ name: 'sidebar.right.pane.tab', key: '<包名>' }, Body))
+```
+
+- 第一段声明「这是什么页」；第二段用 `id`（不是 `kind`）作为 key 提供 body / title。
+- `openTab(kind)` 打开；`openTabIn(sessionId, kind)` 是 Tab 域的内部路径，不在 `ISidebarRight` 接口上。
+- body 是 session scope，props 里有 `sessionId`；用它解析当前项目，不要用 `recent.cwd`。
+- 会话头按钮挂在 `conversation.session.header.utilities`，是 session scope 的 list，点击后调 `openTab` 即可。
+
+### 14.3 项目解析优先用会话，不要猜 cwd
+
+`main` 与右栏 tab 的 props 都带全局 `useSessions` / `useWorkspaces`：
+
+- 主面板：找 `retainedBy.mainView > 0` 的会话，读 `cwd`；
+- 右栏 tab：直接用 props 的 `sessionId`；
+- 再退回会话所属工作区的 `path`，最后才是宿主最近一次装配的 cwd。
+
+### 14.4 汇总接口要分两层
+
+`/state` 返回全量项目摘要 + `totals`，但不返回条目正文；正文仍走 `/content`。统计按 `MEMORY.md` 的 `mtime + size` 缓存，项目多时只 `stat` 不重读。`resolve(key)` 直接遍历 seed 比 `list()` 后再找便宜得多，避免每个 `/content` 都重算全部项目。
+
+### 14.5 截断显示的 revision 要用全文算
+
+`describe()` 为面板截断正文到 256 KB，但 `revision` 必须用读到的完整文本（`contentRevision(file.text)`）算，否则面板拿截断前缀的 revision 去保存，永远 `conflict`。
+
+### 14.6 全文编辑的 body 上限
+
+L3 会带整份文件，`POST /action` 的 body 上限从 64 KB 提到 512 KB；store 另用 `validateDocument()` 拒绝超过 256 KB、含 NUL、代码围栏不闭合的文本。面板对 `doc.truncated` 的文档禁用 L2/L3，避免把截断内容写回去。
+
+### 14.7 编辑默认值与二次确认
+
+`ui.allowWriteActions` 与 `ui.allowFullTextEdit` 现在默认 `true`。设置卡里把全文编辑从关到开会先弹确认；面板第一次进入源码模式也会弹一次（`sessionStorage` 记住本次浏览器会话）。两处都只是 UI 确认，真正的写入仍然经过锁、CAS、备份和账本。

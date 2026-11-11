@@ -12,6 +12,7 @@ import { registerSections } from './inject.js'
 import { registerTools } from './tools/index.js'
 import { registerWriteGuard } from './write/guard.js'
 import { registerRoutes } from './host/routes.js'
+import { createProjectCatalog } from './host/catalog.js'
 import { createStore } from './write/store.js'
 import { resolveStateDir } from './paths.js'
 
@@ -74,6 +75,16 @@ export function apply(ctx, config) {
     ctx.logger?.warn?.(`[workbuddy-memory] section registration failed: ${error?.message ?? error}`)
   }
 
+  // The panel's project list prefers DSH's durable workspace registry. It is
+  // read without declaring a dependency: the service may activate after this
+  // plugin, and the catalog degrades to `recent.seen` when a profile does not
+  // compose it.
+  const catalog = createProjectCatalog({
+    cfg,
+    recent,
+    registry: () => ctx.get?.('workspaceRegistry')?.list?.() ?? [],
+  })
+
   let stateDir = ''
   let store = null
   try {
@@ -94,7 +105,7 @@ export function apply(ctx, config) {
         // The panel writes through the same store the tools use. It is one
         // instance per plugin, so a panel write and a tool write queue on the
         // same lock.
-        registerRoutes(scoped, { cfg, recent, stateDir, version: VERSION, store })
+        registerRoutes(scoped, { cfg, recent, stateDir, version: VERSION, store, catalog })
       } catch (error) {
         ctx.logger?.warn?.(`[workbuddy-memory] panel routes failed: ${error?.message ?? error}`)
       }

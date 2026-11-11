@@ -17,7 +17,7 @@ import { normalizeConfig } from '../src/config.js'
 import { registerRoutes } from '../src/host/routes.js'
 import { createStore } from '../src/write/store.js'
 
-/** A project with two daily files, one old enough to consolidate. */
+/** A project with two daily files, one old enough to archive. */
 async function server({ allowWriteActions = true } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'wbm-e2e-'))
   const home = join(root, 'home')
@@ -74,7 +74,7 @@ async function server({ allowWriteActions = true } = {}) {
   }
 }
 
-test('the panel write chain: edit, conflict, add, remove, restore, consolidate', async () => {
+test('the panel write chain: edit, conflict, add, remove, restore, prune', async () => {
   const s = await server()
   try {
     const state = await s.get('/workbuddy-memory/state')
@@ -148,18 +148,17 @@ test('the panel write chain: edit, conflict, add, remove, restore, consolidate',
     assert.equal(restored.body.ok, true)
     assert.equal(readFileSync(s.projectMemory, 'utf8'), snapshot.body.text)
 
-    // Consolidate: only the old daily file, and its lines move instead of copy.
-    const plan = await s.post({ type: 'consolidate', dryRun: true, beforeDays: 30 })
+    // Prune: only the old daily file is archived; MEMORY.md is never touched.
+    const plan = await s.post({ type: 'prune', dryRun: true, beforeDays: 30 })
     assert.deepEqual(
       plan.body.candidates.map((row) => row.date),
       ['2026-09-01'],
     )
-    const merged = await s.post({ type: 'consolidate', dryRun: false, beforeDays: 30, dates: ['2026-09-01'] })
-    assert.equal(merged.body.ok, true)
-    const mergedText = readFileSync(s.projectMemory, 'utf8')
-    assert.match(mergedText, /## 2026-09-01/)
-    assert.match(mergedText, /旧条目一/)
-    assert.doesNotMatch(readFileSync(s.dailyOld, 'utf8'), /旧条目一|旧条目二/)
+    const pruned = await s.post({ type: 'prune', dryRun: false, beforeDays: 30, dates: ['2026-09-01'] })
+    assert.equal(pruned.body.ok, true)
+    assert.equal(readFileSync(s.projectMemory, 'utf8'), snapshot.body.text)
+    assert.equal(existsSync(s.dailyOld), false)
+    assert.match(readFileSync(join(s.memDir, 'archive', '2026-09-01.md'), 'utf8'), /旧条目一/)
     assert.match(readFileSync(s.dailyNew, 'utf8'), /昨天的条目/)
   } finally {
     s.close()

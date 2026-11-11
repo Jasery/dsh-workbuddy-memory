@@ -367,3 +367,117 @@ export function countEntries(text, heading) {
   const lines = splitLines(text).slice(section.line + 1, section.endLine + 1)
   return lines.filter((line) => /^[ \t]*[-*][ \t]+\S/.test(line)).length
 }
+
+/** Raw body of one section, without its heading line. */
+export function sectionBody(text, heading) {
+  const section = findSection(text, heading)
+  if (!section) return null
+  const lines = splitLines(text)
+  return {
+    heading: section.heading,
+    level: section.level,
+    line: section.line,
+    endLine: section.endLine,
+    body: lines.slice(section.line + 1, section.endLine + 1).join(''),
+    entries: countEntries(text, section.heading),
+  }
+}
+
+/** Lines an L2 editor may not write: headings and prose have no entry identity. */
+function sectionBodyIssues(body) {
+  const issues = []
+  const lines = splitLines(body)
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].replace(/\r?\n$/, '')
+    if (!line.trim()) continue
+    if (HEADING.test(line)) {
+      issues.push({ line: index + 1, text: line, code: 'heading' })
+      continue
+    }
+    if (!BULLET.test(line)) issues.push({ line: index + 1, text: line, code: 'not_entry' })
+  }
+  return issues
+}
+
+/**
+ * Replace one section's body, keeping its heading and every other line intact.
+ *
+ * This is the L2 editor: a person edits the bullets of one section without
+ * touching the rest of the file. Headings and prose are refused because they
+ * have no entry identity, and a heading written here would split the section
+ * into two and shift every line number the panel holds.
+ *
+ * @param {string} text
+ * @param {string} heading
+ * @param {string} body - the section body as typed, without the heading line.
+ * @returns {{ ok: boolean, text: string, reason?: string, issues?: object[], entries?: number }}
+ */
+export function replaceSectionBody(text, heading, body) {
+  const section = findSection(text, heading)
+  if (!section) return { ok: false, text, reason: 'no_section' }
+
+  const issues = sectionBodyIssues(body)
+  if (issues.length > 0) return { ok: false, text, reason: 'invalid_body', issues }
+
+  const eol = detectEol(text)
+  const lines = splitLines(text)
+  const rawLines = String(body ?? '').split(/\r?\n/)
+  while (rawLines.length > 0 && rawLines[0].trim() === '') rawLines.shift()
+  while (rawLines.length > 0 && rawLines[rawLines.length - 1].trim() === '') rawLines.pop()
+  const bodyLines = rawLines.map((line) => `${line}${eol}`)
+  // A section followed by another heading keeps exactly one blank line between
+  // them; the last section of a file ends on its own line ending.
+  const rest = lines.slice(section.endLine + 1)
+  if (rest.length > 0) bodyLines.push(eol)
+  const head = lines.slice(0, section.line + 1)
+  return {
+    ok: true,
+    text: [...head, ...bodyLines, ...rest].join(''),
+    entries: bodyLines.filter((line) => BULLET.test(line.replace(/\r?\n$/, ''))).length,
+  }
+}
+
+/**
+ * Remove one section, heading and body, collapsing only the blank seam it
+ * leaves behind. Every other byte stays where it was.
+ */
+export function removeSection(text, heading) {
+  const section = findSection(text, heading)
+  if (!section) return { ok: false, text, reason: 'no_section' }
+
+  const lines = splitLines(text)
+  const before = lines.slice(0, section.line)
+  const after = lines.slice(section.endLine + 1)
+  while (before.length > 0 && before[before.length - 1].replace(/\r?\n$/, '').trim() === '') before.pop()
+  let start = 0
+  while (start < after.length && after[start].replace(/\r?\n$/, '').trim() === '') start += 1
+  const remaining = after.slice(start)
+  const kept = before.length > 0 && remaining.length > 0 ? [...before, `${detectEol(text)}`, ...remaining] : [...before, ...remaining]
+  return { ok: true, text: kept.join(''), removed: section.endLine - section.line + 1 }
+}
+
+/**
+ * Structure checks for the L3 source editor.
+ *
+ * Nothing here decides what a memory file should say; it only refuses text that
+ * cannot be parsed back into the same section/entry model a later write relies
+ * on.
+ */
+export function validateDocument(text) {
+  const value = String(text ?? '')
+  const issues = []
+  if (value.length > 262144) issues.push({ code: 'too_large', message: 'document exceeds 256 KB' })
+  if (value.includes('\u0000')) issues.push({ code: 'nul', message: 'document contains a NUL byte' })
+
+  let fence = null
+  for (const raw of splitLines(value)) {
+    const line = raw.replace(/\r?\n$/, '')
+    const match = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(line)
+    if (!match) continue
+    if (!fence) fence = match[1][0].repeat(3)
+    else if (match[1].startsWith(fence)) fence = null
+  }
+  if (fence) issues.push({ code: 'unclosed_fence', message: 'a code fence is never closed' })
+
+  return { ok: issues.length === 0, issues }
+}

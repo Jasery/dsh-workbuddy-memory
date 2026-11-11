@@ -82,23 +82,22 @@ export function editTool({ cfg, store }) {
 }
 
 /**
- * `memory_consolidate`: fold old daily notes into the project's MEMORY.md.
+ * `memory_prune`: archive old daily logs, WorkBuddy-style.
  *
- * The rules block already tells the model to use this tool across days, so it
- * has to exist. `dryRun` defaults to true for the same reason the panel shows a
- * plan first: folding several files is not a step anyone wants to discover by
- * having done it.
+ * The model is expected to distill durable conclusions into MEMORY.md first
+ * (memory_append / memory_edit); this tool only moves the raw YYYY-MM-DD.md
+ * logs into `memory/archive/`. It never writes MEMORY.md, so it cannot bloat
+ * the injected long-term store. `dryRun` defaults to true.
  */
-export function consolidateTool({ cfg, store }) {
+export function pruneTool({ cfg, store }) {
   return defineTool({
-    name: 'memory_consolidate',
+    name: 'memory_prune',
     description:
-      'Fold old project daily notes (YYYY-MM-DD.md) into the project MEMORY.md, one `## YYYY-MM-DD` section per date, then clear the folded lines from the sources. dryRun defaults to true and returns the plan without writing; pass dryRun:false to run it.',
+      'Archive old project daily logs (YYYY-MM-DD.md) into memory/archive/ AFTER you have distilled their durable conclusions into MEMORY.md with memory_append/memory_edit. Never copies entries into MEMORY.md. dryRun defaults to true and returns the plan without moving anything; pass dryRun:false to archive.',
     parameters: {
-      beforeDays: { type: 'number', description: 'fold files older than this many days (default 30)' },
-      dates: { type: 'string', description: 'comma-separated YYYY-MM-DD list to fold instead of using beforeDays' },
-      dryRun: { type: 'boolean', description: 'true (default) returns the plan only; false performs the merge' },
-      expectedRevision: { type: 'string', description: 'revision of the project MEMORY.md from memory_read' },
+      beforeDays: { type: 'number', description: 'archive files older than this many days (default 30)' },
+      dates: { type: 'string', description: 'comma-separated YYYY-MM-DD list to archive instead of using beforeDays' },
+      dryRun: { type: 'boolean', description: 'true (default) returns the plan only; false performs the archive' },
       operationId: { type: 'string', description: 'idempotency key' },
     },
     output: {
@@ -111,12 +110,11 @@ export function consolidateTool({ cfg, store }) {
         typeof args.dates === 'string' && args.dates.trim()
           ? args.dates.split(',').map((value) => value.trim()).filter(Boolean)
           : undefined
-      return store.consolidate(
+      return store.prune(
         {
           beforeDays: args.beforeDays === undefined ? undefined : Number(args.beforeDays),
           dates,
           dryRun: args.dryRun !== false,
-          expectedRevision: args.expectedRevision ? String(args.expectedRevision) : undefined,
           operationId: args.operationId ? String(args.operationId) : undefined,
         },
         probe,

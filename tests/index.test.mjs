@@ -95,7 +95,7 @@ test('apply mounts four sections, six tools, one guard and the panel routes', ()
     'workbuddy-memory:user',
     'workbuddy-memory:profile',
   ])
-  assert.deepEqual(record.tools, ['memory_status', 'memory_read', 'memory_search', 'memory_append', 'memory_edit', 'memory_consolidate'])
+  assert.deepEqual(record.tools, ['memory_status', 'memory_read', 'memory_search', 'memory_append', 'memory_edit', 'memory_prune'])
   assert.equal(record.guards, 1)
   assert.deepEqual(record.routes, ['/workbuddy-memory'])
   assert.deepEqual(record.injected, ['webServer'])
@@ -111,7 +111,7 @@ test('search.enabled: false leaves memory_search out of the catalog', () => {
   // A definition that only ever returns a refusal is worse than an absent one:
   // the model should not see a tool it cannot use.
   assert.equal(record.tools.includes('memory_search'), false)
-  assert.equal(record.tools.includes('memory_consolidate'), true)
+  assert.equal(record.tools.includes('memory_prune'), true)
   assert.equal(record.tools.length, 5)
 })
 
