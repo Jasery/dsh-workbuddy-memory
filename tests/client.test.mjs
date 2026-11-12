@@ -322,3 +322,73 @@ test('placeholders are filled from the vars argument', async () => {
 })
 
 
+
+test('the injection limits are editable from the card, not just configurable in schema', () => {
+  // A schema key with no control is invisible: the person can only reach it by
+  // hand-editing cordis.patch.yml. The panel must expose the keys the plugin
+  // actually reads.
+  const tree = expand(
+    SettingsCard({
+      form: fakeForm(
+        snapshot({
+          value: {
+            inject: { enabled: true, distillAbove: 16000, limits: { user: 8000, project: 10000, rules: 2000, profile: 2000 } },
+            write: { enabled: true },
+            search: {},
+            guard: {},
+            ui: { allowWriteActions: true },
+          },
+        }),
+      ),
+    }),
+  )
+  const body = text(tree)
+
+  for (const label of ['用户记忆上限', '蒸馏阈值', '项目记忆上限']) {
+    assert.match(body, new RegExp(label), `the card must expose "${label}"`)
+  }
+
+  // And the current values must be readable in the inputs, not just labelled.
+  const numbers = walk(tree)
+    .filter((node) => node.type === 'input')
+    .map((node) => String(node.props.value ?? ''))
+  assert.ok(numbers.includes('8000'), `user limit shows 8000, got ${JSON.stringify(numbers)}`)
+  assert.ok(numbers.includes('16000'), 'the distillation threshold shows its effective value')
+  assert.ok(numbers.includes('10000'), 'the project limit shows its value')
+})
+
+test('an empty snapshot still shows the effective defaults for the limits', () => {
+  // `inject` absent entirely is the first-mount case; the card must not render
+  // blanks where a number belongs.
+  const tree = expand(SettingsCard({ form: fakeForm(snapshot({ value: {} })) }))
+  const numbers = walk(tree)
+    .filter((node) => node.type === 'input')
+    .map((node) => String(node.props.value ?? ''))
+  assert.ok(numbers.includes('8000'), 'the user limit falls back to the shipped 8000')
+  // `distillAbove: 0` means "twice the limit", so the field shows 16000 — the
+  // threshold actually in force. Showing the raw 0 would read as "off".
+  assert.ok(numbers.includes('16000'), `the threshold shows its effective value, got ${JSON.stringify(numbers)}`)
+})
+
+test('a stored 0 for the threshold is displayed as twice the limit', () => {
+  const tree = expand(
+    SettingsCard({
+      form: fakeForm(snapshot({ value: { inject: { enabled: true, distillAbove: 0, limits: { user: 5000 } }, write: {}, search: {}, guard: {}, ui: {} } })),
+    }),
+  )
+  const numbers = walk(tree)
+    .filter((node) => node.type === 'input')
+    .map((node) => String(node.props.value ?? ''))
+  assert.ok(numbers.includes('10000'), `5000 x 2 = 10000, got ${JSON.stringify(numbers)}`)
+
+  // An explicit threshold is shown as stored.
+  const explicit = expand(
+    SettingsCard({
+      form: fakeForm(snapshot({ value: { inject: { enabled: true, distillAbove: 20000, limits: { user: 5000 } }, write: {}, search: {}, guard: {}, ui: {} } })),
+    }),
+  )
+  const shown = walk(explicit)
+    .filter((node) => node.type === 'input')
+    .map((node) => String(node.props.value ?? ''))
+  assert.ok(shown.includes('20000'), 'an explicit threshold is not overridden by the derivation')
+})

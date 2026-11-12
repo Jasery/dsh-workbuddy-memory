@@ -147,9 +147,11 @@ window.__ModuleLoader__.load({
       'settings.fullText': '全文编辑',
       'settings.fullTextHint': '允许在面板里直接改整份文件。关闭后只能逐条或按小节编辑。',
       'settings.userLimit': '用户记忆上限',
-      'settings.userLimitHint': '注入到上下文的最大字符数。超出部分本会话读不到。',
+      'settings.userLimitHint': '注入到上下文的最大字符数。超出部分本会话读不到。0 = 不注入该块。',
       'settings.distillAbove': '蒸馏阈值',
       'settings.distillAboveHint': '用户记忆超过这个字符数时，规则里会要求按主题蒸馏。0 = 上限的两倍。',
+      'settings.projectLimit': '项目记忆上限',
+      'settings.projectLimitHint': '项目 MEMORY.md 注入到上下文的最大字符数。0 = 不注入该块。',
       'settings.hostRejected': '宿主拒绝了这次修改（值不合法或已被更高层覆盖）',
       'settings.noWriteAccess': '当前连接无法写入宿主配置。请直接编辑 profile 的 cordis.patch.yml 后重载插件。',
       'settings.confirmFullText': '全文编辑会绕过条目模型，只保留结构校验。确定开启？',
@@ -441,9 +443,11 @@ window.__ModuleLoader__.load({
       'settings.fullText': 'Full-text editing',
       'settings.fullTextHint': 'Allow rewriting a whole file in the panel. Off leaves entry and section editing only.',
       'settings.userLimit': 'User memory limit',
-      'settings.userLimitHint': 'Characters injected into context. Anything past this is unreadable in the session.',
+      'settings.userLimitHint': 'Characters injected into context. Anything past this is unreadable in the session. 0 = do not inject this block.',
       'settings.distillAbove': 'Distillation threshold',
       'settings.distillAboveHint': 'When user memory exceeds this many characters, the rules ask for a by-topic distillation. 0 = twice the limit.',
+      'settings.projectLimit': 'Project memory limit',
+      'settings.projectLimitHint': 'Characters of the project MEMORY.md injected into context. 0 = do not inject this block.',
       'settings.hostRejected': 'The host refused this change (invalid value, or overridden by a higher layer)',
       'settings.noWriteAccess': 'This connection cannot write host config. Edit the profile cordis.patch.yml and reload the plugin.',
       'settings.confirmFullText': 'Full-text editing bypasses the entry model and keeps only structural checks. Turn it on?',
@@ -1067,6 +1071,7 @@ window.__ModuleLoader__.load({
       const [confirm, setConfirm] = React.useState(null)
       const value = snap.value ?? {}
       const inject = value.inject ?? {}
+      const limits = inject.limits ?? {}
       const write = value.write ?? {}
       const search = value.search ?? {}
       const uiGuard = value.guard ?? {}
@@ -1150,6 +1155,36 @@ window.__ModuleLoader__.load({
               checked: inject.enabled,
               disabled: !writable,
               onChange: (next) => commit('inject.enabled', next),
+            }),
+            h(NumberField, {
+              label: t('settings.userLimit'),
+              hint: t('settings.userLimitHint'),
+              value: limits.user ?? 8000,
+              min: 0,
+              max: 200000,
+              disabled: !writable,
+              onCommit: (next) => commit('inject.limits.user', next),
+            }),
+            h(NumberField, {
+              label: t('settings.distillAbove'),
+              hint: t('settings.distillAboveHint'),
+              // 0 is the stored sentinel for "derive from the limit", not a
+              // usable threshold. Showing the raw 0 would read as "distillation
+              // off" when it is actually running at twice the limit.
+              value: inject.distillAbove > 0 ? inject.distillAbove : (limits.user ?? 8000) * 2,
+              min: 0,
+              max: 2000000,
+              disabled: !writable,
+              onCommit: (next) => commit('inject.distillAbove', next),
+            }),
+            h(NumberField, {
+              label: t('settings.projectLimit'),
+              hint: t('settings.projectLimitHint'),
+              value: limits.project ?? 10000,
+              min: 0,
+              max: 200000,
+              disabled: !writable,
+              onCommit: (next) => commit('inject.limits.project', next),
             }),
             h(Switch, {
               label: t('settings.allowWrite'),
