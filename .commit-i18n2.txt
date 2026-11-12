@@ -1,0 +1,25 @@
+fix(i18n): 客户端 inject 补上 locale 服务，面板才真正跟随语言
+
+上一版虽然注册了字典、绑定了 t()，但模块导出的 inject 只有 ['slots']，
+client runtime 没有把 locale 服务注入进来 —— ctx.locale 是 undefined，
+bindCopy 每次调用都静默回退到本地字典，表现为「切了语言面板纹丝不动」。
+
+- inject 改为 ['slots', 'locale']（服务名，不是包名；参照 dsh-client-ui-open-in-app
+  的 inject = ['sessions','slots','locale',...]）
+- package.json 的 dsh.client.inject 补 @deepseek-ai/dsh-client-locale，
+  与官方插件声明一致
+- bindCopy 改成每次调用时惰性读 ctx.locale：服务可能晚于 apply 激活，
+  之前捕获一次的 null 会让面板整场会话都用本地字典
+- __internals 暴露 runtime / ZH / EN，测试可以把模块指向真实 locale 服务
+
+测试重写：不再 stub 掉 ctx.locale，而是实现一个按宿主语义工作的迷你
+LocaleRuntime（register / bind / subscribe / setLocale，回退链以英文收尾），
+断言注册后切语言、服务迟到、已挂载面板重渲染三条路径。stub 掉服务的测试
+恰恰抓不到这个 bug。
+
+真机验证（dsh --profile web + 鉴权链接，Chrome 实际操作）：
+中文 → English 后，面板变为 Memory / All projects / Projects / Entries /
+Daily files / To archive / Needs attention / Recent activity / Global memory /
+With memory only / Search projects…；再切回中文同样恢复。
+
+测试 196 全通过。

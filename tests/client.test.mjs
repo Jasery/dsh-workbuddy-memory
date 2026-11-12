@@ -81,7 +81,9 @@ const { humanBytes, getJson, MemoryOverviewPanel, OverviewIcon, SettingsCard, PA
 
 test('the module exports what the host mounts', () => {
   assert.equal(typeof module.apply, 'function')
-  assert.deepEqual(module.inject, ['slots'])
+  // `locale` is a service name the client runtime injects; without it the panel
+  // has no host language and silently keeps its own copy.
+  assert.deepEqual(module.inject, ['slots', 'locale'])
   assert.equal(PANEL_OVERVIEW, 'workbuddy-memory')
   assert.equal(API, '/workbuddy-memory')
 })

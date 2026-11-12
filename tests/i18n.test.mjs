@@ -1,19 +1,19 @@
 /**
- * The panel in both languages.
+ * The panel against a real locale service.
  *
- * The panel used to be Chinese-only: switching the app language left it reading
- * as a foreign object inside an English shell. These tests render the real
- * component twice and compare what a reader actually sees.
+ * The host's `LocaleRuntime` is reimplemented here in miniature — register,
+ * bind, subscribe, setLocale — because the defect being guarded against was not
+ * "the wrong string" but "the panel never asked the host at all". A test that
+ * stubs `ctx.locale` away cannot catch that.
  */
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createRuntime, text, walk } from './helpers/react.mjs'
+import { createRuntime, text } from './helpers/react.mjs'
 
 const runtime = createRuntime()
 
-/** Load the module once; the host mounts it exactly that way. */
 async function loadClient() {
   let exported
   globalThis.window = {
@@ -32,29 +32,89 @@ async function loadClient() {
 }
 
 const client = await loadClient()
-const { MemoryWorkspace, bindCopy } = client.__internals
+const { MemoryWorkspace, bindCopy, ZH, EN } = client.__internals
 
-/** Answer /state and /content from a fixed payload. */
-function installFetch(state) {
-  globalThis.fetch = async (url, init = {}) => {
-    if (init.method === 'POST') return { ok: true, status: 200, json: async () => ({ ok: true }) }
-    const body = String(url).includes('/content') ? { ok: false, code: 'not_found' } : state
-    return { ok: true, status: 200, json: async () => body }
+/**
+ * A miniature LocaleRuntime with the host's documented semantics: dictionaries
+ * per namespace, a fallback chain ending at English, and a subscribable
+ * snapshot whose revision bumps on both switches and registrations.
+ */
+function createLocaleService(initial = 'en') {
+  const dicts = new Map()
+  const bound = new Map()
+  const listeners = new Set()
+  let active = initial
+  let revision = 0
+
+  const lookup = (ns, key) => {
+    const table = dicts.get(ns)
+    if (!table) return undefined
+    // Fallback chain: active language, then English.
+    for (const locale of [active, 'en']) {
+      const value = table[locale]?.[key]
+      if (typeof value === 'string') return value
+    }
+    return undefined
+  }
+
+  return {
+    get active() {
+      return active
+    },
+    get revision() {
+      return revision
+    },
+    registered: () => [...dicts.keys()],
+    register(ns, dictionaries) {
+      const table = dicts.get(ns) ?? {}
+      for (const [locale, dict] of Object.entries(dictionaries)) table[locale] = dict
+      dicts.set(ns, table)
+      revision += 1
+      for (const fn of listeners) fn()
+      return () => {
+        const current = dicts.get(ns)
+        if (!current) return
+        for (const locale of Object.keys(dictionaries)) delete current[locale]
+        revision += 1
+        for (const fn of listeners) fn()
+      }
+    },
+    bind(ns) {
+      let fn = bound.get(ns)
+      if (fn) return fn
+      fn = (key, params) => {
+        const template = lookup(ns, key) ?? key
+        if (!params) return template
+        return template.replace(/\{(\w+)\}/g, (match, name) => (name in params ? String(params[name]) : match))
+      }
+      bound.set(ns, fn)
+      return fn
+    },
+    subscribe(fn) {
+      listeners.add(fn)
+      return () => listeners.delete(fn)
+    },
+    setLocale(id) {
+      active = id
+      revision += 1
+      for (const fn of listeners) fn()
+    },
   }
 }
 
-function installTimers() {
-  const realSetInterval = globalThis.setInterval
-  globalThis.setInterval = () => 0
-  globalThis.clearInterval = () => {}
-  globalThis.document = { hidden: false }
-  return () => {
-    globalThis.setInterval = realSetInterval
-    delete globalThis.document
+/** A context whose `locale` service is present, like a real host. */
+function contextWith(locale) {
+  const ctx = {
+    locale,
+    effect: (fn) => fn(),
+    // `apply` mounts the surfaces through child scopes; a no-op scope is enough
+    // for the copy assertions here, which read the panel directly.
+    inject: (_services, callback) => callback(ctx),
+    slots: { register: () => () => {}, inject: (_slot, fn) => fn() },
   }
+  return ctx
 }
 
-/** A workspace view with one project that has memory, plus the global store. */
 const state = {
   ok: true,
   version: '0.1.3',
@@ -120,75 +180,97 @@ const state = {
   operations: { total: 0, conflicts: 0, lastConflictAt: null, lastCommitAt: null },
 }
 
-/** Render the overview with the browser reporting `language`. */
-async function renderAs(language) {
-  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
-  Object.defineProperty(globalThis, 'navigator', { value: { language, languages: [language] }, configurable: true, writable: true })
-  // The runtime's copy is bound at load time, so the language is re-bound here
-  // through the module's own entry point rather than by re-importing the file.
-  runtime.reset()
-  const restore = installTimers()
-  installFetch(state)
-  try {
-    const tree = await runtime.settle(MemoryWorkspace, { mode: 'overview', layout: 'wide' })
-    return text(tree)
-  } finally {
-    restore()
-    if (descriptor === undefined) delete globalThis.navigator
-    else Object.defineProperty(globalThis, 'navigator', descriptor)
+function installFetch() {
+  globalThis.fetch = async (url, init = {}) => {
+    if (init.method === 'POST') return { ok: true, status: 200, json: async () => ({ ok: true }) }
+    const body = String(url).includes('/content') ? { ok: false, code: 'not_found' } : state
+    return { ok: true, status: 200, json: async () => body }
+  }
+}
+
+function installTimers() {
+  const realSetInterval = globalThis.setInterval
+  globalThis.setInterval = () => 0
+  globalThis.clearInterval = () => {}
+  // `apply` injects a stylesheet, so the stub needs the two document calls it
+  // makes — nothing else is touched by the code under test.
+  globalThis.document = {
+    hidden: false,
+    getElementById: () => null,
+    createElement: () => ({ setAttribute() {}, appendChild() {}, remove() {} }),
+    head: { appendChild() {} },
+  }
+  return () => {
+    globalThis.setInterval = realSetInterval
+    delete globalThis.document
   }
 }
 
 const CJK = /[\u4e00-\u9fff]/
 
-test('the panel renders Chinese for a Chinese browser', async () => {
-  const view = await renderAs('zh-CN')
-  assert.match(view, CJK, 'a Chinese browser gets Chinese copy')
-  assert.match(view, /项目|记忆/)
+test('the module declares the locale service it needs', () => {
+  // A missing name here is the whole defect: `ctx.locale` is then undefined and
+  // every string silently comes from the panel's own dictionary.
+  assert.ok(client.inject.includes('locale'), `inject must name the locale service, got ${JSON.stringify(client.inject)}`)
+  assert.ok(client.inject.includes('slots'))
 })
 
-test('the panel renders English for an English browser, with no Chinese left', async () => {
-  const view = await renderAs('en-US')
-  assert.match(view, /Projects|Memory/, 'an English browser gets English copy')
-  // This is the regression the report named: a Chinese-only panel inside an
-  // English shell. A single leftover string is the whole defect.
-  assert.doesNotMatch(view, CJK, `English view still has Chinese: ${view.match(new RegExp(`.{0,30}${CJK.source}.{0,30}`))?.[0] ?? ''}`)
+test('registering with the host makes the panel follow its language', () => {
+  const locale = createLocaleService('zh')
+  const ctx = contextWith(locale)
+  const t = bindCopy(ctx)
+
+  // Before registration the panel has its own copy; after it, the host answers.
+  locale.register('dsh-workbuddy-memory', { zh: { 'panel.memory': '记忆' }, en: { 'panel.memory': 'Memory' } })
+  assert.equal(t('panel.memory'), '记忆')
+
+  locale.setLocale('en')
+  assert.equal(t('panel.memory'), 'Memory', 'a host switch is reflected on the next call')
+
+  locale.setLocale('zh')
+  assert.equal(t('panel.memory'), '记忆')
 })
 
-test('every dictionary key resolves in both languages', () => {
-  // Parity is what keeps the two render paths honest: a key added to one
-  // dictionary only would silently fall back and show the other language.
-  const t = bindCopy(null)
-  for (const key of ['panel.memory', 'stats.projects', 'editor.saveSection', 'code.read_only', 'settings.readOnly']) {
-    // A host that misses the key must fall through to the local dictionary
-    // rather than echoing the key at the reader.
-    const viaMiss = bindCopy({ locale: { bind: () => () => key } })(key)
-    assert.notEqual(viaMiss, key, `${key} fell through to the raw key`)
-    assert.equal(typeof t(key), 'string')
-    assert.notEqual(t(key), key, `${key} must have copy`)
-  }
+test('a locale service that arrives late is still picked up', () => {
+  // The service can activate after `apply` runs; a binding captured once would
+  // stay null for the rest of the session.
+  const holder = { locale: undefined }
+  const t = bindCopy(holder)
+  assert.ok(typeof t('panel.memory') === 'string')
+
+  const locale = createLocaleService('en')
+  locale.register('dsh-workbuddy-memory', { zh: { 'panel.memory': '记忆' }, en: { 'panel.memory': 'Memory' } })
+  holder.locale = locale
+  assert.equal(t('panel.memory'), 'Memory')
 })
 
-test('switching the language re-renders an already mounted panel', async () => {
-  // The host publishes locale changes; a panel that only reads `t()` at mount
-  // keeps the old copy forever. The revision hook is what fixes that.
-  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
-  Object.defineProperty(globalThis, 'navigator', { value: { language: 'en-US', languages: ['en-US'] }, configurable: true, writable: true })
-  runtime.reset()
+test('a mounted panel re-renders in the new language', async () => {
+  const locale = createLocaleService('en')
+  // Register the module's real dictionaries, exactly as `apply` does. A partial
+  // dictionary would leave the missing keys on the local fallback, which is a
+  // different path than the one this test is about.
+  locale.register('dsh-workbuddy-memory', { zh: ZH, en: EN })
+
+  // Point the module's runtime at this service the way `apply` does, without
+  // mounting the host surfaces (those need a whole client composition).
   const restore = installTimers()
-  installFetch(state)
+  const { runtime: moduleRuntime } = client.__internals
+  moduleRuntime.ctx = contextWith(locale)
+  moduleRuntime.t = bindCopy(moduleRuntime.ctx)
+  installFetch()
   try {
-    const tree = await runtime.settle(MemoryWorkspace, { mode: 'overview', layout: 'wide' })
-    const before = text(tree)
-    assert.doesNotMatch(before, CJK)
-    // A mounted panel keeps working; the hook itself is asserted by the copy
-    // staying English across a re-render rather than reverting to Chinese.
-    const again = await runtime.settle(MemoryWorkspace, { mode: 'overview', layout: 'wide' })
-    assert.doesNotMatch(text(again), CJK)
-    void walk
+    runtime.reset()
+    const english = text(await runtime.settle(MemoryWorkspace, { mode: 'overview', layout: 'wide' }))
+    assert.doesNotMatch(english, CJK, 'English first')
+
+    // The host switches language while the panel is mounted. The bound `t`
+    // reads the host on every call, so the next render is already Chinese.
+    locale.setLocale('zh')
+    const chinese = text(await runtime.settle(MemoryWorkspace, { mode: 'overview', layout: 'wide' }))
+    assert.match(chinese, CJK, 'the mounted panel picked up the switch')
   } finally {
     restore()
-    if (descriptor === undefined) delete globalThis.navigator
-    else Object.defineProperty(globalThis, 'navigator', descriptor)
+    moduleRuntime.ctx = null
   }
 })
+

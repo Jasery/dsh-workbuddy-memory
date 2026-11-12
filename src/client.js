@@ -627,19 +627,27 @@ window.__ModuleLoader__.load({
      * still renders when `locale` is absent (an older host, or a unit test that
      * mounts the module without the service). It never overrides a host answer.
      *
+     * The host binding is looked up on **every call**, not captured once: the
+     * locale service may arrive after `apply` runs, and a captured `null` would
+     * leave the panel on its own dictionaries for the rest of the session.
+     *
      * @param {object} ctx - client root context.
      * @returns {(key: string, vars?: Record<string, string|number>) => string}
      */
     function bindCopy(ctx) {
-      let host = null
-      try {
-        if (typeof ctx?.locale?.bind === 'function') host = ctx.locale.bind(NS)
-      } catch {
-        host = null
-      }
       const local = localLanguage()
+      const hostBound = () => {
+        try {
+          const locale = ctx?.locale
+          if (typeof locale?.bind !== 'function') return null
+          return locale.bind(NS)
+        } catch {
+          return null
+        }
+      }
       return (key, vars) => {
         let text
+        const host = hostBound()
         if (host) {
           try {
             text = host(key)
@@ -3411,8 +3419,17 @@ window.__ModuleLoader__.load({
     // that would have to split this file.
     return {
       apply,
-      inject: ['slots'],
+      // `locale` is the service name, not a package name: the client runtime
+      // injects services by name, and a missing name leaves `ctx.locale`
+      // undefined — which is why the panel silently kept its own copy instead of
+      // following the app language.
+      inject: ['slots', 'locale'],
       __internals: {
+        // Exposed so a test can point the module at a locale service without
+        // mounting the whole client composition.
+        runtime,
+        ZH,
+        EN,
         humanBytes,
         ratio,
         filterEntries,
