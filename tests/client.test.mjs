@@ -261,3 +261,62 @@ test('paths in the status bar keep their tail, not their depth', () => {
   assert.equal(shortPath(''), '—')
   assert.equal(shortPath(null), '—')
 })
+
+// The file already holds one loaded module (line 79); ESM evaluates client.js
+// exactly once, so a second load would resolve to undefined.
+
+test('the panel follows the host language, not a hardcoded one', async () => {
+  const { bindCopy } = module.__internals
+
+  // Node exposes `navigator` as a getter-only global, so it is replaced through
+  // a property definition rather than assignment.
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  const setNavigator = (value) => {
+    Object.defineProperty(globalThis, 'navigator', { value, configurable: true, writable: true })
+  }
+  try {
+    setNavigator({ language: 'zh-CN', languages: ['zh-CN'] })
+    assert.match(bindCopy(null)('code.read_only'), /只读/)
+
+    setNavigator({ language: 'en-US', languages: ['en-US'] })
+    assert.match(bindCopy(null)('code.read_only'), /Read-only/)
+  } finally {
+    if (original === undefined) delete globalThis.navigator
+    else Object.defineProperty(globalThis, 'navigator', original)
+  }
+})
+
+test('a host locale service wins over the browser', async () => {
+  const { bindCopy } = module.__internals
+
+  // A host that answers Chinese while the browser says English: the host wins.
+  const hostZh = bindCopy({ locale: { bind: () => (key) => (key === 'code.read_only' ? '来自宿主的译文' : key) } })
+  assert.equal(hostZh('code.read_only'), '来自宿主的译文')
+
+  // A host that misses the key leaves the local dictionary to answer.
+  const hostMiss = bindCopy({ locale: { bind: () => (key) => key } })
+  assert.match(hostMiss('code.read_only'), /只读|Read-only/)
+
+  // A host that throws must not take the panel down with it.
+  const hostThrows = bindCopy({
+    locale: {
+      bind: () => () => {
+        throw new Error('locale torn down')
+      },
+    },
+  })
+  assert.match(hostThrows('code.read_only'), /只读|Read-only/)
+})
+
+test('placeholders are filled from the vars argument', async () => {
+  const { bindCopy } = module.__internals
+  const t = bindCopy(null)
+
+  // Both dictionaries carry the same placeholder names, so the assertion works
+  // whichever language the runner happens to resolve.
+  const text = t('count.entries', { n: 7 })
+  assert.match(text, /7/)
+  assert.doesNotMatch(text, /\{n\}/)
+})
+
+

@@ -16,6 +16,8 @@ dsh plugin --profile web add dsh-workbuddy-memory
 node scripts/dev-install.mjs web
 ```
 
+它把 profile 链接到本仓库（Windows 用 junction，其他平台用目录符号链接），所以改完源码只需重启 profile，不必重新安装。代价是 profile 依赖这个仓库原地不动；加 `--copy` 可退回自包含的复制安装，但每次改动都要重跑。
+
 不要再往 `cordis.patch.yml` 手写 `insert:`——插出来的条目会和配置卡写入的条目成为两条同 id 记录。配置卡写入的是按 id 合并的覆盖条目。
 
 要求 DSH `>= 0.2.0`，已在 `0.2.0-rc.2` 与 `0.2.2-rc.1` 上实测。
@@ -68,6 +70,8 @@ node scripts/dev-install.mjs web
 - **会话头「记忆」按钮**：打开或聚焦该页签。
 
 面板支持条目录入、小节编辑、整文件源码模式与撤销；旧日期文件可归档到 `memory/archive/`，归档不写 MEMORY.md。写入仍是同一条存储链，文件被外部改动时返回 `conflict` 并给出重载/覆盖等出口。
+
+面板跟随宿主语言：所有文案都注册进宿主的 locale 服务，DSH 切语言时面板一起切。
 
 ## 边界
 

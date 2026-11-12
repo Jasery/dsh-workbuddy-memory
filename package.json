@@ -1,6 +1,6 @@
 {
   "name": "dsh-workbuddy-memory",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "description": "Read and write WorkBuddy memory files from DSH: one set of Markdown files, two clients.",
   "keywords": [
@@ -65,4 +65,5 @@
     "@deepseek-ai/dsh-tools": "^0.2.2-rc.1"
   }
 }
+
 
