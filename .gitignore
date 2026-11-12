@@ -6,3 +6,5 @@ lib/
 
 .commit-msg*.txt
 .commit-i18n*.txt
+.cmsg.txt
+.cmsg*.txt
