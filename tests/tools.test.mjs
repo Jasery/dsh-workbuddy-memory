@@ -444,3 +444,22 @@ test('the lossless guard coerces what the host would reject', async () => {
   // A bigint is not JSON at all; the string form keeps it readable.
   assert.equal(lossless(10n), '10')
 })
+
+test('memory_status reports the user file against its injection limit', async () => {
+  const f = fixture()
+  // Under the limit: reported, but not flagged.
+  const small = await f.tools.status.execute({}, f.exec)
+  assert.equal(small.stores.user.overLimit, false)
+  assert.equal(small.stores.user.distillDue, false)
+  assert.equal(typeof small.stores.user.chars, 'number')
+  assert.equal(small.stores.user.injected, small.stores.user.chars)
+
+  // Past the limit: the excess is unreadable, and the warning names both numbers.
+  writeFileSync(join(f.home, 'MEMORY.md'), `${'- 一条\n'.repeat(6000)}`, 'utf8')
+  const big = await f.tools.status.execute({}, f.exec)
+  assert.equal(big.stores.user.overLimit, true)
+  assert.equal(big.stores.user.distillDue, true, 'twice the limit trips the threshold too')
+  assert.equal(big.stores.user.injected, big.config.inject.limits.user)
+  assert.ok(big.stores.user.chars > big.stores.user.injected)
+  assert.ok(big.warnings.some((line) => line.includes('注入上限')))
+})

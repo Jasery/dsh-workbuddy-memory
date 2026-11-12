@@ -52,9 +52,19 @@ export const Config = z.object({
         .object({
           project: z.number().default(10000),
           rules: z.number().default(2000),
-          user: z.number().default(4000),
+          user: z.number().default(8000),
           profile: z.number().default(2000),
         })
+        .description('Character limits per injected block. 0 disables the block.')
+        .volatile(),
+      // `0` means "derive from limits.user", which keeps the two keys in step
+      // when only the limit is tuned. Anything else is an absolute character
+      // count. A number cannot express "default to twice another key" in the
+      // schema, so the default is resolved in normalizeConfig instead.
+      distillAbove: z
+        .number()
+        .default(0)
+        .description('User MEMORY.md characters above which the rules ask the model to distill by topic. 0 = twice limits.user.')
         .volatile(),
     }),
 
@@ -119,6 +129,30 @@ function pick(value, allowed, fallback) {
 }
 
 /**
+ * Resolve the user-memory distillation threshold.
+ *
+ * `0` (and anything unusable) means "twice `limits.user`": the threshold is a
+ * pressure gauge, so it should scale with the budget it measures. Deriving it
+ * here instead of baking 16000 into the schema keeps the two in step when a
+ * person tunes only the limit.
+ *
+ * A non-zero value is clamped to at least `limit + 1`, because a threshold at
+ * or below the limit would ask for distillation before the block is even
+ * truncated — noise on every turn.
+ *
+ * @param {unknown} raw - the configured `inject.distillAbove`.
+ * @param {number} userLimit - the resolved `inject.limits.user`.
+ * @returns {number} the character count that triggers a distillation hint.
+ */
+export function resolveDistillAbove(raw, userLimit) {
+  const limit = Number.isFinite(userLimit) && userLimit > 0 ? userLimit : 0
+  const derived = limit > 0 ? limit * 2 : 0
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return derived
+  const clamped = Math.min(Math.max(Math.round(raw), 1), 2000000)
+  return limit > 0 ? Math.max(clamped, limit + 1) : clamped
+}
+
+/**
  * Turn a possibly partial or invalid config into a complete one.
  *
  * Never throws: a bad config must degrade, not take the host down.
@@ -134,6 +168,13 @@ export function normalizeConfig(raw) {
   const guard = input.guard && typeof input.guard === 'object' ? input.guard : {}
   const ui = input.ui && typeof input.ui === 'object' ? input.ui : {}
   const limits = inject.limits && typeof inject.limits === 'object' ? inject.limits : {}
+
+  const resolvedLimits = {
+    project: num(limits.project, 10000, 0, 200000),
+    rules: num(limits.rules, 2000, 0, 200000),
+    user: num(limits.user, 8000, 0, 200000),
+    profile: num(limits.profile, 2000, 0, 200000),
+  }
 
   return {
     readOnly: bool(input.readOnly, false),
@@ -152,12 +193,11 @@ export function normalizeConfig(raw) {
       profileFile: text(inject.profileFile).trim(),
       profileUid: text(inject.profileUid).trim(),
       sanitizePaths: bool(inject.sanitizePaths, true),
-      limits: {
-        project: num(limits.project, 10000, 0, 200000),
-        rules: num(limits.rules, 2000, 0, 200000),
-        user: num(limits.user, 4000, 0, 200000),
-        profile: num(limits.profile, 2000, 0, 200000),
-      },
+      limits: resolvedLimits,
+      // `0` is the "follow limits.user" sentinel, resolved here rather than in
+      // the schema: schemastery has no way to default one key from another, and
+      // a literal 16000 would silently stop tracking a tuned `limits.user`.
+      distillAbove: resolveDistillAbove(inject.distillAbove, resolvedLimits.user),
     },
 
     write: {

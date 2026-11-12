@@ -178,3 +178,64 @@ test('a chosen profile file is rendered', () => {
   assert.match(profile.text, /关注 AI/)
   void cfg
 })
+
+test('distillAbove defaults to twice limits.user and follows a tuned limit', () => {
+  // The threshold is a pressure gauge, so it has to scale with the budget it
+  // measures. A literal default would stop tracking a tuned limit.
+  const byDefault = normalizeConfig({})
+  assert.equal(byDefault.inject.limits.user, 8000, 'the shipped default is 8000')
+  assert.equal(byDefault.inject.distillAbove, 16000, 'twice the default limit')
+
+  const tuned = normalizeConfig({ inject: { limits: { user: 3000 } } })
+  assert.equal(tuned.inject.distillAbove, 6000, 'follows the tuned limit')
+
+  const explicit = normalizeConfig({ inject: { limits: { user: 3000 }, distillAbove: 9000 } })
+  assert.equal(explicit.inject.distillAbove, 9000, 'an explicit value wins')
+
+  // A threshold at or below the limit would fire on every turn even though
+  // nothing is being lost yet, so it is lifted above the limit.
+  const tooLow = normalizeConfig({ inject: { limits: { user: 5000 }, distillAbove: 100 } })
+  assert.equal(tooLow.inject.distillAbove, 5001, 'clamped above the limit')
+
+  // A limit of 0 disables the block, so there is nothing to distil for.
+  const off = normalizeConfig({ inject: { limits: { user: 0 } } })
+  assert.equal(off.inject.distillAbove, 0)
+})
+
+test('the rules block gains a distillation hint only past the threshold', () => {
+  const under = fixture({ user: '- 一条\n'.repeat(50) })
+  const underRules = renderSections({ cfg: under.cfg, probe: under.probe, t }).find((s) => s.name === 'workbuddy-memory:rules')
+  assert.doesNotMatch(underRules.text, /蒸馏阈值/)
+
+  // A file past twice the limit loses most of itself on every turn.
+  const over = fixture({ user: `${'- 一条\n'.repeat(6000)}`, config: { inject: { limits: { user: 8000 } } } })
+  const overRules = renderSections({ cfg: over.cfg, probe: over.probe, t }).find((s) => s.name === 'workbuddy-memory:rules')
+  assert.match(overRules.text, /蒸馏阈值/)
+  assert.match(overRules.text, /16000/, 'names the threshold it crossed')
+  assert.match(overRules.text, /8000/, 'names the injection limit')
+})
+
+test('the hint survives even when the rules text alone would fill the budget', () => {
+  // The hint exists for the case where something must be cut, so it must not be
+  // the thing that gets cut. The base text gives way instead.
+  const over = fixture({ user: `${'- 一条\n'.repeat(6000)}`, config: { inject: { limits: { user: 8000, rules: 400 } } } })
+  const rules = renderSections({ cfg: over.cfg, probe: over.probe, t }).find((s) => s.name === 'workbuddy-memory:rules')
+  assert.ok(rules.text.length <= 400, `block stays within its budget (${rules.text.length})`)
+  assert.match(rules.text, /蒸馏阈值/, 'the hint is the part that survives')
+})
+
+test('read-only sessions get no distillation hint', () => {
+  // Read-only never writes, so asking for a rewrite would only burn turns.
+  const over = fixture({ user: `${'- 一条\n'.repeat(6000)}`, config: { readOnly: true, inject: { limits: { user: 8000 } } } })
+  const rules = renderSections({ cfg: over.cfg, probe: over.probe, t }).find((s) => s.name === 'workbuddy-memory:rules')
+  assert.doesNotMatch(rules.text, /蒸馏阈值/)
+})
+
+test('the user block is truncated at the new 8000 default', () => {
+  const body = `${'- 一条\n'.repeat(3000)}`
+  const { cfg, probe } = fixture({ user: body })
+  const user = renderSections({ cfg, probe, t }).find((s) => s.name === 'workbuddy-memory:user')
+  assert.ok(user.text.length < body.length, 'a long file is trimmed')
+  assert.match(user.text, /截断/)
+})
+

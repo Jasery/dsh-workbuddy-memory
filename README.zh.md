@@ -52,7 +52,8 @@ node scripts/dev-install.mjs web
 |---|---|---|
 | `readOnly` | `false` | 总闸，开启后一切写入被拒绝 |
 | `workbuddyHome` | `''` | 留空跟随环境变量 |
-| `inject.limits.*` | 10000 / 4000 / 2000 | 各块按字符截断 |
+| `inject.limits.*` | 10000 / 2000 / 8000 / 2000 | 各块按字符截断（项目 / 规则 / 用户 / 画像） |
+| `inject.distillAbove` | `0` → `limits.user` 的两倍 | 用户记忆超过这个字符数时，规则里会要求按主题蒸馏 |
 | `ui.enabled` | `true` | 关掉后侧栏面板与相关路由不注册 |
 | `ui.globalPanel` / `ui.projectTab` / `ui.sessionAction` | `true` | 三个面板入口开关 |
 | `ui.allowWriteActions` | `true` | 面板写操作总开关 |

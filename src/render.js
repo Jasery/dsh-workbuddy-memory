@@ -44,10 +44,20 @@ export function renderSections({ cfg, probe, t }) {
     const lines = Array.isArray(rules) ? rules : []
     if (lines.length > 0) {
       const body = lines.map((line, index) => `${index + 1}. ${line}`).join('\n')
+      // The pressure hint is appended, not baked into the locale table: it is
+      // the only line whose text depends on a live measurement, and read-only
+      // sessions never write, so they never need it.
+      const hint = cfg.readOnly ? '' : distillHint({ cfg, probe, t })
+      // The hint is measured against the budget first. Truncating the whole
+      // block would cut the hint itself whenever the base text is long, and the
+      // hint exists precisely for the case where something needs cutting — so
+      // the base gives way instead, and the hint always survives intact.
+      const base = `### ${t('section.rules')}\n\n${body}`
+      const room = Math.max(0, cfg.inject.limits.rules - hint.length)
       sections.push({
         name: 'workbuddy-memory:rules',
         order: SECTION_ORDER.rules,
-        text: truncateChars(`### ${t('section.rules')}\n\n${body}`, cfg.inject.limits.rules),
+        text: `${truncateChars(base, room)}${hint}`,
       })
     }
   }
@@ -83,6 +93,44 @@ export function renderSections({ cfg, probe, t }) {
   }
 
   return sections
+}
+
+/**
+ * A one-line pressure hint, appended to the rules block when the user memory
+ * has outgrown its budget.
+ *
+ * Without it the file only ever grows: the injected block is truncated silently
+ * at `limits.user`, so the model keeps appending to a store whose tail nobody
+ * reads, and the truncation is invisible from inside the conversation. The hint
+ * names the actual numbers so the model can decide rather than guess.
+ *
+ * `distillAbove` is a threshold on the file's real size, not on the injected
+ * text: a file just over the limit is still worth reading in full, while one at
+ * twice the limit is already losing half of itself on every turn.
+ *
+ * @param {{ cfg: object, probe: object, t: Function }} input
+ * @returns {string} the hint with a leading newline, or '' when not over.
+ */
+export function distillHint({ cfg, probe, t }) {
+  if (!cfg.inject.user || !probe.user.memoryExists) return ''
+  const above = Number(cfg.inject.distillAbove) || 0
+  if (above <= 0) return ''
+
+  const chars = fileCharCount(probe.user.memoryPath)
+  if (chars <= above) return ''
+
+  return `\n\n${t('distillOverLimit', {
+    chars,
+    above,
+    limit: cfg.inject.limits.user,
+  })}`
+}
+
+/** Characters in a file, or 0 when it cannot be read. */
+function fileCharCount(path) {
+  if (!path) return 0
+  const file = readTextSafe(path, { maxBytes: 4 * 1024 * 1024 })
+  return file.ok ? file.text.length : 0
 }
 
 function renderFileBlock({ label, path, limit, sanitize, t }) {

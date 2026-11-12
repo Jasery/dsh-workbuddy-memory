@@ -52,7 +52,8 @@ Common keys (the plugin page lists all of them):
 |---|---|---|
 | `readOnly` | `false` | master switch; when on, every write is refused |
 | `workbuddyHome` | `''` | empty follows the environment |
-| `inject.limits.*` | 10000 / 4000 / 2000 | character limits per block |
+| `inject.limits.*` | 10000 / 2000 / 8000 / 2000 | character limits per block (project / rules / user / profile) |
+| `inject.distillAbove` | `0` → twice `limits.user` | user memory size that makes the rules ask for a by-topic distillation |
 | `ui.enabled` | `true` | when off, the panel and its routes are not registered |
 | `ui.globalPanel` / `ui.projectTab` / `ui.sessionAction` | `true` | the three panel entries |
 | `ui.allowWriteActions` | `true` | master switch for panel writes |
