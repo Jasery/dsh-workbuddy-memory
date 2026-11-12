@@ -3,3 +3,6 @@ node_modules/
 lib/
 *.log
 *.tgz
+
+.commit-msg*.txt
+.commit-i18n*.txt
