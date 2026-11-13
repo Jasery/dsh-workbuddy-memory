@@ -56,6 +56,14 @@
   .pr.p1{color:#0d1219;background:var(--purple)}
   .pr.p2{color:#0d1219;background:var(--b)}
   .pr.no{color:var(--warn);border:1px solid #6b3030;background:#241a1d}
+  .ctx{border-left:3px solid var(--tx3);background:#131b26;border:1px solid var(--line);
+    border-left-width:4px;border-radius:8px;padding:12px 16px;margin:12px 0}
+  .ctx .h{font-weight:700;color:var(--tx2);font-size:13px;margin-bottom:4px}
+  .ctx p,.prob p{margin:4px 0;font-size:13.5px}
+  .prob{border-left:3px solid var(--warn);background:#241a1d;border:1px solid #6b3030;
+    border-left-width:4px;border-radius:8px;padding:12px 16px;margin:12px 0}
+  .prob .h{font-weight:700;color:var(--warn);font-size:13px;margin-bottom:4px}
+  .ctx code,.prob code{background:#1d2734}
   .why{border-left:3px solid var(--info);background:#14202b;border:1px solid #2c4a66;
     border-left-width:4px;border-radius:8px;padding:12px 16px;margin:12px 0}
   .why .h{font-weight:700;color:var(--info);font-size:13px;margin-bottom:4px}
@@ -109,6 +117,7 @@
     <span class="pill a">基线版本 v0.1.4 · HEAD 48f0569</span>
     <span class="pill b">对比基线 dsh-memory-palace v1.8.5 · 081582e</span>
     <span class="pill">交付格式：单文件 HTML</span>
+    <span class="pill a">v1.1 · 每项补充「背景」与「现有问题」</span>
   </div>
   <nav class="toc">
     <a href="#basis">1 依据与范围</a><a href="#principle">2 四条硬原则</a><a href="#summary">3 优化项总表</a>
@@ -163,7 +172,7 @@
 
 <section id="summary">
   <h2>3. 优化项总表</h2>
-  <p class="sub">「原因」列是每项的核心，完整因果链在第 5–7 节展开。成本为相对量（1 最低 / 5 最高），用于第 4 节气泡图。</p>
+  <p class="sub">「原因」列是每项的一句话摘要。v1.1 起，第 5–7 节的每一项都按<strong>背景 → 现有问题 → 原因与取舍 → 动作 / 验收 / 回退</strong>展开，背景与问题均带代码行号、提交记录或实现笔记出处。成本为相对量（1 最低 / 5 最高），用于第 4 节气泡图。</p>
   <table>
     <thead><tr><th>编号</th><th>优先级</th><th>优化项</th><th>原因（一句话）</th><th>主要落点</th><th>成本</th><th>收益</th></tr></thead>
     <tbody>
@@ -177,7 +186,7 @@
       <tr><td>O-08</td><td><span class="pr p2">P2</span></td><td>CI 校验（不自动发布）</td><td>5 个 release 全手工、无版本一致性校验；但发布必须人工确认（P-4）</td><td><code>.github/workflows/ci.yml</code></td><td class="num">2</td><td class="num">4</td></tr>
       <tr><td>O-09</td><td><span class="pr p2">P2</span></td><td>双门禁重整命令</td><td>目前只有「规则提示蒸馏」，没有可机器校验的触发条件与冷却期</td><td><code>src/tools/write.js</code> / <code>store.js</code></td><td class="num">4</td><td class="num">3</td></tr>
       <tr><td>O-10</td><td><span class="pr p2">P2</span></td><td>多 buddy 目录<strong>只读</strong>兼容</td><td>对方支持 <code>.codebuddy</code>，本项目 <code>dataFolderName</code> 只能指一个；但双写会破坏 P-1</td><td><code>src/paths.js</code> / <code>env.js</code></td><td class="num">3</td><td class="num">2</td></tr>
-      <tr><td>O-11</td><td><span class="pr p2">P2</span></td><td>文档：定位说明 + 契约风险清单</td><td>用户会把两个插件当成竞品靠猜；宿主预览期 API 风险目前分散在注释里</td><td><code>README*.md</code> / <code>docs/</code></td><td class="num">1</td><td class="num">3</td></tr>
+      <tr><td>O-11</td><td><span class="pr p2">P2</span></td><td>文档：定位说明 + 契约风险清单</td><td>用户会把两个插件当成竞品靠猜；宿主契约风险分散在实现笔记与源码注释里</td><td><code>README*.md</code> / <code>docs/</code></td><td class="num">1</td><td class="num">3</td></tr>
     </tbody>
   </table>
 </section>
@@ -209,11 +218,20 @@
 
   <div class="item">
     <div class="hd"><span class="id">O-01</span><span class="pr p0">P0</span><span class="t">截断改为「结构行保留 + 尾部优先」</span></div>
+    <div class="ctx">
+      <div class="h">背景</div>
+      <p>注入由 4 个 <code>systemPrompt.section</code> provider 组成（<code>src/inject.js:78-96</code>），每个块走 <code>renderFileBlock()</code>：读文件 → <code>truncateChars(body, limit)</code> → 拼标题（<code>src/render.js:139-148</code>）。<code>truncateChars</code> 按 UTF-16 码元<strong>从头保留</strong>（<code>src/fsx.js:100-113</code>）。四个块的默认上限是 10000 / 2000 / 8000 / 2000 字符（<code>src/config.js:52-55</code>），其中用户级上限与蒸馏阈值是 <code>1e5a0c1</code> 才做成可配的。</p>
+      <p>另一侧，写入走 <code>appendToSection()</code>：新条目插到目标章节末尾（<code>src/markdown.js:264-294</code>），章节不存在时整个新章节追加到文件末尾（<code>:284</code>）；<code>store.append</code> 再套上锁、CAS、备份、原子写。缓存层按 <code>mtime + size</code> 复用文件文本，让 <code>on-change</code> 装配不重复读盘（<code>src/cache.js:1-55</code>）。截断与写入是两组独立代码，从未对齐过方向。</p>
+    </div>
+    <div class="prob">
+      <div class="h">现有问题</div>
+      <p><strong>失效场景</strong>：任一 <code>MEMORY.md</code> 超过对应上限（用户级默认 8000 字符，持续记一两个月就会到）→ 模型调 <code>memory_append</code> 写入新结论，落在文件尾部 → 下一轮注入只保留文件开头 → 模型读不到刚刚写进去的内容，可能重复写或给出与文件不符的回答。</p>
+      <p><strong>同源第二处</strong>：<code>memory_read</code> 读大文件或大章节时也用 <code>slice(0, limit)</code> / <code>truncateChars</code>（默认 20000 字符，<code>src/tools/read.js:88/101</code>）。该文件注释记载曾修过「section 分支无视 limit 把整节灌进上下文」，但截断方向仍是头截 —— 工具读取路径同样丢尾部。</p>
+      <p><strong>触发条件与影响面</strong>：文件超限即触发，注入与工具读取两条路径同时失真；<code>render.js:146</code> 只留一行「已截断到 N 字符」提示，不说明丢的是哪一段。项目 11-11 才创建、记忆量还小，所以尚未暴露；按规则持续写就会撞上。对比项目 <code>common/text.mjs:67-69</code> 把同类修复写得很直白：「修 LIFO/FIFO 错配，写了等于没写」。</p>
+    </div>
     <div class="why">
-      <div class="h">为什么做</div>
-      <p><strong>现象</strong>：<code>renderFileBlock()</code> 用 <code>truncateChars(body, limit)</code> 从头保留字符（<code>src/render.js:139-148</code>、<code>src/fsx.js:100-113</code>），而 <code>memory_append</code> 把新条目追加到章节末尾（<code>store.js:547-552</code>）。</p>
-      <p><strong>后果</strong>：文件一旦超过 <code>inject.limits.project/user</code>，最新写进去的结论恰好落在被截掉的尾部 —— 模型刚写完，下一轮就读不到自己写的内容。对比项目 <code>common/text.mjs:67-69</code> 把这个 bug 写得很清楚：「修 LIFO/FIFO 错配，旧实现只留头部，写了等于没写」。</p>
-      <p><strong>为什么这样改</strong>：不是照搬对方功能，而是让截断方向与写入方向一致；同时保留结构行（<code>#</code>/<code>##</code>/HTML 注释），因为章节大纲丢失会让模型连「有哪些主题」都看不到。对方的实现还把窗口外的中部结构行列在截断标记后且不计预算，这个细节一并吸收。</p>
+      <div class="h">原因与取舍</div>
+      <p>失效场景已在「现有问题」展开，这里只讲取舍：不是照搬对方功能，而是让<strong>截断方向与写入方向一致</strong>；同时保留结构行（<code>#</code> / <code>##</code> / HTML 注释），因为章节大纲丢失会让模型连「有哪些主题」都看不到。对方把窗口外的中部结构行列在截断标记后且不计预算，这个细节一并吸收。规则块的 hint 必须完整存活，因此不复用同一个函数，只改 base 的截断。</p>
     </div>
     <div class="kv">
       <div class="k">动作</div><div>新增 <code>clipForInjection(text, limit)</code>（建议放 <code>src/render.js</code> 内部或 <code>src/fsx.js</code>）：按行处理 → 头部连续结构行无条件保留 → 从尾部向前累积内容行到预算用尽 → 中部结构行按原序列在截断标记后 → 保持 UTF-16 代理对安全（沿用现有 <code>truncateChars</code> 的码元处理）。</div>
@@ -225,11 +243,21 @@
 
   <div class="item">
     <div class="hd"><span class="id">O-02</span><span class="pr p0">P0</span><span class="t">工具名冲突：可选前缀 + 文档声明</span></div>
+    <div class="ctx">
+      <div class="h">背景</div>
+      <p>9 个工具在 <code>src/tools/index.js:120-133</code> 统一注册，名字硬编码在各工具文件里（如 <code>tools/read.js:19</code>）。工具名同时被写进注入给模型的规则文案（<code>locale/zh.json</code> 的「写记忆只用 memory_append / memory_edit / memory_prune」）、README 中英两张工具表、以及面板的提示语。宿主侧 <code>defineTool</code> 的 <code>output.schema</code> 必须显式声明 <code>additionalProperties</code>（实现笔记 §6），注册表按 name 索引。</p>
+      <p>最近一次提交 <code>48f0569</code> 是「条目跨度模型与记忆工具契约修复」，一次动了 README、locale、config、env、markdown、render、read、search、write、store、client 等十余个文件 —— 说明工具契约一改就是全仓联动。项目此前完全没有「与其他记忆插件共存」的概念，README 里最接近的一条提醒还是「不要手写 insert，会和配置卡写出两条同 id 记录」（实现笔记 §11.4）。</p>
+    </div>
+    <div class="prob">
+      <div class="h">现有问题</div>
+      <p><strong>直接冲突</strong>：<code>dsh-memory-palace</code> 也注册 <code>memory_read</code>（<code>src/tools.mjs:221</code>），但参数完全不同 —— 本项目是 <code>target / date / section / sectionsOnly / limit</code>（<code>tools/read.js:22-28</code>），对方是 <code>scope</code>（<code>memory | project | today | yesterday | daily | all</code>）。</p>
+      <p><strong>触发条件与三种后果</strong>：同一 DSH profile 同时装两个插件时 —— ① 后注册者覆盖前者；② 宿主重名校验报错，导致其中一个插件的工具整体不可用；③ 不报错，但模型按错的 schema 传参，调用返回 <code>unknown_target</code> 或空结果。</p>
+      <p><strong>不止工具层</strong>：两边都会写 <code>.workbuddy/memory/MEMORY.md</code>（本项目 CAS 会报 <code>conflict</code>、对方无全局锁），同一文件还会被注入两遍（本项目头截 system prompt + 对方尾截历史投影），用户级记忆分裂成两份。0.1.4 的文档对此只字未提，用户碰到时只能当作「插件坏了」。</p>
+      <p><strong>为什么不能直接改名</strong>：改名会同时破坏现有调用方、i18n 规则文案、README、面板提示和既有测试断言，属于高破坏变更。冲突是「同装时」才发生，所以默认保持原名、只给需要共存的人一个可选前缀。</p>
+    </div>
     <div class="why">
-      <div class="h">为什么做</div>
-      <p><strong>现象</strong>：双方都注册 <code>memory_read</code>（本项目 <code>src/tools/read.js:19</code>，对方 <code>src/tools.mjs:221</code>），但本项目按 <code>target</code> 返回 revision + 小节列表，对方按 <code>scope</code> 聚合读长期记忆与近三天日志。</p>
-      <p><strong>后果</strong>：同一 profile 同装时，要么后注册者覆盖，要么注册报错；即使不报错，模型也会按错误语义传参。此外两边都会写 <code>.workbuddy/memory/MEMORY.md</code>，本项目的 CAS 会检出冲突，对方无全局锁。</p>
-      <p><strong>为什么用「可选前缀 + 文档」而不是直接改名</strong>：直接改名会破坏现有调用方、注入规则文案与用户习惯；默认保持原名、只提供 <code>compat.toolPrefix</code>（如 <code>wbm_</code>）给需要共存的用户，同时在 README 明确「不建议与 dsh-memory-palace 同 profile 同装」。用最小破坏换掉最大风险。</p>
+      <div class="h">原因与取舍</div>
+      <p>取舍集中在「破坏面」：冲突只在同装时发生，而直接改名会破坏现有调用方、注入规则文案、README、面板提示与既有测试断言。因此默认保持原名，只提供 <code>compat.toolPrefix</code>（如 <code>wbm_</code>）给需要共存的用户，并在 README 明确「不建议同 profile 同装」—— 用最小破坏换掉最大风险。</p>
     </div>
     <div class="kv">
       <div class="k">动作</div><div>在 <code>registerTools()</code>（<code>src/tools/index.js:120-133</code>）注册前对 <code>tool.name</code> 应用可选前缀；<code>locale/{zh,en}.json</code> 的规则文案按前缀动态生成（避免文案里写死工具名）；新增配置键 <code>compat.toolPrefix</code>（默认 <code>''</code>）；README 中英各增一节「与其他记忆插件共存」。</div>
@@ -240,11 +268,22 @@
 
   <div class="item">
     <div class="hd"><span class="id">O-03</span><span class="pr p0">P0</span><span class="t">三条软规则升级为硬门禁</span></div>
+    <div class="ctx">
+      <div class="h">背景</div>
+      <p>所有写入共用一条链：跨进程锁 → revision 比对 → 备份 → 原子写 → 操作台账（<code>src/write/store.js:585-653</code>）；<code>guard.js:19-44</code> 拦住 <code>write / edit / apply_patch</code> 绕过去；面板写路由接宿主信任栅栏并做同源检查（<code>src/host/routes.js:556-560</code>）。<code>bfbe7e7</code> 已做过一次开源前安全审计（信任栅栏 + 截断文件禁止整节写回）。</p>
+      <p>面板侧其实有确认机制：实现笔记 §14.7 记载「设置卡打开全文编辑先弹确认、面板第一次进源码模式弹一次」，并明确写下「两处都只是 UI 确认，真正的写入仍经过锁、CAS、备份和账本」。§12.4 还记录了一次方向修正：早期 <code>consolidate</code> 把 30 天前日期条目<strong>原样</strong>搬进 <code>MEMORY.md</code>，被判定会撑爆 10000 字符限额，改成 <code>prune</code>（移动而非删除、<code>dryRun</code> 默认 true）+ 交给模型按主题蒸馏。</p>
+      <p>版本约束方面：<code>expectedRevision</code> 在 append / edit / replace_section 都是<strong>可选</strong>（<code>tools/write.js:23/59/101</code>），只有 <code>memory_restore</code> 强制（<code>:140</code>）。</p>
+    </div>
+    <div class="prob">
+      <div class="h">现有问题</div>
+      <p><strong>预览与执行没有绑定</strong>：<code>memory_prune</code> 有 <code>dryRun</code> 默认 true 的计划输出，但 <code>dryRun:false</code> 可以一步执行，模型或面板完全可以在没看过 plan 的情况下归档一整批日期文件。「先蒸馏再归档」只写在工具 description 与 <code>locale/zh.json</code> 里。</p>
+      <p><strong>不可逆动作无工具层门禁</strong>：<code>remove</code>（删条目）、<code>removeSection</code>（整节删除）、<code>replaceDocument</code>（整文件重写）都没有确认步骤；<code>replaceDocument</code> 仅校验 <code>ui.allowFullTextEdit</code> 与 <code>validateDocument()</code>（<code>store.js:166-185</code>），连 <code>expectedRevision</code> 都不强制。</p>
+      <p><strong>软约束举例</strong>：规则里的「conflict 时不要重试覆盖」「不要用 write/edit 直接改记忆文件」「不要把流水原样搬进 MEMORY.md」是自然语言；模型不遵守时，代码里没有第二道闸。</p>
+      <p><strong>触发条件与影响面</strong>：一次误调用即可删掉条目 / 整节 / 整文件，或移走一批日期文件。备份链确实能恢复，但 <code>memory_restore</code> 要用户自己知道去调；面板的冲突弹窗只处理 revision 不匹配，不处理「删错了」。现状不是「没做安全」，而是「写链与面板确认都做了，工具层的不可逆动作还缺一道闸」。</p>
+    </div>
     <div class="why">
-      <div class="h">为什么做</div>
-      <p><strong>现象</strong>：<code>locale/zh.json</code> 里「写记忆只用 memory_append/edit/prune」「conflict 时不要重试覆盖」「先蒸馏再归档」全是自然语言约束；真要违反，代码不会拦。</p>
-      <p><strong>后果</strong>：<code>remove</code>、<code>replaceDocument</code>、<code>prune</code>（非 dryRun）都是不可逆或高影响动作。其中 <code>replaceDocument</code> 绕过条目模型，<code>prune</code> 会移动整批日期文件。模型一次不遵守，备份链虽能恢复，但用户已经看到「记忆没了」。</p>
-      <p><strong>为什么学对方的门禁而不是照抄弹窗</strong>：对方用 <code>tools/pre-execute</code> 把 <code>confirm:true</code> 路由到宿主原生 <code>kind:"ask"</code> 弹窗，模型误传也要真人点允许（<code>tools.mjs:456-481</code>），重整还在门禁前后双重复核（<code>hybrid/tools.mjs:36-55/330</code>）。这个「不信任模型」的思路值得学；但宿主 API 是否在本项目目标版本 <code>dsh &gt;= 0.2.0</code> 可用需先验证，因此先在工具层做两阶段，不硬依赖宿主弹窗。</p>
+      <div class="h">原因与取舍</div>
+      <p>取舍在于「学到哪一层」：对方用 <code>tools/pre-execute</code> 把 <code>confirm:true</code> 路由到宿主原生 <code>kind:"ask"</code> 弹窗，模型误传也要真人点允许（<code>tools.mjs:456-481</code>），重整还在门禁前后双重复核（<code>hybrid/tools.mjs:36-55/330</code>）—— 这个「不信任模型」的思路值得学。但宿主 API 是否在本项目目标版本 <code>dsh &gt;= 0.2.0</code> 可用需先验证，因此先在工具层做两阶段，不硬依赖宿主弹窗；也只覆盖三类高影响动作，避免每次写记忆多一次往返。</p>
     </div>
     <div class="kv">
       <div class="k">动作 A</div><div>删除类（<code>store.js:127-129</code> 的 remove、<code>replaceDocument</code>:166-185、<code>prune</code>:243-302 的非 dryRun 路径）增加两阶段：首次调用返回命中位置/影响条目数与一次性 <code>confirmToken</code>，第二次带 token 才执行；token 与 <code>operationId</code> 幂等台账绑定，过期或路径变化即作废。</div>
@@ -261,8 +300,20 @@
 
   <div class="item">
     <div class="hd"><span class="id">O-04</span><span class="pr p1">P1</span><span class="t">配置键审计与收敛</span></div>
+    <div class="ctx">
+      <div class="h">背景</div>
+      <p><code>src/config.js</code> 共 239 行，六组约 30 个键（inject / write / guard / ui / search / locale）。宿主对配置有硬约束：<code>volatile</code> 只能标在「没有 volatile 祖先」的叶子上，嵌套标注会直接让插件加载失败（实现笔记 §3）；配置卡是否渲染取决于 Config 里至少有一个 volatile 字段（§5）；配置值最终写进 profile 的 <code>cordis.patch.yml</code>（§9）。<code>bacd30c</code> 还专门补过一次「注入上限与蒸馏阈值」的配置卡控件 —— 加一个键要同步 schema、客户端控件与 <code>normalizeConfig</code> 三处。</p>
+      <p>项目自己已经收敛过一次：<code>config.js:73-77</code> 的注释记载 <code>conflictPolicy</code> 曾提供 <code>fail | merge | overwrite</code> 但没有任何代码读它，设了 <code>overwrite</code> 仍返回 <code>fail</code>，最后删掉，理由是「一个说谎的开关比没有开关更糟」。实现笔记 §11.4 还记过一次配置层事故：手写 insert 与配置卡写出两条同 id 记录，表现为「勾了没反应」。</p>
+    </div>
+    <div class="prob">
+      <div class="h">现有问题</div>
+      <p><strong>没有「键 → 读取点」清单</strong>：新增键只靠人同步三处，漏一处就产生「界面能勾、代码不读」或「代码读了、界面没有」；现有 30 个键也没有逐一验证过是否都有读取点。</p>
+      <p><strong>组合语义无人校验</strong>：<code>readOnly</code> 与 <code>ui.allowWriteActions</code>、<code>inject.enabled</code> 与四个子开关、<code>inject.limits.user</code> 与 <code>distillAbove</code>（后者默认由前者 ×2 推导，改一个必须同步另一个）、<code>ui.allowFullTextEdit</code> 与 <code>ui.allowWriteActions</code> —— 目前只在注释里解释，没有机器校验或文档矩阵。</p>
+      <p><strong>顺带核实的一处同类字段失真</strong>：<code>src/env.js:110</code> 把 <code>USER.md</code> 的<strong>文件路径</strong>传给 <code>uidFromPersonalDir()</code>，而该函数按 <code>user-&lt;uid&gt;-personal</code> 目录名解析（<code>paths.js:144-148</code>），结果 <code>probe.profile.uid</code> 恒为空串；<code>:122</code> 用了 <code>dirname()</code> 才正确。当前 <code>memory_status</code> 不输出该字段，外部不可见、影响很低，但它正是「字段存在却无效」这一类问题的样本，说明审计有必要。</p>
+      <p><strong>影响面</strong>：不是故障，是维护成本随键数线性增长；对比项目 v1.8.0 一次性删掉三模式与写入总开关，正是因为模式互串已经修不完。</p>
+    </div>
     <div class="why">
-      <div class="h">为什么做</div>
+      <div class="h">原因与取舍</div>
       <p><code>src/config.js</code> 现有约 30 个可配键（inject / write / guard / ui / search / locale 六组）。项目自己已经踩过一次：<code>config.js:73-77</code> 注释记载 <code>conflictPolicy</code> 提供 <code>fail|merge|overwrite</code> 但没有任何代码读它，设了 <code>overwrite</code> 仍返回 <code>fail</code>，最后删掉 —— 注释原话「一个说谎的开关比没有开关更糟」。对比项目 v1.8.0 一次性删掉三模式与写入总开关，正是同类判断。配置越多，组合语义越容易产生「设了不生效」。</p>
     </div>
     <div class="kv">
@@ -274,9 +325,21 @@
 
   <div class="item">
     <div class="hd"><span class="id">O-05</span><span class="pr p1">P1</span><span class="t">会话级状态分桶 + 静默预设工具掩码</span></div>
+    <div class="ctx">
+      <div class="h">背景</div>
+      <p><code>src/index.js:52-64</code> 的 <code>recent</code> 是插件级单例（一个 <code>cwd</code> + 12 条上限的 <code>Map&lt;cwd, ts&gt;</code>），来源是注入 provider 顺手记下的会话 cwd。实现笔记 §13.1 明写「面板没有会话，只能沿用最近装配过的 cwd，没说过话就没有项目 —— 这是设计如此，但不是好的交互」；§13.2 用 <code>sha1(cwd).slice(0,8)</code> 白名单把面板限制在「插件见过的工作区」，避免变成文件浏览器。</p>
+      <p>缓存层其实已经按工作区分键：<code>createFrozenStore()</code> 的注释写「Keyed by workspace so two sessions in different projects do not share text」（<code>src/cache.js:84-105</code>），<code>inject.js:70-72</code> 用 cwd 作 key。路径解析本身按会话 cwd 逐次传参（<code>probeEnvironment({cwd})</code>），写入不会写错项目；<code>workspaceRegistry</code> 用 <code>ctx.get()</code> 懒读、缺失降级（§14.1）。宿主存在「模式 / agent 预设」概念（对比项目的 <code>silentPresets</code> 默认 <code>minimal</code> 就是针对官方极简预设），但本项目没有任何会话级开关。</p>
+    </div>
+    <div class="prob">
+      <div class="h">现有问题</div>
+      <p><strong>粒度问题，不是数据串台</strong>：<code>first-turn</code> 模式下，<strong>同一工作区</strong>的两个会话共享同一个冻结快照；其中一个会话写入后 <code>sections.invalidate()</code> 走的是 <code>frozen.clear()</code>（<code>inject.js:99-104</code>）全清所有键，另一个会话下一轮要重新探测。行为正确，但缓存与失效都做不到按会话管理。</p>
+      <p><strong>面板视角错位</strong>：<code>recent</code> 与项目目录反映的是「宿主见过哪些工作区」，不是「当前标签页属于哪个会话」；右栏页签虽然用 <code>sessionId</code> 解析项目（§14.3），全局总览仍是插件级状态。</p>
+      <p><strong>裸测环境做不到零足迹</strong>：没有计划模式禁写，也没有 <code>silentPresets</code>。在官方 minimal 这类独占 system prompt 的预设下，本项目仍注入 4 段提示词并把 9 个工具 schema 暴露给模型；对比项目用工具掩码把 schema 从模型可见集移除（<code>index.mjs:318-357</code>）。</p>
+      <p><strong>触发条件与影响面</strong>：多会话并行、同一项目开两个会话、或用 minimal 预设跑对照测试时出现。影响主要是 token 与交互体验，不是数据损坏，所以列 P1 而非 P0。</p>
+    </div>
     <div class="why">
-      <div class="h">为什么做</div>
-      <p>DSH 是长驻进程，多个会话可能同时工作在不同 cwd。本项目目前靠每次调用时的 <code>probeEnvironment({cwd})</code> 解析路径，本身不易串台，但 <code>recent</code>（<code>index.js:52-64</code>）、冻结快照键（<code>inject.js:70-75</code>）、面板状态都是插件级单例。对比项目为此用四张按 sessionId 分桶的 Map，并专门写了 <code>test-planmode-crosstalk</code> / <code>test-settle-cwd</code> / <code>test-session-cwd</code> 三个回归测试；它还让官方 <code>minimal</code> 预设下连 7 个记忆工具的 schema 都从模型可见集移除，做到「零 token 足迹」的裸测环境（<code>index.mjs:318-357</code>）。这类问题只有在长期多会话运行后才暴露，值得提前防。</p>
+      <div class="h">原因与取舍</div>
+      <p>DSH 是长驻进程，多个会话可能同时工作在不同 cwd。本项目目前靠每次调用时的 <code>probeEnvironment({cwd})</code> 解析路径，本身不易串台，但 <code>recent</code>（<code>index.js:52-64</code>）与面板状态是插件级单例，冻结快照虽按 cwd 分键、失效却是 <code>clear()</code> 全清。对比项目为此用四张按 sessionId 分桶的 Map，并专门写了 <code>test-planmode-crosstalk</code> / <code>test-settle-cwd</code> / <code>test-session-cwd</code> 三个回归测试；它还让官方 <code>minimal</code> 预设下连 7 个记忆工具的 schema 都从模型可见集移除，做到「零 token 足迹」的裸测环境（<code>index.mjs:318-357</code>）。这类问题只有在长期多会话运行后才暴露，值得提前防。</p>
     </div>
     <div class="kv">
       <div class="k">动作</div><div>新增 <code>src/session.js</code>：按 sessionId 保存 cwd / 最近项目 / 冻结快照键；<code>registerSections</code> 与 <code>createProjectCatalog</code> 读取分桶状态。新增 <code>session.silentPresets</code>（默认空，不默认改行为），命中时用宿主工具掩码把写工具从模型可见集移除；判据缺失一律 fail-open（不静默），与对方一致。</div>
@@ -287,12 +350,25 @@
 
   <div class="item">
     <div class="hd"><span class="id">O-06</span><span class="pr p1">P1</span><span class="t">注入成本核算 + 恒定前缀拆分</span></div>
+    <div class="ctx">
+      <div class="h">背景</div>
+      <p>项目已经为「前缀稳定」做过两级缓存：同一 <code>AssembleContext</code> 只探测一次（WeakMap），文件文本按 <code>mtime + size</code> 复用，注释写明目的是「keep the injected prefix stable without re-reading the disk」（<code>src/cache.js:1-55</code>）。<code>inject.refresh</code> 默认 <code>on-change</code>，另有 <code>first-turn</code> 冻结模式（<code>src/inject.js:67-76</code>）。</p>
+      <p>度量也并非从零开始：<code>memory_status</code> 已报告用户级文件字符数、<code>injected: Math.min(chars, limits.user)</code>、<code>overLimit</code>、<code>distillDue</code> 以及全量 <code>config.inject</code>（<code>src/tools/status.js:51-104</code>），这些是 <code>1e5a0c1</code> 引入的。<code>render.js:115-130</code> 的 <code>distillHint</code> 按文件大小生成两级提示并追加到规则块末尾，规则块还有「先给 hint 留位置、再截断 base」的算法（<code>:50-60</code>）。</p>
+      <p>实现笔记 §2 记录了一条有用的宿主行为：返回 <code>''</code> 的 section 仍留在 <code>assembly.sections</code> 里，只是渲染时被过滤 —— 这意味着「动态段为空」不需要注销 section。</p>
+    </div>
+    <div class="prob">
+      <div class="h">现有问题</div>
+      <p><strong>度量只覆盖一个文件，且是推断值</strong>：<code>status.injected</code> 是 <code>Math.min(userChars, limits.user)</code> 算出来的配置推断，不是本次装配实际拼出的文本长度；project / rules / profile 三块各注入多少字符、是否被截断、丢了多少，全都查不到。也无法回答「这一轮比上一轮多花了多少 token」。</p>
+      <p><strong>前缀里有一段每轮可能变的内容</strong>：规则块尾部挂着随用户记忆大小变化的蒸馏提示，<code>on-change</code> 下每轮重新装配。<code>cache.js</code> 优化的是「不重复读盘」，并没有核算「system prompt 前缀能否命中缓存」；<code>first-turn</code> 与 <code>on-change</code> 的实际代价也没有对照数据。</p>
+      <p><strong>触发条件与影响面</strong>：用户记忆接近或超过 8000 字符、或规则文案改动时最明显。对比项目把最坏注入份数写进 <code>CONFIG.md:64</code>（8 条消息 ≈ 5 万字符），本项目连查询入口都没有，只能靠读代码估算。</p>
+      <p><strong>明确不是问题的一点</strong>：本项目没有采用历史投影，因此不存在对方那种「注入份数随目录数膨胀」的风险。这里要补的是可观测性，不是换通道。</p>
+    </div>
     <div class="why">
-      <div class="h">为什么做</div>
-      <p>本项目四个注入块里，<code>rules</code> 块含随用户记忆文件大小变化的 <code>distillHint</code>（<code>render.js:50/115-130</code>），<code>inject.refresh</code> 默认 <code>on-change</code> 每轮重新装配。也就是说 system prompt 前缀里有一段每轮可能变化的内容，而这一点目前没有任何度量。对比项目 <code>projection.mjs:1-32</code> 通篇解释「把易变内容移出 system prompt，前缀缓存才永久有效」，<code>CONFIG.md:64</code> 甚至主动算出最坏注入份数 —— 哪怕它的实现有预览期 API 风险，这种成本意识本身值得学。本项目不需要改成历史投影，只需要把账算清、把恒定与动态拆开。</p>
+      <div class="h">原因与取舍</div>
+      <p>本项目四个注入块里，<code>rules</code> 块含随用户记忆文件大小变化的 <code>distillHint</code>（<code>render.js:50/115-130</code>），<code>inject.refresh</code> 默认 <code>on-change</code> 每轮重新装配。也就是说 system prompt 前缀里有一段每轮可能变化的内容，而现有度量只覆盖用户级文件大小（<code>status.js:86</code> 的 <code>Math.min(chars, limit)</code> 是推断值），不覆盖实际装配文本。对比项目 <code>projection.mjs:1-32</code> 通篇解释「把易变内容移出 system prompt，前缀缓存才永久有效」，<code>CONFIG.md:64</code> 甚至主动算出最坏注入份数 —— 哪怕它的实现有预览期 API 风险，这种成本意识本身值得学。本项目不需要改成历史投影，只需要把账算清、把恒定与动态拆开。</p>
     </div>
     <div class="kv">
-      <div class="k">动作 A</div><div><code>memory_status</code>（<code>src/tools/status.js</code>）增加 <code>injectedChars</code>：按块返回本次装配的字符数、是否被截断、截断丢了多少字符。让「预算是否够」从猜测变成可查询。</div>
+      <div class="k">动作 A</div><div>在 <code>memory_status</code> 已有 <code>user.injected</code> 的基础上增加 <code>injectedChars</code>：按四个块返回本次装配的实际字符数、是否被截断、截断丢了多少字符；保留原有推断字段以兼容调用方。</div>
       <div class="k">动作 B</div><div>把 <code>rules</code> 拆成「恒定规则段」与「动态压力提示段」两个 section（order 相邻），动态段单独返回空串即可被宿主丢弃；这样文件没超限时 system prompt 前缀完全稳定。</div>
       <div class="k">动作 C</div><div>文档补一份「每轮注入多少字符、哪些段每步在变、<code>first-turn</code> 与 <code>on-change</code> 的缓存代价」对照表，作为后续是否引入投影通道的决策依据。</div>
       <div class="k">验收</div><div><code>memory_status</code> 返回值通过 <code>lossless()</code> 校验；规则段在文件未超限时逐字相同；新增测试断言动态段为空时该 section 返回 <code>''</code>。</div>
@@ -301,8 +377,19 @@
 
   <div class="item">
     <div class="hd"><span class="id">O-07</span><span class="pr p1">P1</span><span class="t">跨会话 / 并发写入回归测试</span></div>
+    <div class="ctx">
+      <div class="h">背景</div>
+      <p>现有 14 个测试文件、约 4441 行，用 <code>node --test</code> + <code>--experimental-test-coverage</code>，按模块切分：markdown / store / guard / routes / inject / render / tools / panel / i18n / paths / client / e2e / dev-install / index。框架规范程度高于对比项目的自研 <code>assert</code> 脚本。</p>
+      <p>项目其实已经吃过「共享状态污染」的亏：实现笔记 §12.5 记载 <code>tests/helpers/react.mjs</code> 的 hook 槽是模块级的，跨用例会带上一个用例的选中态，所以每个用例前必须 <code>runtime.reset()</code>。写链的文件头也如实划了边界（<code>store.js:8-14</code>）：「DSH 对不遵守锁的外部编辑器只能检出已知冲突，毫秒级并写仍可能被覆盖，靠备份可恢复」。</p>
+    </div>
+    <div class="prob">
+      <div class="h">现有问题</div>
+      <p><strong>缺「事故型」回归</strong>：没有以真实故障命名的用例 —— 两个会话不同 cwd 交替装配/写入、两个 writer 并发写同一目标、同一幂等键重试、确认 token 重放，这四类都没有自动化覆盖。现有测试主要断言「函数在给定输入下返回什么」。</p>
+      <p><strong>已声明的边界没被验证</strong>：<code>store.js:8-14</code> 承认的「毫秒级并写可能覆盖」目前只是注释，没有测试钉住「一个成功、一个 conflict / lock_timeout、备份存在且可恢复」这条不变量。</p>
+      <p><strong>触发条件与影响面</strong>：多会话、并发写、客户端重试时出现。写链是整个产品的信任基础，而 O-01（改截断）、O-03（加确认）、O-05（加会话状态）都要动 <code>store</code> / <code>inject</code> / <code>tools</code>；没有回归网，很容易把锁或 CAS 改坏而不自知。对比项目虽然测试框架更弱，却专门有 <code>test-planmode-crosstalk</code> / <code>test-settle-cwd</code> / <code>test-session-cwd</code> 三个串台回归。</p>
+    </div>
     <div class="why">
-      <div class="h">为什么做</div>
+      <div class="h">原因与取舍</div>
       <p>现有 14 个测试文件、4441 行，框架比对方规范（<code>node:test</code> + coverage），但覆盖的是「函数返回对不对」；缺一类「上次出过的 bug 会不会回来」的回归。对比项目虽然只有自研 assert，却专门有 <code>test-planmode-crosstalk.mjs</code>、<code>test-settle-cwd.mjs</code>、<code>test-session-cwd.mjs</code> 三个按真实事故命名的测试。本项目的写链（跨进程锁 + CAS + 备份）是整个产品的信任基础，尤其需要这类测试守住。</p>
     </div>
     <div class="kv">
@@ -317,8 +404,19 @@
 
   <div class="item">
     <div class="hd"><span class="id">O-08</span><span class="pr p2">P2</span><span class="t">CI 校验（明确不自动发布）</span></div>
+    <div class="ctx">
+      <div class="h">背景</div>
+      <p><code>package.json</code> 只有 <code>test</code> 与 <code>test:coverage</code> 两个 script，没有构建步骤（<code>files</code> 直接发布 <code>src/</code>）；仓库根没有 <code>.github/</code>。目前 5 个 tag / 5 个 GitHub release / 6 个 npm 版本全部手工产出，README 给的安装路径是 <code>dsh plugin --profile web add dsh-workbuddy-memory</code> 与开发用的 <code>scripts/dev-install.mjs</code>。</p>
+      <p>项目有一条明确的流程约定：<code>npm publish</code> / GitHub Release / 打 tag 之前必须先人工确认，「改完了、测过了」不构成自动发版的许可。收录方面，<code>awesome-dsh-plugin</code> PR #14592 还在等仓库年龄门槛由 <code>regate.yml</code> 自动重跑。</p>
+    </div>
+    <div class="prob">
+      <div class="h">现有问题</div>
+      <p><strong>没有机器校验</strong>：tag 与 <code>package.json.version</code> 是否一致、PR 是否跑过测试、覆盖率是否下降，全靠发版的人手动确认；没有 CI 状态可看。</p>
+      <p><strong>没有写下来的发布清单</strong>：容易在「刚改完、测试也过了」时顺手执行发布，绕过既有确认约定。对比项目的 <code>publish.yml</code> 把版本校验 → build → selftest → 按版本算 dist-tag 串成流水线，前半段值得学，但最后一步是 <code>npm publish --tag</code> 自动发版 —— 照搬会直接违反约定。</p>
+      <p><strong>触发条件与影响面</strong>：每次发版时暴露。不是代码缺陷，是流程风险；一旦漏确认，后果是对外发布不可撤回的版本。</p>
+    </div>
     <div class="why">
-      <div class="h">为什么做 / 为什么改掉对方做法</div>
+      <div class="h">原因与取舍</div>
       <p>本项目仓库无 <code>.github/</code>，5 个 release 与 npm 版本靠手工，没有「tag 与 package.json 版本是否一致」的机器校验；对比项目的 <code>publish.yml</code> 把版本校验、构建、selftest、dist-tag 计算串成流水线，这部分值得学。但它的最后一步是 <code>npm publish --tag</code> 自动发版，与项目既有约定（发布前必须人工确认，P-4）冲突，因此<strong>刻意只截取前半段</strong>：CI 负责校验与产物准备，发布保持人工。</p>
     </div>
     <div class="kv">
@@ -330,8 +428,19 @@
 
   <div class="item">
     <div class="hd"><span class="id">O-09</span><span class="pr p2">P2</span><span class="t">双门禁重整命令</span></div>
+    <div class="ctx">
+      <div class="h">背景</div>
+      <p>实现笔记 §12.4 记录了一次方向修正：早期 <code>consolidate</code> 把 30 天前日期条目原样按 <code>## YYYY-MM-DD</code> 成节 append 进 <code>MEMORY.md</code>，被判定「只会撑爆 10000 字符注入限额」，改成 <code>prune</code> 归档 + 模型按主题蒸馏。<code>1e5a0c1</code> 随后引入 <code>inject.distillAbove</code>（默认 <code>limits.user × 2</code>）与两级提示：<code>render.js:115-130</code> 在文件超过注入上限时先警告「部分读不到」，超过蒸馏阈值时再要求按主题压缩；<code>locale/zh.json</code> 第 6 条规则写明「超过 30 天的日期文件：先蒸馏进 MEMORY.md，再 memory_prune 归档」。</p>
+      <p>全量写入能力其实已经具备：<code>replaceDocument</code>（<code>store.js:166-185</code>）走同一条锁 / CAS / 备份 / 原子写链，另有 <code>memory_list_revisions</code> + <code>memory_restore</code> 可回滚；目前只受 <code>ui.allowFullTextEdit</code> 与 <code>validateDocument()</code> 约束。</p>
+    </div>
+    <div class="prob">
+      <div class="h">现有问题</div>
+      <p><strong>蒸馏完全靠提示词</strong>：没有机器校验「文件是否真的超出注入预算」，也没有冷却期。模型可能在同一会话里反复做整文件重写，或为凑数多轮精简 —— 对比项目 v1.8.3-alpha.2 专门修过「agent 多轮精简替换凑数」，可见这不是假想风险。</p>
+      <p><strong>没有状态记录</strong>：没有重整时间戳，无法知道上次重整何时发生；也没有把「用户确认 + 整档备份」与重整动作强制绑定（<code>replaceDocument</code> 会备份，但触发由模型自由决定）。</p>
+      <p><strong>触发条件与影响面</strong>：用户 <code>MEMORY.md</code> 接近或超过 8000 字符、模型读到蒸馏提示时触发。一次不合适的全量重写可能丢结论；备份可恢复，但用户先看到的是「记忆变少了」。这不是缺功能，是已有能力缺门禁。</p>
+    </div>
     <div class="why">
-      <div class="h">为什么做</div>
+      <div class="h">原因与取舍</div>
       <p>本项目现在只给「蒸馏提示」：超过 <code>limits.user</code> 警告部分读不到，超过 <code>distillAbove</code> 要求按主题压缩（<code>render.js:98-130</code>）。全是软约束，也没有冷却期，模型可能反复做整文件重写。对方把重整做成机器门禁（超预算 <strong>且</strong> 冷却 ≥7 天，pre-execute 与 execute 双重复核，时间戳由机器写、先剥模型自带注释，用户确认弹窗，整档备份 + 失败回滚：<code>hybrid/tools.mjs:36-55/330-354</code>）。本项目已有 <code>replaceDocument</code> 与完整备份链，缺的只是门禁与触发入口，补齐成本可控。</p>
     </div>
     <div class="kv">
@@ -343,8 +452,19 @@
 
   <div class="item">
     <div class="hd"><span class="id">O-10</span><span class="pr p2">P2</span><span class="t">多 buddy 目录只读兼容</span></div>
+    <div class="ctx">
+      <div class="h">背景</div>
+      <p><code>src/paths.js:40-45</code> 的 <code>resolveDataFolderName()</code> 支持配置值与 <code>WORKBUDDY_DATA_FOLDER_NAME</code> 环境变量，但结果始终是<strong>一个字符串</strong>；<code>memoryLayout()</code>（<code>:93-109</code>）据此生成唯一的项目记忆目录。用户级已经做了多来源兼容：<code>resolveWorkbuddyHome()</code> 依次尝试配置值 → <code>WORKBUDDY_CONFIG_DIR</code> → <code>CODEBUDDY_CONFIG_DIR</code> → <code>~/.workbuddy</code>（含多实例后缀，<code>:62-74</code>），项目级没有对应的候选列表。</p>
+      <p><code>write.ensureLayout</code> 默认 <code>false</code>（<code>config.js:85-88</code>），注释写明「凭空造一个隐藏 .workbuddy 会和 WorkBuddy 自己的工作区初始化抢跑」；目录不存在时 <code>store.append</code> 返回 <code>no_store</code>（<code>:504-513</code>）。所有写入只指向解析出的那一个目录 —— 这是「一份真源」定位的直接体现。</p>
+    </div>
+    <div class="prob">
+      <div class="h">现有问题</div>
+      <p><strong>兼容缺口</strong>：同时使用 CodeBuddy 的工作区，记忆可能落在 <code>.codebuddy/memory/</code> 而不是 <code>.workbuddy/memory/</code>。此时 <code>memory_status</code> 报「没有项目记忆」、注入为空、写入返回 <code>no_store</code>，用户会以为插件没生效。</p>
+      <p><strong>切换粒度太粗</strong>：要换目录只能改 <code>dataFolderName</code> 或环境变量，是全局切换，做不到「这个工作区用 A、那个工作区用 B」。</p>
+      <p><strong>触发条件与修法风险</strong>：<code>.workbuddy/memory</code> 不存在而 <code>.codebuddy/memory</code> 存在时触发。影响是兼容性而非数据错误；但最自然的修法（把所有已存在目录都写一遍，正是对方 <code>paths.mjs:40-47</code> 的做法）会立刻违反 P-1，产生第二份真源，所以只能扩读取候选。</p>
+    </div>
     <div class="why">
-      <div class="h">为什么做 / 为什么只做读</div>
+      <div class="h">原因与取舍</div>
       <p>对方默认桥接 <code>.workbuddy/memory</code> 与 <code>.codebuddy/memory</code>，本项目 <code>dataFolderName</code> 一次只能指一个名字（<code>src/paths.js:40-45</code>）。对同时使用 CodeBuddy 的工作区，本项目看不到另一侧的记忆，是一个真实的兼容缺口。但对方的做法是「所有已存在目录全部同步写」，会把一条事实复制成两份 —— 直接违反 P-1。所以只扩<strong>读取候选</strong>，写入目标仍保持单一。</p>
     </div>
     <div class="kv">
@@ -355,8 +475,19 @@
 
   <div class="item">
     <div class="hd"><span class="id">O-11</span><span class="pr p2">P2</span><span class="t">文档：定位说明 + 宿主契约风险清单</span></div>
+    <div class="ctx">
+      <div class="h">背景</div>
+      <p>文档资产其实不少：README 中英两份、5 份设计 / 审计 HTML、以及 <code>docs/implementation-notes.md</code> 的 14 节宿主契约实测（注入 provider 读 <code>agent.session.header.cwd</code>、空 section 不会从数组消失、volatile 不能嵌套、settings 命名空间 = profile entry id、<code>assemble()</code> 需要工具执行器在场、面板写路由状态码映射、<code>workspaceRegistry</code> 要懒读不能 inject 等）。这些是实测结论，价值很高。</p>
+      <p>但它们都围绕「本插件怎么跑起来」，没有一份集中回答「依赖了宿主哪些 API、各自降级路径是什么、升级 DSH 时该复核哪几行」。README 也只讲本插件，不提同类插件；对比报告与优化方案都是 2026-11-13 才新增的。</p>
+    </div>
+    <div class="prob">
+      <div class="h">现有问题</div>
+      <p><strong>用户视角会混淆</strong>：本次对话连续四轮追问（「是不是只做一次迁移」「也会写 buddy 目录吗」「每轮都写吗」「最大区别是什么」）就是证据 —— 两个插件同处一个类目、同样围绕 <code>MEMORY.md</code>，在插件目录里二选一时只能靠猜，装错了才发现用户级记忆不互通。</p>
+      <p><strong>风险信息分散</strong>：宿主契约的坑散在 implementation-notes 各节与源码注释里；已知限制（对不遵守锁的外部编辑器只能检出已知冲突、毫秒级并写仍可能被覆盖）只写在 <code>store.js:8-14</code> 文件头。升级宿主版本时没有 checklist，容易复现 <code>0.2.0 → 0.2.2-rc.1</code> 那类契约变化。</p>
+      <p><strong>触发条件与影响面</strong>：用户选型、宿主升级、排障时暴露。不改运行时行为、成本最低，所以列 P2；但它是「让人用对」的最后一道，不该一直缺着。</p>
+    </div>
     <div class="why">
-      <div class="h">为什么做</div>
+      <div class="h">原因与取舍</div>
       <p>两个插件同处一个类目、同样围绕 <code>MEMORY.md</code>，用户很容易靠猜二选一 —— 本次对话连续四轮追问（「是不是迁移」「也会写 buddy 吗」「每轮都写吗」）本身就是证据。对比项目把自承限制集中写在 <code>CONFIG.md</code> / <code>DEVELOPMENT.md</code>（最坏注入 8 条 ≈ 5 万字符、<code>pre-step</code> 抛错毁整轮、预览期 API 升级需核对类型声明），这种「把风险摊开写」比漂亮 README 有用。本项目 <code>docs/implementation-notes.md</code> 有类似味道但没成体系。</p>
     </div>
     <div class="kv">
