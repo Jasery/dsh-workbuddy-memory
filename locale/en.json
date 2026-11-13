@@ -11,7 +11,8 @@
     "When a write returns conflict, do not retry blindly: read again, confirm the target is still there, then decide whether to rewrite or give up.",
     "Daily files (YYYY-MM-DD.md) are append-only and are not injected; they are raw logs. For files older than 30 days: first distill durable conclusions by topic into MEMORY.md (memory_append / memory_edit), then archive the old daily files with memory_prune. Never copy raw logs into MEMORY.md — that blows the injection limit."
   ],
-  "truncated": "(content exceeds the limit; truncated to {limit} bytes)",
+  "truncated": "(content exceeds the limit; truncated to {limit} chars)",
+  "overLimitHint": "**Note: user MEMORY.md is {chars} chars, past the {limit}-char injection limit, so the rest is unreadable this session.** On the next change, compress what still holds into fewer entries by topic (memory_read for the revision, memory_edit to merge, then delete the redundant ones); do not keep appending. Distillation threshold: {above}.",
   "distillOverLimit": "**Note: user MEMORY.md is {chars} chars, past the {above} distillation threshold, but only {limit} are injected.** Most of it is unreadable this session. On the next change, compress what still holds into fewer entries by topic (memory_read for the revision, memory_edit to merge, then delete the redundant ones); do not keep appending. Never copy raw logs into MEMORY.md.",
   "noProject": "No project memory directory for this session.",
   "ambiguousProfile": "More than one profile candidate and no profileUid; injection skipped.",

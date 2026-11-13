@@ -463,3 +463,55 @@ test('memory_status reports the user file against its injection limit', async ()
   assert.ok(big.stores.user.chars > big.stores.user.injected)
   assert.ok(big.warnings.some((line) => line.includes('注入上限')))
 })
+
+test('memory_search names the scope and hints when it scanned no files', async () => {
+  const { tools, exec } = fixture()
+  // Only the user-level memory exists in this fixture; the default scope is
+  // project, so a hit here must not be reported as "not in memory".
+  const result = await tools.search.execute({ query: '用简体中文' }, exec)
+  assert.equal(result.ok, true)
+  assert.equal(result.scope, 'project')
+  if (result.files === 0) assert.match(result.hint ?? '', /scope/)
+})
+
+test('memory_search reports a file it had to truncate', async () => {
+  const { home, tools, exec } = fixture({ search: { indexMaxFileBytes: 1024 } })
+  const big = '## 大文件\n\n' + '- filler line to pad the file out\n'.repeat(200) + '- NEEDLE_AT_END\n'
+  writeFileSync(join(home, 'MEMORY.md'), big, 'utf8')
+
+  const result = await tools.search.execute({ query: 'NEEDLE_AT_END', scope: 'user' }, exec)
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.hits, [], 'the needle is past the cut')
+  // Silence here read as "memory does not mention it"; now the cap is named.
+  assert.equal(result.truncatedFiles.length, 1)
+  assert.equal(result.truncatedFiles[0].limit, 1024)
+})
+
+test('memory_search distinguishes hit truncation from file truncation', async () => {
+  const { home, tools, exec } = fixture()
+  writeFileSync(join(home, 'MEMORY.md'), '## A\n' + '- hit line\n'.repeat(20), 'utf8')
+  const result = await tools.search.execute({ query: 'hit line', scope: 'user', limit: 3 }, exec)
+  assert.equal(result.hits.length, 3)
+  assert.equal(result.hitsTruncated, true)
+  assert.deepEqual(result.truncatedFiles, [])
+})
+
+test('memory_read respects limit in section mode', async () => {
+  const { home, tools, exec } = fixture()
+  const big = '## 大节\n\n' + ('- ' + 'y'.repeat(80) + '\n').repeat(100) + '\n## 小节\n\n- z\n'
+  writeFileSync(join(home, 'MEMORY.md'), big, 'utf8')
+
+  const section = await tools.read.execute({ target: 'user-memory', section: '大节', limit: 100 }, exec)
+  assert.equal(section.ok, true)
+  assert.equal(section.truncated, true)
+  assert.ok(section.content.length < 200, `section mode returned ${section.content.length} chars despite limit 100`)
+})
+
+test('memory_read refuses an ambiguous section heading', async () => {
+  const { home, tools, exec } = fixture()
+  writeFileSync(join(home, 'MEMORY.md'), '## 同名\n- A\n\n## 同名\n- B\n', 'utf8')
+  const result = await tools.read.execute({ target: 'user-memory', section: '同名' }, exec)
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'ambiguous_section')
+  assert.deepEqual(result.lines, [1, 4])
+})

@@ -145,9 +145,30 @@ function listDailyFiles(dir) {
     .map((name) => ({ name, date: name.slice(0, 10) }))
 }
 
-/** Days between a `YYYY-MM-DD` file date and now. */
+/**
+ * Days between a `YYYY-MM-DD` file date and now.
+ *
+ * Both ends use the machine's own midnight. Parsing the file date as UTC while
+ * `localDateStamp()` stamps a local date meant the "30 days old" boundary slid by
+ * the timezone offset — in UTC+8 a file written at 00:30 counted as a day older
+ * than it was, so `beforeDays: 30` could archive a 29-day-old note.
+ *
+ * @param {string} date - `YYYY-MM-DD`, interpreted as a local calendar date.
+ * @param {number} [now] - epoch milliseconds.
+ * @returns {number|null} whole days, or null when the date is unparseable.
+ */
 export function ageInDays(date, now = Date.now()) {
-  const parsed = Date.parse(`${date}T00:00:00Z`)
-  if (Number.isNaN(parsed)) return null
-  return Math.floor((now - parsed) / DAY_MS)
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date ?? ''))
+  if (!match) return null
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const midnight = new Date(year, month - 1, day)
+  // A date the calendar does not have (2026-02-31) rolls over; refuse it rather
+  // than measure from a day the caller never named.
+  if (midnight.getFullYear() !== year || midnight.getMonth() !== month - 1 || midnight.getDate() !== day) return null
+
+  const today = new Date(now)
+  const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  return Math.floor((todayMidnight.getTime() - midnight.getTime()) / DAY_MS)
 }

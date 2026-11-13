@@ -2,7 +2,7 @@
 
 import { statusTool } from './status.js'
 import { readTool } from './read.js'
-import { appendTool, editTool, pruneTool } from './write.js'
+import { appendTool, editTool, listRevisionsTool, pruneTool, replaceSectionTool, restoreTool } from './write.js'
 import { searchTool } from './search.js'
 
 /** Store methods that change a file, and so invalidate what was injected. */
@@ -122,6 +122,12 @@ export function registerTools(ctx, deps) {
   const tools = [statusTool(scoped), readTool(scoped)]
   if (scoped.cfg.search.enabled) tools.push(searchTool(scoped))
   tools.push(appendTool(scoped), editTool(scoped), pruneTool(scoped))
+  // Section rewrite and rollback are gated by the same switches the panel uses:
+  // both bypass the entry model, so `ui.allowFullTextEdit` decides whether a
+  // whole-body or whole-file replacement is allowed at all.
+  if (scoped.cfg.ui.allowWriteActions) {
+    tools.push(replaceSectionTool(scoped), listRevisionsTool(scoped), restoreTool(scoped))
+  }
   for (const tool of tools) ctx.tools.register(harden(tool))
   return { names: tools.map((tool) => tool.name) }
 }

@@ -11,7 +11,6 @@
 import z from '@deepseek-ai/schemastery'
 
 const REFRESH_MODES = ['first-turn', 'on-change']
-const CONFLICT_POLICIES = ['fail', 'merge', 'overwrite']
 
 export const Config = z.object({
   readOnly: z
@@ -71,9 +70,16 @@ export const Config = z.object({
   write: z
     .object({
       enabled: z.boolean().default(true).volatile(),
-      conflictPolicy: z.union(CONFLICT_POLICIES).default('fail').volatile(),
+      // No `conflictPolicy`: a revision mismatch is always refused. The key used
+      // to offer `fail | merge | overwrite` and nothing ever read it, so a person
+      // who set `overwrite` still got `fail` — a switch that lies is worse than
+      // no switch. `overwrite` is available where it is legible: the panel's
+      // conflict dialog drops `expectedRevision` for one explicit click.
       lockWaitMs: z.number().default(3000).volatile(),
-      backupKeep: z.number().default(5).volatile(),
+      // Memory tidy-up is a burst of small edits, which is exactly the case that
+      // burns through a short rotation. Backups are plain text, so keeping more
+      // costs almost nothing and buys back the rollback point.
+      backupKeep: z.number().default(20).volatile(),
       fsync: z.boolean().default(true).volatile(),
       operationLog: z.boolean().default(true).volatile(),
       ensureLayout: z
@@ -202,9 +208,8 @@ export function normalizeConfig(raw) {
 
     write: {
       enabled: bool(write.enabled, true),
-      conflictPolicy: pick(write.conflictPolicy, CONFLICT_POLICIES, 'fail'),
       lockWaitMs: num(write.lockWaitMs, 3000, 0, 60000),
-      backupKeep: num(write.backupKeep, 5, 0, 100),
+      backupKeep: num(write.backupKeep, 20, 0, 100),
       fsync: bool(write.fsync, true),
       operationLog: bool(write.operationLog, true),
       ensureLayout: bool(write.ensureLayout, false),

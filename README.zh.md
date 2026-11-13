@@ -42,7 +42,16 @@ node scripts/dev-install.mjs web
 | `memory_search` | 按字面量搜索全部记忆文件（`search.enabled: false` 时不注册） |
 | `memory_append` | 往指定小节追加一条，或往当天笔记追加一行 |
 | `memory_edit` | 替换或删除一条（只认 `- ` 条目，匹配不唯一时拒绝） |
+| `memory_replace_section` | 整节重写（比逐条 edit 快，用于压缩一节） |
+| `memory_list_revisions` | 列出某个文件可回滚的备份 |
+| `memory_restore` | 回到某个备份（`expectedRevision` 必传） |
 | `memory_prune` | 把旧日期文件移动到 `memory/archive/`，不写 MEMORY.md |
+
+后三个只在 `ui.allowWriteActions` 打开时注册，走的是与面板完全相同的写链。
+
+条目模型：一条条目是「`- ` 行 + 它下面的续行（缩进 ≥2 空格或制表符）+ 嵌套子条目」，`memory_edit` 按整条替换/删除，续行不会留成孤儿。`memory_append` 与 `memory_edit` 都只接受一条；`text` 里带换行会返回 `multiline_text`，`replacement` 里带换行则作为同一条的续行写入。
+
+小节名：同名小节出现两次时返回 `ambiguous_section` 并附行号（改用行号定位）；空白小节名返回 `empty_heading`；第一个 `##` 之前、直接挂在 H1 下的条目用 `section: "(top)"`（或文件自己的 H1 标题）寻址。
 
 所有写入都走同一条链：跨进程锁 → revision 比对 → 备份 → 原子写入。直接用 `write` / `edit` 改记忆文件会被守卫拒绝。
 
@@ -55,7 +64,7 @@ node scripts/dev-install.mjs web
 | `readOnly` | `false` | 总闸，开启后一切写入被拒绝 |
 | `workbuddyHome` | `''` | 留空跟随环境变量 |
 | `inject.limits.*` | 10000 / 2000 / 8000 / 2000 | 各块按字符截断（项目 / 规则 / 用户 / 画像） |
-| `inject.distillAbove` | `0` → `limits.user` 的两倍 | 用户记忆超过这个字符数时，规则里会要求按主题蒸馏 |
+| `inject.distillAbove` | `0` → `limits.user` 的两倍 | 用户记忆超过这个字符数时，规则里会要求按主题蒸馏；一旦超过 `limits.user` 本身，规则会先给「已超注入上限、部分内容读不到」的警告 |
 | `ui.enabled` | `true` | 关掉后侧栏面板与相关路由不注册 |
 | `ui.globalPanel` / `ui.projectTab` / `ui.sessionAction` | `true` | 三个面板入口开关 |
 | `ui.allowWriteActions` | `true` | 面板写操作总开关 |

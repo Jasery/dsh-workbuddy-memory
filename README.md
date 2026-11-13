@@ -45,7 +45,16 @@ An empty `workbuddyHome` follows WorkBuddy's own order: `WORKBUDDY_CONFIG_DIR` �
 | `memory_search` | literal search across all memory files (not registered when `search.enabled: false`) |
 | `memory_append` | append an entry to a section, or a line to today's note |
 | `memory_edit` | replace or delete one entry (only `- ` entries; ambiguous matches are refused) |
+| `memory_replace_section` | rewrite a whole section body (faster than many edits, for compressing one section) |
+| `memory_list_revisions` | list the backups a file can be restored to |
+| `memory_restore` | go back to one backup (`expectedRevision` is mandatory) |
 | `memory_prune` | move old daily files to `memory/archive/`; never writes MEMORY.md |
+
+The last three register only when `ui.allowWriteActions` is on, and they use the same write chain as the panel.
+
+Entry model: an entry is "the `- ` line plus its continuation lines (indent of 2+ spaces or a tab) and nested sub-bullets". `memory_edit` replaces and removes the whole span, so a wrapped entry never leaves orphaned text behind. Both `memory_append` and `memory_edit` take one entry per call: a newline in `text` returns `multiline_text`, while a newline in `replacement` is written as a continuation of the same entry.
+
+Sections: a duplicated heading returns `ambiguous_section` with line numbers (address it by line instead); a blank heading returns `empty_heading`; bullets sitting directly under the H1, above the first `##`, are addressed with `section: "(top)"` or the document's own H1 title.
 
 Every write goes through the same chain: cross-process lock → revision check → backup → atomic write. Editing memory files with `write` / `edit` is refused by the guard.
 
@@ -58,7 +67,7 @@ Common keys (the plugin page lists all of them):
 | `readOnly` | `false` | master switch; when on, every write is refused |
 | `workbuddyHome` | `''` | empty follows the environment |
 | `inject.limits.*` | 10000 / 2000 / 8000 / 2000 | character limits per block (project / rules / user / profile) |
-| `inject.distillAbove` | `0` → twice `limits.user` | user memory size that makes the rules ask for a by-topic distillation |
+| `inject.distillAbove` | `0` → twice `limits.user` | user memory size that makes the rules ask for a by-topic distillation; past `limits.user` itself the rules first warn that part of the file is unreadable |
 | `ui.enabled` | `true` | when off, the panel and its routes are not registered |
 | `ui.globalPanel` / `ui.projectTab` / `ui.sessionAction` | `true` | the three panel entries |
 | `ui.allowWriteActions` | `true` | master switch for panel writes |

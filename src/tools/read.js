@@ -2,8 +2,8 @@
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { existsSync } from 'node:fs'
-import { readTextSafe } from '../fsx.js'
-import { parseSections } from '../markdown.js'
+import { readTextSafe, truncateChars } from '../fsx.js'
+import { findSections, parseSections } from '../markdown.js'
 import { contentRevision } from '../write/fslock.js'
 import { resolveTarget, TARGETS } from '../write/store.js'
 import { resolveCwd } from '../inject.js'
@@ -65,15 +65,35 @@ export function readTool({ cfg, t }) {
       }
 
       if (args.section) {
-        const match = parseSections(file.text).find((section) => section.heading.toLowerCase() === String(args.section).toLowerCase())
-        if (!match) return { ok: false, code: 'no_section', path: resolved.path, revision, sections }
+        const matches = findSections(file.text, String(args.section))
+        if (matches.length === 0) return { ok: false, code: 'no_section', path: resolved.path, revision, sections }
+        // A duplicate heading is named rather than guessed at: the caller is
+        // looking at one of them and would otherwise silently get the other.
+        if (matches.length > 1) {
+          return {
+            ok: false,
+            code: 'ambiguous_section',
+            path: resolved.path,
+            revision,
+            sections,
+            lines: matches.map((section) => section.line + 1),
+          }
+        }
+        const match = matches[0]
+        // The section branch used to return the whole body regardless of
+        // `limit`, so reading an oversized section dumped it into context in one
+        // go — exactly the case where a caller wants a cap.
+        const limit = Number.isFinite(args.limit) ? Math.max(1, Number(args.limit)) : 20000
+        const raw = file.text.slice(match.start, match.end)
+        const content = raw.length > limit ? `${truncateChars(raw, limit)}\n\n…(${t('truncated', { limit })})` : raw
         return {
           ok: true,
           path: resolved.path,
           revision,
           bytes: file.bytes,
           section: match.heading,
-          content: file.text.slice(match.start, match.end),
+          truncated: raw.length > limit,
+          content,
         }
       }
 

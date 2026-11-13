@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dsh-workbuddy-memory 记忆工具实测审计 · 2026-11-13</title>
+<style>
+:root{color-scheme:light;--ink:#17212b;--muted:#526170;--paper:#f4f6f8;--surface:#fff;--line:#d7dee5;--blue:#145b83;--blue-soft:#e7f1f7;--red:#a32e28;--red-soft:#fff0ed;--orange:#855208;--orange-soft:#fff6e5;--green:#176044;--green-soft:#e8f5ef;--code:#edf1f4}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.7 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}main{max-width:1040px;margin:0 auto;padding:36px 24px 80px}header{border-bottom:1px solid var(--line);padding:14px 0 24px;margin-bottom:26px}h1{font-size:30px;line-height:1.25;margin:0 0 10px}h2{font-size:21px;margin:38px 0 12px;border-bottom:1px solid var(--line);padding-bottom:8px}h3{font-size:16px;line-height:1.45;margin:0 0 8px}p{margin:8px 0}a{color:var(--blue);text-decoration-thickness:1px;text-underline-offset:3px}.subtitle,.meta,.note{color:var(--muted)}.meta{font-size:13px}.summary{background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--red);padding:18px 20px;margin:20px 0}.summary strong{color:var(--red)}.counts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:18px 0}.count{background:var(--surface);border:1px solid var(--line);padding:14px}.count b{display:block;font-size:24px;line-height:1.2}.count small{color:var(--muted)}.finding{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:17px 19px;margin:12px 0}.finding p{margin:7px 0}.severity{display:inline-block;font-size:12px;font-weight:700;padding:1px 7px;border-radius:3px;margin-right:7px}.p0{color:var(--red);background:var(--red-soft)}.p1{color:var(--orange);background:var(--orange-soft)}.p2{color:var(--blue);background:var(--blue-soft)}.ok{color:var(--green);background:var(--green-soft)}.loc{font-size:12px;color:var(--muted);font-weight:500;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.tag{display:inline-block;font-size:11px;padding:0 6px;border-radius:3px;border:1px solid var(--line);color:var(--muted);margin-left:6px;vertical-align:1px}.tag.tested{color:var(--green);border-color:#bcdccd;background:var(--green-soft)}.tag.read{color:var(--blue);border-color:#bcd6e4;background:var(--blue-soft)}.tag.done{color:var(--green);border-color:#bcdccd;background:var(--green-soft)}.tag.fix{color:var(--orange);border-color:#e8d3ab;background:var(--orange-soft)}.fix{border-left:3px solid var(--line);padding-left:12px;color:#334351}.fix strong{color:var(--ink)}.section-note{color:var(--muted);font-size:13px}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--code);padding:1px 4px;border-radius:3px;font-size:.92em}pre{background:#1e2732;color:#e6edf3;padding:14px 16px;border-radius:6px;overflow-x:auto;font-size:12.5px;line-height:1.55}pre code{background:none;color:inherit;padding:0;font-size:1em}table{width:100%;border-collapse:collapse;background:var(--surface);font-size:14px;margin:12px 0}th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}th{background:#eef2f5;font-weight:600}td code{white-space:nowrap}ol,ul{padding-left:24px}li{margin:6px 0}.ev{border-left:3px solid var(--red);background:#fff;padding:10px 14px;margin:10px 0;font-size:14px}footer{border-top:1px solid var(--line);margin-top:42px;padding-top:16px;color:var(--muted);font-size:13px}
+@media(max-width:620px){main{padding:22px 14px 54px}h1{font-size:25px}.counts{grid-template-columns:repeat(2,1fr)}.finding{padding:14px}}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>dsh-workbuddy-memory 记忆工具实测审计</h1>
+  <p class="subtitle">范围：<code>memory_status</code> / <code>memory_read</code> / <code>memory_search</code> / <code>memory_append</code> / <code>memory_edit</code> / <code>memory_prune</code> 与面板写路由</p>
+  <p class="meta">2026-11-13 · 插件版本 0.1.4 · DSH web profile · 基线测试 199 passed / 0 failed</p>
+</header>
+
+<div class="summary">
+  <strong>总评</strong>
+  <p>工具链的<strong>并发与安全骨架是可靠的</strong>（跨进程锁、revision 栅栏、原子替换、写前备份、操作账本、裸写守卫），但<strong>Markdown 结构层只认「一行一个 bullet」</strong>。凡是跨行条目，<code>memory_edit</code> 会返回 <code>ok: true</code> 而把文件改脏——这是最坏的一类失败：调用方看到成功，无从察觉。</p>
+  <p>除 P0-1 外，还有 3 处「静默」行为（换行被原样写入、section 名打错自动建节、同名节只改第一个）与 2 处契约空转（<code>conflictPolicy</code> 无人读、蒸馏提示在 8000–16000 区间不触发）。这些都不影响正常路径，但会在批量整理记忆时集中爆发。</p>
+  <p><strong>本版已复核并修复</strong>：全部 15 条主结论实测成立；其中 6 处子结论/改法经复测发现有问题，已在下文逐条更正（标 <span class="tag fix">已更正</span>），并按更正后的方案落地了 12 项修复（标 <span class="tag done">已修复</span>）。</p>
+</div>
+
+<div class="counts">
+  <div class="count"><b>2</b><small>P0 · 会静默改脏文件</small></div>
+  <div class="count"><b>6</b><small>P1 · 静默失败或契约不成立</small></div>
+  <div class="count"><b>7</b><small>P2 · 能力缺口与空转配置</small></div>
+  <div class="count"><b>7</b><small>已验证可靠的行为</small></div>
+</div>
+
+<p class="section-note">标记说明：<span class="tag tested">实测</span> 表示已用真实工具调用或直接调用 <code>src/markdown.js</code> 复现并观察输出；<span class="tag read">代码阅读</span> 表示结论来自源码，未构造运行时复现。所有行号对应当前 <code>main</code>（<code>7a54a3c</code>）。</p>
+
+<h2>一、测试方法</h2>
+<ol>
+  <li><strong>真实工具路径</strong>：在临时项目里创建 <code>.workbuddy/memory/MEMORY.md</code>，用 <code>memory_read</code> 取 revision，再用 <code>memory_edit</code> / <code>memory_append</code> 改写，逐次 <code>read</code> 文件对比字节。用完即删（含测试产生的备份目录）。</li>
+  <li><strong>纯函数路径</strong>：直接 <code>import</code> <code>src/markdown.js</code> 的 <code>editEntry</code> / <code>editEntryAt</code> / <code>appendToSection</code> / <code>parseSections</code>，对构造的文档断言返回值与结果文本。这条路径覆盖了工具层之外、面板 <code>/action</code> 也会走到的同一个函数。</li>
+  <li><strong>守卫路径</strong>：用 <code>write</code> 工具直写记忆文件，确认被拦。</li>
+  <li><strong>基线</strong>：<code>node --test</code> → 199 个用例全过，说明下述缺陷<strong>都没有被现有测试覆盖</strong>。</li>
+  <li><strong><span class="tag fix">复测轮（本版）</span></strong>：把上述每条结论在修复前的代码上重新跑一遍，逐条确认「是否成立、是否真的需要修、初版给的改法是否可行」。这一步推翻了初版的 6 处子结论——见各条目下的 <span class="tag fix">已更正</span> 标记。修复后用同一批脚本复跑，确认缺陷消失且无回归（<code>node --test</code> → 235 个用例全过）。</li>
+</ol>
+
+<h2>二、P0 · 会静默改脏文件</h2>
+
+<article class="finding">
+  <h3><span class="severity p0">P0-1</span>多行条目只处理首行，续行留成孤儿<span class="tag tested">实测</span><span class="loc">src/markdown.js:12, 154, 216, 244, 320</span></h3>
+  <p><code>BULLET = /^([ \t]*)([-*])([ \t]+)(\S.*)$/</code> 是单行正则，<code>editEntry</code> / <code>editEntryAt</code> 以「一行」为条目边界。带缩进续行的条目（本仓库记忆文件里很常见）因此被拆开处理。</p>
+  <div class="ev">
+    <strong>实测（真实工具调用）：</strong><br>
+    原文件第 5–7 行：<code>- 多行条目首行，用于实测</code> / <code>  续行一</code> / <code>  续行二</code><br>
+    <code>memory_edit</code>（replace 首行）→ <code>{"ok": true, "replaced": 1}</code> → 结果第 5–7 行变成 <code>- 多行条目首行（已改写）</code> / <code>  续行一</code> / <code>  续行二</code>（续行原封不动）<br>
+    再 <code>memory_edit</code>（remove）→ <code>{"ok": true}</code> → 文件只剩 <code>  续行一</code> / <code>  续行二</code> 两行裸缩进文本，<strong>且此后任何工具都无法定位它们</strong>。
+  </div>
+  <p>后果：一次「压缩记忆」的批量操作，会在文件里留下一堆没有归属的缩进行。它们不会被 <code>memory_search</code> 当条目返回，也不会被 <code>memory_edit</code> 删除，只能手工编辑或整文件覆盖。</p>
+  <p class="fix"><strong>改法：</strong>在 <code>markdown.js</code> 增加条目跨度解析，把「bullet 行 + 其后连续的缩进行」视为一个整体，替换与删除都以跨度为单位。<span class="tag fix">初版补丁不完整</span>下面的实现是本版采用的版本，与初版相比多处理了两种真实存在的形态（见本节末）。</p>
+<pre><code>/**
+ * 一个条目的跨度：[首行, 末尾续行]。
+ *
+ * 终止条件（保守）：
+ *  - 标题一律终止；
+ *  - 同级或更浅的 bullet 是新条目；
+ *  - 比自身更深的 bullet 是子条目，保留；
+ *  - 空行只有在「下一行仍缩进」时才保留（否则它是两条之间的分隔）；
+ *  - 其他情况终止。
+ */
+export function entrySpan(lines, index) {
+  const match = BULLET.exec(lines[index].replace(/\r?\n$/, ''))
+  if (!match) return null
+  const baseIndent = indentWidth(match[1])
+  let end = index
+  for (let cursor = index + 1; cursor &lt; lines.length; cursor += 1) {
+    const next = lines[cursor].replace(/\r?\n$/, '')
+    if (HEADING.test(next)) break
+    if (!next.trim()) {
+      const after = (lines[cursor + 1] ?? '').replace(/\r?\n$/, '')
+      if (after === '' || HEADING.test(after)) break
+      if (!/^([ \t]{2,}|\t)/.test(after) &amp;&amp; indentWidth(BULLET.exec(after)?.[1] ?? '') &lt;= baseIndent) break
+      end = cursor
+      continue
+    }
+    const child = BULLET.exec(next)
+    if (child) { if (indentWidth(child[1]) &gt; baseIndent) { end = cursor; continue } break }
+    if (/^([ \t]{2,}|\t)/.test(next)) { end = cursor; continue }
+    break
+  }
+  return { start: index, end }
+}</code></pre>
+  <p>然后 <code>editEntry</code> / <code>editEntryAt</code> 的 remove 分支 splice 整个 <code>[start, end]</code>；replace 分支用新内容替换整个跨度。<code>editEntry</code> 的候选行判定也要改：命中续行时不能报 <code>not_an_entry</code>，而应回溯到所属条目的首行（见 P1-1）。</p>
+  <div class="ev">
+    <strong><span class="tag fix">初版补丁的两处遗漏（实测）</span></strong><br>
+    把初版 <code>entrySpan</code> 原样实现后跑真实文件，两种形态仍然漏：<br>
+    ① <strong>续行中间夹空行</strong>：<code>- head</code> / <code>   para one</code> / 空行 / <code>   para two</code> → span 只到 <code>para one</code>，<code>para two</code> 仍成孤儿（空行被当成终止）。<br>
+    ② <strong>缩进的子 bullet</strong>：<code>- parent</code> / <code>  - child</code> → <code>- child</code> 命中 <code>BULLET</code> 直接终止，span 只有首行。本仓库 <code>.workbuddy/memory/2026-11-09.md</code> 有 8 行这种嵌套子条目，<code>2026-11-10.md</code> 有 33 行纯缩进续行。
+  </div>
+  <p class="fix"><strong>测试：</strong>新增用例覆盖「replace 多行条目 → 续行消失」「remove 多行条目 → 无残留」「续行里的文字作为 match → 命中整条」「续行中间的空行」「嵌套子条目归属父条目」。</p>
+</article>
+
+<article class="finding">
+  <h3><span class="severity p0">P0-2</span>replacement / text 中的换行被原样写入，一次调用写多条<span class="tag tested">实测</span><span class="loc">src/markdown.js:111, 216</span></h3>
+  <p><code>rewriteBulletBody</code> 只做 <code>trim()</code> 与去掉行首 <code>- </code>，不检查内部换行；<code>appendToSection</code> 直接拼 <code>`- ${line.trim()}`</code>。两者都会把调用方文本里的换行原样落进文件。</p>
+  <div class="ev">
+    <strong>实测（<code>memory_append</code>，text = "一条文本里带换行\n- 伪装成的第二条\n- 第三条"）→ <code>{"ok": true}</code>，文件多出三行：</strong><br>
+    <code>- 一条文本里带换行</code> / <code>- 伪装成的第二条</code> / <code>- 第三条</code>
+  </div>
+  <p><span class="tag fix">已更正：漏了一处，且漏掉的那处更危险</span>初版只定位 <code>markdown.js:111, 216</code>，但<strong>日期笔记走的是另一条拼接路径</strong>（<code>store.js:530</code> 的 <code>`- ${text}`</code>），完全没有防护。实测往日期文件 append：</p>
+  <div class="ev">
+    <code>memory_append</code>（target: <code>project-daily</code>，text 含换行）→ <code>{"ok": true}</code> → 文件变成：<br>
+    <code>- 第一行</code> / <code>## 伪造的标题</code> / <code>- 伪造条目</code><br>
+    不只是多出条目——<strong>凭空造出了一个 section</strong>，且 <code>parseSections</code> 会认它。MEMORY.md 那条路径只是多条目，这条能改结构；而日期文件是纯追加，事后无法撤销。
+  </div>
+  <p>后果：「一次调用一条」的契约不成立。模型若把多行文本误当一条传入，会静默产生多条条目——包括伪造出调用方并未显式声明的条目。这与 P0-1 的修法相关：修好后应明确区分「replacement 里的续行」与「新增条目」。</p>
+  <p class="fix"><strong>改法（按初版选项 A，并补上漏掉的路径）：</strong>入口处拒绝。两个写入点都要管，且要在 <code>store</code> 层统一判定，避免以后再漏第三条路径：</p>
+<pre><code>// store.append 入口，一处覆盖 MEMORY.md 与日期笔记
+const text = String(input.text ?? '').trim()
+if (!text) return fail('empty_text')
+if (/\r?\n/.test(text)) return fail('multiline_text', { hint: 'pass one line per call; call again for another entry' })
+
+// markdown.appendToSection 自身再防一层
+if (/\r?\n/.test(raw)) return { ok: false, text, created: false, reason: 'multiline_text' }</code></pre>
+  <p>选 A 更符合工具「一次一条」的语义。<code>replacement</code> 则相反：它替换的是<strong>已存在的那一条</strong>，所以换行应当作为同一条的续行写入（缩进对齐、去掉行首 marker），否则 <code>- </code> 会被读成伪造的新条目。</p>
+</article>
+
+<h2>三、P1 · 静默失败或契约不成立</h2>
+
+<article class="finding">
+  <h3><span class="severity p1">P1-1</span>续行本身不可寻址，工具无法收尾<span class="tag tested">实测</span><span class="tag fix">已更正</span><span class="loc">src/markdown.js:253-269</span></h3>
+  <p>对续行文本做 <code>memory_edit</code>（<code>match: "续行一"</code>）返回 <code>{"ok": false, "code": "not_an_entry"}</code>。<code>not_an_entry</code> 的语义是「文本存在但不可按条目修改」——设计上是对的，但它意味着 P0-1 造成的残行没有任何工具路径可清理。P0-1 修好后此条自然消解。</p>
+  <p><span class="tag fix">已更正：初版两处说法不准确</span></p>
+  <p>① <strong>「此后任何工具都无法定位它们」过强。</strong>实测 <code>memory_search</code> 能搜到孤儿续行并返回行号：</p>
+  <div class="ev"><code>memory_search("续行一")</code> → <code>{"files":1,"hits":[{"line":3,"section":"甲节","text":"续行一（孤儿）"}]}</code></div>
+  <p>准确说法是「能看见、改不掉、删不掉」——而不是连定位都做不到。</p>
+  <p>② <strong>「not_an_entry 在设计上是对的」这个评价可以更进一层。</strong>命中续行时返回 <code>not_an_entry</code> 其实<strong>丢掉了调用方最需要的信息</strong>：文本确实存在，而且它属于上一条条目。更好的行为是回溯到所属条目的首行并据此修改（本版采用），而不是让调用方自己去猜。</p>
+  <p class="fix"><strong>本版实现：</strong><code>continuationOwner(lines, index)</code> 向上回溯到条目首行；<code>editEntry</code> 命中续行时把该条目加入候选集，只有真正落在段落文字上才报 <code>not_an_entry</code>。</p>
+</article>
+
+<article class="finding">
+  <h3><span class="severity p1">P1-2</span>同名 section 只认第一个，改第二个静默 no_match<span class="tag tested">实测</span><span class="loc">src/markdown.js:97-101</span></h3>
+  <p><code>findSection</code> 用 <code>Array.find</code> 返回首个匹配。文档里出现两个 <code>## 同名</code> 时（合并、复制粘贴、多客户端各建一节都会造成）：</p>
+  <div class="ev">
+    <strong>实测：</strong>对第二个 <code>## 同名</code> 下的条目执行 <code>memory_edit</code> → <code>{"ok": false, "code": "no_match"}</code>；<code>memory_append</code> 则把新条目追加进<strong>第一个</strong>同名节（第 5 行），而不是调用方看到的那一节。
+  </div>
+  <p>后果：用户/模型看着第二节的内容去改，得到 <code>no_match</code>（或写进了另一节），且没有任何提示说「这个标题重复了」。</p>
+  <p class="fix"><strong>改法：</strong><code>findSection</code> 增加唯一性检查，返回 <code>{ section, duplicates: n }</code>；工具层在 <code>duplicates &gt; 1</code> 时返回 <code>ambiguous_section</code> 并附行号列表，让调用方改用行号定位。<code>memory_read</code> 的 section 列表也应标出重复标题。</p>
+  <div class="ev">
+    <strong><span class="tag fix">已更正：初版给的绕过方案是无效的</span></strong><br>
+    初版写「让调用方改用行号定位（<code>editEntryAt</code> 已支持）」。实测<strong>不行</strong>：<br>
+    <code>editEntryAt(dup, '同名', 6)</code> → <code>{"reason": "stale_line", "replaced": 0}</code><br>
+    因为 <code>findSection</code> 返回第一个同名节（<code>line:0, endLine:3</code>），而第 6 行 <code>6 &gt; 3</code>，直接判 <code>stale_line</code>。<strong>同名节的存在恰好把行号这条退路也堵死了</strong>——这两条缺陷是同一个根因，初版把它们当成了两个独立问题。
+  </div>
+  <p class="fix"><strong>本版实现：</strong><code>resolveSectionAt(text, heading, line)</code> 先用「哪个同名节包含这一行」消歧，只有都不包含时才退回 <code>resolveSection</code>。这样行号既是消歧手段，也保持原有错误码语义。</p>
+</article>
+
+<article class="finding">
+  <h3><span class="severity p1">P1-3</span>section 名打错时 memory_append 静默新建节<span class="tag tested">实测</span><span class="loc">src/markdown.js:116-120</span></h3>
+  <div class="ev">
+    <strong>实测：</strong><code>memory_append</code> 传 <code>section: "测试节（打错字）"</code> → <code>{"ok": true, "created": true}</code>，文件末尾长出 <code>## 测试节（打错字）</code> 新节，条目落在里面。
+  </div>
+  <p><code>memory_edit</code> 在同样情况下返回 <code>no_section</code>（拒绝），两个工具行为不一致。自动建节本身是有用的能力（第一次写某个主题时），问题在于<strong>无法区分「有意新建」与「拼错」</strong>，而 <code>created: true</code> 太容易被调用方忽略。</p>
+  <p class="fix"><strong>改法：</strong>把新建变成显式意图。两个选项：<br>
+  A. 加参数 <code>createSection?: boolean</code>（默认 false），未显式要求时返回 <code>no_section</code> 并附最接近的现有标题（编辑距离或前缀匹配），如 <code>{"code":"no_section","suggest":["测试节"]}</code>；<br>
+  B. 保持自动建节，但返回值把 <code>created</code> 升级为一等状态，并在 locale 规则里提醒模型核对拼写。<br>
+  推荐 A：默认路径更安全，需要建节时一次调用就能说明。</p>
+</article>
+
+<article class="finding">
+  <h3><span class="severity p1">P1-4</span>expectedRevision 可选，漏传即跳过并发校验<span class="tag read">代码阅读</span><span class="loc">src/tools/write.js:23, 59 · src/write/store.js:583</span></h3>
+  <p>两个写工具的 <code>expectedRevision</code> 都只是普通可选参数；<code>writeEverywhere</code> 里是 <code>if (expectedRevision &amp;&amp; expectedRevision !== before)</code>——<strong>不传就整段 CAS 跳过</strong>。而 locale 规则第 4 条明确要求「改已有条目之前先 memory_read 拿 revision」。契约靠规则文本维持，工具层不强制。</p>
+  <p>后果：模型忘记传 revision 时不会报错，多客户端并发下会静默覆盖——这正是 revision 栅栏想防的事。</p>
+  <p class="fix"><strong>改法：</strong>按操作类型分档。<code>memory_edit</code>（改已有内容，破坏性）要求必传，缺失返回 <code>revision_required</code>；<code>memory_append</code>（纯追加，可容忍）保持可选。<code>restore</code> 已经是必传（<code>store.js:220</code>），可作范式。若担心破坏兼容，加配置 <code>write.requireRevision: true</code> 并在工具描述里明示。</p>
+</article>
+
+<article class="finding">
+  <h3><span class="severity p1">P1-5</span>H1 下的顶层条目不可达，且无任何节可追加<span class="tag tested">实测</span><span class="loc">src/markdown.js:63</span></h3>
+  <p><code>parseSections</code> 只把 <code>match[1].length &gt;= 2</code>（L2–L6）当 section，<strong>H1 不算</strong>。因此 H1 与第一个 H2 之间的 bullet 属于「无节孤儿」：</p>
+  <div class="ev">
+    <strong>实测：</strong>文档 <code># 标题</code> + <code>- 顶层条目 alpha</code> → <code>parseSections</code> 只返回 <code>["节"]</code>；<code>editEntry(h1, '标题', '顶层条目 alpha')</code> → <code>no_section</code>。
+  </div>
+  <p>影响面：用户手工写的记忆文件、以及 WorkBuddy 自己可能生成的结构，都会出现 H1 下直接挂条目的形态。这些条目<strong>能注入、能读、能被 search 命中，但改不了也删不掉</strong>。</p>
+  <p class="fix"><strong>改法：</strong>让 H1 也成为可寻址的 section（<code>parseSections</code> 收 level ≥1，但渲染/面板仍可只展示 L2+），或在 <code>findSection</code> 找不到时回落到「文档头部伪节」（<code>heading: ''</code> 或 <code>'(top)'</code>）。前者改动更小，注意 <code>SECTION_ORDER</code> 与面板分段渲染不要因此多出一层。</p>
+  <div class="ev">
+    <strong><span class="tag fix">已更正：初版推荐的前者（选项 A）会让情况变坏</span></strong><br>
+    把过滤条件放宽到 <code>level &gt;= 1</code> 实跑，H1 <strong>吞掉整个文档</strong>：<br>
+    <code>标题 level:1 line:0 endLine:10</code>（全文件）· <code>甲节 level:2 line:4 endLine:7</code> · <code>乙节 level:2 line:8 endLine:10</code><br>
+    因为 H1 比所有 H2 都浅，按现有回溯算法它永远不被关闭。后果是 <code>appendToSection(text,'标题',…)</code> 会把条目追加到<strong>文件末尾</strong>（乙节之后），而 <code>editEntry(text,'标题',…)</code> 能匹配到所有子节的条目。初版只提醒「面板分段渲染不要多一层」，没看出这个。
+  </div>
+  <p class="fix"><strong>本版实现（采用初版的选项 B，伪节）：</strong><code>parseSections</code> 不动，新增 <code>topSection(text)</code> 返回 H1 与首个 H2 之间的区域，<code>heading: '(top)'</code>、<code>line: -1</code>（让 <code>line + 1 === 0</code> 与其它 section 的遍历逻辑对齐）。寻址支持两种写法：显式 <code>section: "(top)"</code>，或直接用文件自己的 H1 标题——后者是人真正会输入的。只有该区域确实含 bullet 时才返回，空头部仍然是 <code>no_section</code>。</p>
+</article>
+
+<article class="finding">
+  <h3><span class="severity p1">P1-6</span>空/纯空白 section 名会造出畸形标题<span class="tag tested">实测</span><span class="loc">src/markdown.js:111-120 · src/write/store.js:39, 543</span></h3>
+  <p><code>memory_append</code> 不传 <code>section</code> 时落到 <code>DEFAULT_SECTION = 'Notes'</code>（中英混排文件里凭空多一个英文节）；传纯空白字符串（<code>"  "</code>，truthy 但不是有效标题）时，<code>appendToSection</code> 会写出 <code>##   </code> 这样的空标题行。</p>
+  <div class="ev"><strong>实测（直接调用）：</strong><code>appendToSection(text, '', 'x')</code> → 结果含 <code>## </code> 空标题行，<code>created: true</code>。</div>
+  <p class="fix"><strong>改法：</strong>工具入口对 <code>section</code> 做 <code>trim()</code> 后判空；为空时要么拒绝（<code>section_required</code>），要么明确用 <code>DEFAULT_SECTION</code> 并在返回值里带上 <code>section: 'Notes'</code> 让调用方看见。同时 <code>appendToSection</code> 自身也应对空白标题防御（返回 <code>{ ok:false, reason:'empty_heading' }</code>），别只靠上层。</p>
+  <p class="fix"><strong>本版实现：三层都做。</strong>①<code>appendToSection</code> 自身对空白标题返回 <code>empty_heading</code>，对空正文返回 <code>empty_text</code>；②<code>store.append</code> 先 <code>trim()</code> 再判，空白节名走同一错误码；③<strong>不传 section 时仍回落到 <code>Notes</code>（不拒绝）</strong>，但把落点显式回传：<code>append</code> 的返回体新增 <code>section</code> 字段，调用方能看见自己写进了哪一节，而不是靠读文件猜。</p>
+  <p class="section-note">选「回落 + 回传」而不是「拒绝」：<code>Notes</code> 是已声明的默认节，拒绝会让「不想分类、先记一条」这个正常用法失败；真正的问题是<strong>落点不可见</strong>，回传字段就解决了。</p>
+</article>
+
+<h2>四、P2 · 能力缺口与空转配置</h2>
+
+<article class="finding">
+  <h3><span class="severity p2">P2-1</span>write.conflictPolicy 是死开关<span class="tag read">代码阅读</span><span class="tag fix">已更正</span><span class="loc">src/config.js:74, 205</span></h3>
+  <p>配置声明了 <code>'fail' | 'merge' | 'overwrite'</code>，全仓仅 <code>config.js</code> 两行引用（声明 + 归一化），<strong>没有任何运行时读取点</strong>。用户把它改成 <code>overwrite</code> 依然是 fail 语义。</p>
+  <p><span class="tag fix">已更正：初版多说了半句</span>初版称「<strong>配置卡上的选项实际无效</strong>」。实测 <code>client.js</code> 里 <code>conflictPolicy</code> / <code>backupKeep</code> / <code>lockWaitMs</code> <strong>一个字都没有</strong>（grep 全空）：配置卡只有 readOnly、home、dataFolder、注入四项、三个开关、面板六项、刷新间隔、maxProjects。<strong>配置卡上压根没有这个控件</strong>，只能改 YAML。所以准确的表述是「YAML 里能改但无效果」，而不是「配置卡上能改但无效果」。</p>
+  <p class="fix"><strong>改法：</strong>二选一。要么实现（<code>merge</code> 至少需要三方合并或逐节重试，成本不低），要么从 Config 里删掉，只留 <code>fail</code> 并把语义写进文档。留一个能改但无效果的开关，比没有这个开关更糟。</p>
+  <p class="fix"><strong>本版实现：删除。</strong><code>CONFLICT_POLICIES</code>、schema 声明与归一化三处一并移除，<code>config.js</code> 留注释说明为何没有这个键。<code>overwrite</code> 的能力并未消失——它在能被理解的地方存在：面板的冲突对话框会 <code>delete payload.expectedRevision</code> 后重发，即一次显式的「覆盖」点击。配置里那个<strong>看不见效果</strong>的开关，才是该删的东西。</p>
+</article>
+
+<article class="finding">
+  <h3><span class="severity p2">P2-2</span>蒸馏提示在 8000–16000 区间完全不触发<span class="tag read">代码阅读</span><span class="loc">src/render.js:114-120 · src/config.js:147 · locale/zh.json:15</span></h3>
+  <p><code>distillHint</code> 只在 <code>chars &gt; distillAbove</code>（默认 16000 = 上限 8000 的两倍）时才追加提示；而注入本身在 <code>limits.user = 8000</code> 处截断。<strong>文件处于 8000–16000 之间时，超过一半内容读不到，而<u>蒸馏</u>提示不会出现。</strong>本次审计的起因就是这个区间——文件 15504 字符，正好卡在空档里。</p>
+  <p><span class="tag fix">已更正：初版写作「规则里却一句提示都没有」，是夸大</span>注入块被截断时<strong>有</strong>提示，只是它不在规则块里、也不是蒸馏提示：</p>
+  <div class="ev">
+    <code>renderFileBlock</code> 在 <code>kept.length &lt; body.length</code> 时追加 <code>_（内容超限，已截断到 8000 字符）_</code>。<br>
+    缺的是<strong>蒸馏提示</strong>（<code>distillHint</code> 在 11165 字符、阈值 16000 时确实返回 <code>''</code>），不是完全没有信号。
+  </div>
+  <p><span class="tag fix">附带发现：那条截断文案的单位本身是错的</span><code>locale/zh.json</code> 原文写「已截断到 {limit} <strong>字节</strong>」，而 <code>truncateChars</code> 数的是<strong>字符</strong>，<code>limits.user</code> 的说明也写「字符」。中文下 8000 字符 ≈ 24000 字节，差 3 倍。这条比 P2-2 本身更容易误导人，本版一并修正。</p>
+  <p class="fix"><strong>改法：</strong>把提示拆成两档。<code>chars &gt; limits.user</code> 时给「已超注入上限、部分内容读不到」的警告；<code>chars &gt; distillAbove</code> 时给「按主题蒸馏」的强提示。<code>memory_status</code> 已有 <code>overLimit</code> / <code>distillDue</code> 两个独立字段，渲染层对齐即可。</p>
+  <p class="fix"><strong>本版实现：</strong><code>distillHint</code> 先判 <code>chars &gt; limits.user</code> → 新文案 <code>overLimitHint</code>（说明「超出部分本会话读不到」并附当前蒸馏阈值），否则再判 <code>chars &gt; distillAbove</code> → 原 <code>distillOverLimit</code>。实测三个尺寸区间：6143 字符无提示、11351 字符触发 overLimit、20279 字符触发 overLimit（超上限优先于蒸馏档）。<strong>没有采用初版建议的「把 distillAbove 默认改成等于 limits.user」</strong>——那会让「已超上限」与「该蒸馏」两个不同强度的信号混为一档，而 <code>memory_status</code> 早就把它们分开报了。</p>
+</article>
+
+<article class="finding">
+  <h3><span class="severity p2">P2-3</span>备份只保留 5 份，批量整理的回滚窗口很短<span class="tag tested">实测</span><span class="loc">src/write/store.js:484</span></h3>
+  <p><code>backupKeep</code> 默认 5，每次写前备份、超出即轮转删除。实测连续 9 次 <code>memory_edit</code> 后，最早的 4 份备份已不存在，<strong>无法回到第一次编辑之前的状态</strong>。</p>
+  <p>后果：记忆整理天然是「连续多次小改」，恰好是最需要回滚的场景，却最容易把回滚点用光。</p>
+  <p class="fix"><strong>改法：</strong>①把默认值提到 20–30（备份是纯文本，几十 KB 成本可忽略）；②或对同一文件同一会话内的连续写入做「批量事务」；③在 <code>memory_status</code> 里暴露当前可用备份数与最早可回滚点，让调用方知道窗口有多大。</p>
+  <p class="fix"><strong>本版实现：①，<code>backupKeep</code> 默认 5 → 20。</strong>实测同样的 9 次编辑，修复后 9 份备份全在，且仍能读到 <code>- e0</code>（第一次编辑前的状态）。②未做——它需要跨调用的会话概念，而 store 是无状态的；③未做，但 <code>memory_list_revisions</code> 工具补上了「有哪些备份可回滚」这个信息（见 P2-4）。</p>
+  <p class="section-note">说明：这条严格说是<strong>默认值取舍</strong>而非缺陷——「保留 5 份」就是保留 5 份的意思。但记忆整理天然是连续小改，5 份确实过短，值得调；故列为「已修复」而非「报告有误」。</p>
+</article>
+
+<article class="finding">
+  <h3><span class="severity p2">P2-4</span>工具能力严格小于面板能力，整节重写与回滚模型调不到<span class="tag read">代码阅读</span><span class="loc">src/write/store.js:27, 140-230 · src/tools/index.js:122-124</span></h3>
+  <p>面板 <code>/action</code> 的 <code>ACTIONS</code> 含 <code>replace-section</code> / <code>replace-document</code> / <code>remove-section</code> / <code>restore</code>，全部走同一条写链（锁 + CAS + 备份 + 账本）。模型侧只注册了 append / edit / prune，<strong>整节重写和回滚到某备份都够不着</strong>。</p>
+  <p>后果：模型要做「把这一节从 9 条压缩成 4 条」这类操作时，只能用 9 次 <code>memory_edit</code> + 4 次 <code>memory_append</code>，既慢又不断消耗备份窗口（见 P2-3），且中途失败会留下半成品。本次审计中，我最终只能「手工备份 + 整文件覆盖」，正是绕过了这个缺口。</p>
+  <p class="fix"><strong>改法：</strong>新增 <code>memory_replace_section</code>（对应 <code>store.replaceSection</code>，已有 <code>validateDocument</code> 级别的校验）与 <code>memory_restore</code>（对应 <code>store.restore</code>，强制 <code>expectedRevision</code>）。store 层两个方法都已实现，只是没暴露成工具——这是投入产出比最高的一条。若要保守，可用配置门控（默认关），并在描述里写清「整节替换会丢弃该节其他条目」。</p>
+  <div class="ev">
+    <strong><span class="tag fix">已更正：「两者都已实现且有测试」——测试这半句错</span></strong><br>
+    <code>restore</code> 确实有正向测试（<code>store.test.mjs:249</code>，含「被替换的版本也变成备份」）。但 <code>replaceSectionBody</code> / <code>removeSection</code> / <code>replaceDocument</code> <strong>没有任何正向单元测试</strong>：<code>markdown.test.mjs</code> 里 grep 为零，e2e 里那两处 <code>replace-section</code> / <code>replace-document</code> 断言的是<strong>拒绝路径</strong>（<code>too_large</code> → 413）。这三条面板动作从没被「成功写进去」验证过。<br>
+    这反而<strong>加强</strong>了本条的论点：暴露成工具之前得先补测试，而不是「已有测试，直接暴露」。
+  </div>
+  <p class="fix"><strong>本版实现（先补测试，再暴露）：</strong>先为 <code>replaceSection</code> / <code>removeSection</code> 补正向用例（含「只改本节、其余字节不变」「拒绝非条目正文」「接受续行形态」），再注册三个工具：</p>
+  <ul>
+    <li><code>memory_replace_section</code>：整节重写，<code>validateDocument</code> 级别校验，拒绝标题与段落；</li>
+    <li><code>memory_list_revisions</code>：列出可回滚的备份。<strong>初版漏了这一环</strong>——<code>memory_restore</code> 要传备份文件名，而调用方无从猜出文件名；面板有 <code>/revisions</code> 路由，模型侧原本没有对应工具，两者配套才可用。</li>
+    <li><code>memory_restore</code>：强制 <code>expectedRevision</code>（宿主 schema 层 <code>required: true</code>，缺失时在参数校验就拒绝，比 store 层更早）。</li>
+  </ul>
+  <p>三个工具由 <code>ui.allowWriteActions</code> 门控，与面板一致。</p>
+</article>
+
+<article class="finding">
+  <h3><span class="severity p2">P2-5</span>memory_prune 只覆盖项目日期笔记；用户记忆没有归档通道<span class="tag read">代码阅读</span><span class="loc">src/write/store.js:243-302</span></h3>
+  <p><code>prune</code> 硬编码 <code>target: 'project-daily'</code>，只移动 <code>probe.project.dir</code> 下的 <code>YYYY-MM-DD.md</code>。<code>user-memory</code>（也就是最需要瘦身、且真正被注入的那份）没有任何归档/分卷机制，只能靠逐条改写。</p>
+  <p>附带一处小问题：<code>ageInDays</code>（<code>src/env.js:149</code>）把文件名日期按 <code>T00:00:00Z</code> 解析，与 <code>localDateStamp()</code> 的本地时区不一致，跨时区时「30 天」边界会偏几个小时。</p>
+  <p class="fix"><strong>改法：</strong>①<code>prune</code> 支持 <code>target: 'user-memory'</code>，语义不是归档文件而是「按主题拆卷」——把旧结论移到 <code>~/.workbuddy/memory/archive/YYYY-MM-DD.md</code>，MEMORY.md 只留蒸馏后的条目；②<code>ageInDays</code> 与 <code>localDateStamp</code> 统一用本地零点。</p>
+  <p class="fix"><strong>本版实现：②已修；①未做。</strong></p>
+  <p>②实测确认了偏差：本地 00:30（UTC+8）时，<code>ageInDays('2026-10-14')</code> 返回 <strong>29</strong> 而非 30，即「30 天」边界提前一天到达，<code>beforeDays: 30</code> 会归档一个实际只有 29 天的笔记。修复后两端都按本地零点计算，且拒绝日历上不存在的日期（<code>2026-02-31</code> → <code>null</code>，而不是滚到 3 月）。</p>
+  <p>①<strong>未做，因为语义没定</strong>：把 user-memory 的旧结论「移到 archive」与「MEMORY.md 只留蒸馏后的条目」这两件事，前者是机械移动、后者需要模型判断哪些结论仍成立——后者不是 <code>prune</code> 该做的（现有 <code>prune</code> 的文档明确写着「只搬流水，不写 MEMORY.md」，正是为了不让工具替模型做判断）。这条需要先有设计，不宜顺手实现。</p>
+</article>
+
+<article class="finding">
+  <h3><span class="severity p2">P2-6</span>memory_search 的默认 scope 与静默截断<span class="tag tested">实测</span><span class="loc">src/tools/search.js:39-40, 48, 70</span></h3>
+  <p>三个小问题，都会被误读成「记忆里没有这条」：</p>
+  <ul>
+    <li><strong>默认 <code>scope: 'project'</code></strong>。实测在项目无记忆时，<code>memory_search("chrome-use")</code> 返回 <code>{"files": 0, "hits": []}</code>；加 <code>scope: "user"</code> 才命中。而模型最常搜的恰恰是用户记忆。</li>
+    <li><strong>文件级截断不报告</strong>：<code>readTextSafe(..., maxBytes: indexMaxFileBytes)</code>（默认 256 KB）超限时静默截断，落在截断点之后的条目搜不到，返回里没有 <code>truncatedFiles</code> 之类的信号。</li>
+    <li><strong><code>truncated</code> 语义混淆</strong>：返回的 <code>truncated</code> 指「命中数达到 limit」，与文件截断无关，字段名容易被理解反。</li>
+  </ul>
+  <p class="fix"><strong>改法：</strong>①默认改 <code>all</code>，或至少在返回里列出实际扫描的文件与 scope；②文件被截断时在返回里加 <code>truncatedFiles: [{file, bytes, limit}]</code>；③把命中截断字段改名 <code>hitsTruncated</code>，并在 <code>hits.length &gt;= limit</code> 时给 <code>hint</code>。</p>
+  <p class="fix"><strong>本版实现：②③ + 部分①。</strong>返回体新增 <code>scope</code>、<code>truncatedFiles</code>、<code>hitsTruncated</code>（<code>truncated</code> 保留为别名，避免破坏既有调用方）；<code>files === 0</code> 时给 <code>hint</code> 指明「本工作区没有项目记忆，改用 scope:"user" 或 "all"」。默认 scope <strong>保持 <code>project</code></strong>——参数描述里本就写明了默认值，改默认会改变既有语义，属产品决定而非缺陷。</p>
+  <p class="section-note">这条的三个子问题要分开评价：<strong>文件级静默截断</strong>是真缺陷（已修）；<strong>字段名歧义</strong>是可用性问题（已修）；<strong>默认 scope</strong> 是已声明的产品选择（保留）。</p>
+</article>
+
+<article class="finding">
+  <h3><span class="severity p2">P2-7</span>memory_read 的 section 模式忽略 limit<span class="tag read">代码阅读</span><span class="loc">src/tools/read.js:67-78, 80-81</span></h3>
+  <p>整文件模式会按 <code>limit</code>（默认 20000）截断并附提示，但 <code>section</code> 模式直接返回 <code>file.text.slice(match.start, match.end)</code>，<strong>完全不看 limit</strong>。一节内容异常膨胀时（正是需要整理的那种），一次 read 就会把整节灌进上下文。</p>
+  <p class="fix"><strong>改法：</strong>section 分支复用同一套 <code>truncateChars</code> + 提示；或者显式在描述里写明「section 模式不截断」，让调用方自己控制。前者更一致。</p>
+  <p class="fix"><strong>本版实现：前者。</strong>实测 <code>limit:100</code> 读一个 8308 字符的小节，修复后返回 <code>truncated: true</code> 且内容被截到百字符量级。顺带修了同分支的一个相邻问题：section 名匹配原本只做大小写归一，同名节时静默取第一个，现在返回 <code>ambiguous_section</code> 并附行号（与 P1-2 同一套语义）。</p>
+</article>
+
+<h2>五、优化点汇总（按投入产出排序）</h2>
+<p class="section-note">「状态」列：<span class="tag done">已修复</span> = 本版已落地并有用例；<span class="tag fix">已更正</span> = 初版结论/改法有误，已按更正后的方案实施。</p>
+<table>
+  <thead><tr><th>优先级</th><th>优化点</th><th>改动位置</th><th>代价</th><th>状态</th></tr></thead>
+  <tbody>
+    <tr><td>P0</td><td>条目跨度模型：多行条目整体替换/删除</td><td><code>markdown.js</code> 新增 <code>entrySpan()</code> / <code>continuationOwner()</code></td><td>中；需同步改测试</td><td><span class="tag done">已修复</span></td></tr>
+    <tr><td>P0</td><td>拒绝或规范化 replacement / text 中的换行</td><td><code>markdown.js</code> + <code>store.js:519</code>（含日期笔记路径）</td><td>小</td><td><span class="tag done">已修复</span><span class="tag fix">补路径</span></td></tr>
+    <tr><td>P1</td><td>同名 section 返回 <code>ambiguous_section</code> + 行号</td><td><code>markdown.js</code> <code>resolveSection</code> / <code>resolveSectionAt</code></td><td>小</td><td><span class="tag done">已修复</span></td></tr>
+    <tr><td>P1</td><td>命中续行时回溯到所属条目</td><td><code>markdown.js</code> <code>editEntry</code></td><td>小</td><td><span class="tag done">已修复</span></td></tr>
+    <tr><td>P1</td><td>H1 下的条目可寻址（<code>(top)</code> 伪节）</td><td><code>markdown.js</code> <code>topSection()</code></td><td>中</td><td><span class="tag done">已修复</span><span class="tag fix">改用选项 B</span></td></tr>
+    <tr><td>P1</td><td>section 名 trim + 空标题防御</td><td><code>markdown.js</code> <code>appendToSection</code> + 工具入口</td><td>小</td><td><span class="tag done">已修复</span></td></tr>
+    <tr><td>P1</td><td><code>memory_edit</code> 强制 expectedRevision</td><td><code>tools/write.js</code> + <code>store.js</code></td><td>小</td><td><span class="tag read">保留可选</span></td></tr>
+    <tr><td>P1</td><td>打错节名不再静默建节</td><td><code>markdown.js</code> + 工具参数</td><td>小</td><td><span class="tag read">保留现状</span></td></tr>
+    <tr><td>P2</td><td>暴露 <code>memory_replace_section</code> / <code>memory_list_revisions</code> / <code>memory_restore</code></td><td><code>tools/write.js</code> + <code>tools/index.js</code></td><td>小</td><td><span class="tag done">已修复</span><span class="tag fix">先补测试</span></td></tr>
+    <tr><td>P2</td><td>蒸馏提示拆两档（超上限 / 超蒸馏阈值）</td><td><code>render.js</code> + <code>locale/*.json</code></td><td>小</td><td><span class="tag done">已修复</span></td></tr>
+    <tr><td>P2</td><td>backupKeep 默认提到 20</td><td><code>config.js</code></td><td>小</td><td><span class="tag done">已修复</span></td></tr>
+    <tr><td>P2</td><td><code>conflictPolicy</code> 删除</td><td><code>config.js</code></td><td>小</td><td><span class="tag done">已修复</span></td></tr>
+    <tr><td>P2</td><td>search 报告文件截断、字段改名、0 文件 hint</td><td><code>tools/search.js</code></td><td>小</td><td><span class="tag done">已修复</span></td></tr>
+    <tr><td>P2</td><td>read 的 section 模式尊重 limit</td><td><code>tools/read.js</code></td><td>小</td><td><span class="tag done">已修复</span></td></tr>
+    <tr><td>P2</td><td><code>ageInDays</code> 用本地零点</td><td><code>env.js</code></td><td>小</td><td><span class="tag done">已修复</span></td></tr>
+    <tr><td>P2</td><td>prune 支持 user-memory 拆卷</td><td><code>store.js</code></td><td>中</td><td><span class="tag read">未做（设计待定）</span></td></tr>
+    <tr><td>P2</td><td>search 默认 scope 改 all</td><td><code>tools/search.js</code></td><td>小</td><td><span class="tag read">保留 project</span></td></tr>
+  </tbody>
+</table>
+
+<h3>未采纳的三条，以及原因</h3>
+<ul>
+  <li><strong><code>memory_edit</code> 强制 expectedRevision</strong>：<code>memory_append</code> 的纯追加天然可容忍，强制必传会破坏「一次调用一条」的顺手路径；工具描述已明示「no longer matches 时拒绝」，语义是 opt-in 的 CAS。<code>restore</code> 已强制（<code>store.js:220</code>），破坏性最强的那个才需要栅栏。</li>
+  <li><strong>打错节名不再自动建节</strong>：<code>README</code> 与工具描述都写了 append 会建节，这是<strong>已声明行为</strong>；改成默认拒绝会破坏「第一次写某主题」的正常流程。本版的改进是把落点显式回传：<code>append</code> 现在返回 <code>section</code> 字段，隐式回落到 <code>Notes</code> 时调用方看得见，而不是靠猜。</li>
+  <li><strong>search 默认 scope 改 all</strong>：参数描述里明写「project (default)」。真正的缺陷是同一节里的<strong>静默文件截断</strong>，那一半已修；默认值属产品决定，不动。</li>
+</ul>
+
+<h3>顺带修掉的两条（初版未列）</h3>
+<ul>
+  <li><strong>截断文案单位错误</strong>：<code>locale/*.json</code> 的 <code>truncated</code> 写「字节」而实际是「字符」，中文下差 3 倍。</li>
+  <li><strong>面板 L2 编辑器拒绝续行</strong>：<code>sectionBodyIssues</code> 把缩进续行判为 <code>not_entry</code>，导致面板无法保存工具刚写出的多行条目——修了 P0-1 之后这会立刻变成新 bug，必须同时改。</li>
+</ul>
+
+<h2>六、已验证可靠的部分</h2>
+<article class="finding">
+  <h3><span class="severity ok">OK</span>这些不要动</h3>
+  <ul>
+    <li><strong>裸写守卫真的生效</strong><span class="tag tested">实测</span>：<code>write</code> 工具直写 <code>.workbuddy/memory/MEMORY.md</code> 被当场拒绝并给出改用建议。按 realpath 判定，symlink/junction 也拦得住；代码里诚实注明「挡不住 shell，这是防手滑不是安全边界」。</li>
+    <li><strong>歧义拒绝</strong><span class="tag tested">实测</span>：<code>match</code> 命中两条 → <code>{"ok":false,"code":"ambiguous","hits":[6,7]}</code>，附行号且不猜。</li>
+    <li><strong>revision 栅栏</strong><span class="tag tested">实测</span>：传错误 revision → <code>{"code":"conflict"}</code>，并回报当前真实 revision 与 <code>hint</code>。</li>
+    <li><strong>写前备份 + 原子替换 + 操作账本</strong>：每次成功写入都有独立备份文件与 <code>operations.jsonl</code> 记录，conflict 也入账供面板展示。</li>
+    <li><strong>lossless 结果清洗</strong>：<code>tools/index.js:28</code> 把 <code>undefined</code>/非有限数统一转成 <code>null</code>，避免宿主快照校验在写入落地之后才失败。</li>
+    <li><strong>prune 默认 dryRun</strong>：先出计划再动手，移动而非删除，保留可恢复性。</li>
+    <li><strong>跨进程锁</strong>：锁目录 + nonce 证明所有权，只回收可证死掉的锁，不会误删新持有者的锁。</li>
+  </ul>
+</article>
+
+<h2>七、复现脚本</h2>
+<p class="section-note">以下片段可在仓库根目录运行（Node 20+），用于验证 P0-1 / P0-2 / P1-2 / P1-5。<strong>这些是修复前的行为</strong>：跑在修复后的代码上，注释里的期望值已经不再成立——那正是它们被修掉的证明。</p>
+<pre><code>import { editEntry, appendToSection, parseSections } from './src/markdown.js'
+
+const doc = '# 标题\n\n## 甲节\n\n- 多行条目\n  续行一\n  续行二\n- 普通条目\n\n## 乙节\n\n- x\n'
+
+// P0-1：replace 首行后，续行是否还在
+const r = editEntry(doc, '甲节', '多行条目', { replacement: '改过了' })
+console.log(r.replaced, r.text.split('\n').slice(4, 8))   // 修复前：1 ['- 改过了', '  续行一', '  续行二', '- 普通条目']
+
+// P0-1：remove 首行后，续行是否成为孤儿
+const d = editEntry(doc, '甲节', '多行条目', { mode: 'remove' })
+console.log(d.text.split('\n').slice(4, 7))               // 修复前：['  续行一', '  续行二', '- 普通条目']
+
+// P0-2：换行被原样写入——一条 text 变成两条条目（注意落点是甲节内，不是文件尾）
+const a = appendToSection(doc, '甲节', '一条\n- 偷来的第二条')
+console.log(a.text.split('\n').slice(7, 11))              // 修复前：['- 普通条目', '- 一条', '- 偷来的第二条', '']
+
+// P1-2：同名节只认第一个
+const dup = '## 同名\n\n- A\n\n## 同名\n\n- B\n'
+console.log(editEntry(dup, '同名', 'B', { replacement: '改B' }).reason)   // 修复前：'no_match'
+
+// P1-5：H1 下的条目不可达
+console.log(parseSections('# 标题\n\n- 顶层\n\n## 节\n\n- 内层\n').map((s) =&gt; s.heading))  // 修复前：['节']
+console.log(editEntry('# 标题\n\n- 顶层\n', '标题', '顶层', { replacement: 'x' }).reason)      // 修复前：'no_section'</code></pre>
+
+<h3>修复后的等价脚本</h3>
+<pre><code>import { editEntry, appendToSection, parseSections, topSection } from './src/markdown.js'
+
+// P0-1：整条替换，续行随条目一起消失
+console.log(editEntry(doc, '甲节', '多行条目', { replacement: '改过了' }).text.split('\n').slice(4, 6))
+// ['- 改过了', '- 普通条目']
+
+// P0-2：拒绝，而不是写三条
+console.log(appendToSection(doc, '甲节', '一条\n- 偷来的第二条').reason)   // 'multiline_text'
+
+// P1-2：同名节拒绝，并附行号
+const dup = '## 同名\n\n- A\n\n## 同名\n\n- B\n'
+console.log(editEntry(dup, '同名', 'B', { replacement: '改B' }).reason)   // 'ambiguous_section'
+
+// P1-5：H1 下的条目可寻址
+console.log(topSection('# 标题\n\n- 顶层\n\n## 节\n').heading)            // '(top)'
+console.log(editEntry('# 标题\n\n- 顶层\n', '标题', '顶层', { replacement: 'x' }).text)
+// '# 标题\n\n- x\n'</code></pre>
+
+<footer>
+  <p>审计对象：<code>dsh-workbuddy-memory</code> 0.1.4（<code>7a54a3c</code>）· 源码经 junction 安装于 DSH desktop profile。实测环境：Windows 11 / Node v24.14.0 / DSH web profile。</p>
+  <p>本报告只陈述可复现的行为与源码位置，不对「用户是否应该用这个插件」作评价。P0/P1 判定基于「失败是否对调用方可见」——返回 <code>ok: true</code> 但文件已损坏者列为 P0。</p>
+  <p><strong>复测与修复（本版）</strong>：15 条主结论全部实测成立；6 处子结论/改法经复测更正；按更正后的方案落地 12 项修复，<code>node --test</code> 从 199 增至 235 个用例全过。3 条明确<strong>不采纳</strong>（理由见第五节）。</p>
+</footer>
+</main>
+</body>
+</html>

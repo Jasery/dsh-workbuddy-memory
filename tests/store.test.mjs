@@ -5,9 +5,10 @@ import { basename, join } from 'node:path'
 import test from 'node:test'
 
 import { normalizeConfig } from '../src/config.js'
-import { probeEnvironment } from '../src/env.js'
+import { ageInDays, probeEnvironment } from '../src/env.js'
 import { contentRevision } from '../src/write/fslock.js'
 import { createStore, localDateStamp } from '../src/write/store.js'
+import { listRevisionsTool, replaceSectionTool, restoreTool } from '../src/tools/write.js'
 
 function workspace() {
   const root = mkdtempSync(join(tmpdir(), 'wbm-'))
@@ -25,7 +26,10 @@ function setup(overrides = {}) {
   const env = { WORKBUDDY_CONFIG_DIR: space.home }
   const probe = probeEnvironment({ cfg, cwd: space.cwd, env, home: space.root, detail: true })
   const store = createStore({ cfg, stateDir: join(space.root, 'state') })
-  return { ...space, cfg, probe, store }
+  // Tools resolve the workspace from the agent's session header, not from the
+  // probe, so the tool-level tests need the same cwd the probe was built with.
+  const agent = { session: { header: { cwd: space.cwd } } }
+  return { ...space, cfg, probe, store, agent }
 }
 
 test('append creates the file and a section when nothing exists', async () => {
@@ -125,7 +129,9 @@ test('edit removes exactly one entry', async () => {
   writeFileSync(file, '## A\n- one\n- two\n', 'utf8')
   const result = await s.store.edit({ target: 'project-memory', section: 'A', match: 'one', mode: 'remove' }, s.probe)
   assert.equal(result.ok, true)
-  assert.equal(readFileSync(file, 'utf8'), '## A\n\n- two\n')
+  // The row is spliced out, not blanked: a blanked row is the column of
+  // whitespace that a few removals used to leave behind.
+  assert.equal(readFileSync(file, 'utf8'), '## A\n- two\n')
 })
 
 test('a missing memory directory is reported, not created', async () => {
@@ -226,7 +232,7 @@ test('remove deletes exactly the named line', async () => {
   writeFileSync(file, '## A\n- one\n- two\n- three\n', 'utf8')
   const result = await s.store.remove({ target: 'project-memory', section: 'A', line: 2 }, s.probe)
   assert.equal(result.ok, true)
-  assert.equal(readFileSync(file, 'utf8'), '## A\n- one\n\n- three\n')
+  assert.equal(readFileSync(file, 'utf8'), '## A\n- one\n- three\n')
 })
 
 test('revisions are listed per file and read back verbatim', async () => {
@@ -367,4 +373,228 @@ test('a failed backup refuses the write instead of replacing without one', async
   assert.equal(result.ok, false)
   assert.equal(result.code, 'backup_failed')
   assert.equal(readFileSync(file, 'utf8'), '## A\n- one\n', 'the destructive step did not run')
+})
+
+test('replaceSection swaps one body and keeps every other byte', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '# T\n\n## 环境\n- Node 22\n- pnpm 9\n\n## 偏好\n- 简体中文\n', 'utf8')
+
+  const result = await s.store.replaceSection({ target: 'project-memory', section: '环境', body: '- Node 22\n- pnpm 10\n' }, s.probe)
+  assert.equal(result.ok, true)
+  assert.equal(readFileSync(file, 'utf8'), '# T\n\n## 环境\n- Node 22\n- pnpm 10\n\n## 偏好\n- 简体中文\n')
+})
+
+test('replaceSection refuses a body that is not made of entries', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## 环境\n- Node 22\n', 'utf8')
+  const before = readFileSync(file, 'utf8')
+
+  const prose = await s.store.replaceSection({ target: 'project-memory', section: '环境', body: '就是一些说明\n' }, s.probe)
+  assert.equal(prose.ok, false)
+  assert.equal(prose.code, 'invalid_body')
+
+  const heading = await s.store.replaceSection({ target: 'project-memory', section: '环境', body: '## 别的节\n- x\n' }, s.probe)
+  assert.equal(heading.ok, false, 'a heading would split the section and shift every line number')
+  assert.equal(readFileSync(file, 'utf8'), before)
+})
+
+test('replaceSection accepts a wrapped entry, the shape memory_edit writes', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## 环境\n- Node 22\n', 'utf8')
+
+  // An indented line under a bullet is that entry's continuation, not prose.
+  // Refusing it made the panel unable to save a file the tools had written.
+  const result = await s.store.replaceSection({ target: 'project-memory', section: '环境', body: '- Node 22\n  用 corepack 管 pnpm\n' }, s.probe)
+  assert.equal(result.ok, true)
+  assert.equal(readFileSync(file, 'utf8'), '## 环境\n- Node 22\n  用 corepack 管 pnpm\n')
+})
+
+test('removeSection drops one section and leaves the rest alone', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '# T\n\n## 甲\n- a\n\n## 乙\n- b\n', 'utf8')
+
+  const result = await s.store.removeSection({ target: 'project-memory', section: '甲' }, s.probe)
+  assert.equal(result.ok, true)
+  assert.equal(readFileSync(file, 'utf8'), '# T\n\n## 乙\n- b\n')
+
+  const missing = await s.store.removeSection({ target: 'project-memory', section: '不存在' }, s.probe)
+  assert.equal(missing.code, 'no_section')
+})
+
+test('a multi-line entry is replaced and removed as one span', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- head\n  续行一\n  续行二\n- next\n', 'utf8')
+
+  const replaced = await s.store.edit({ target: 'project-memory', section: 'A', match: 'head', replacement: '改过' }, s.probe)
+  assert.equal(replaced.ok, true)
+  assert.equal(readFileSync(file, 'utf8'), '## A\n- 改过\n- next\n', 'the continuation lines go with the entry they belonged to')
+
+  const removed = await s.store.edit({ target: 'project-memory', section: 'A', match: '改过', mode: 'remove' }, s.probe)
+  assert.equal(removed.ok, true)
+  assert.equal(readFileSync(file, 'utf8'), '## A\n- next\n', 'no orphaned continuation lines are left behind')
+})
+
+test('a match inside a continuation line resolves to its entry', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- head\n  续行里的关键词\n- next\n', 'utf8')
+
+  const result = await s.store.edit({ target: 'project-memory', section: 'A', match: '关键词', replacement: '改过' }, s.probe)
+  assert.equal(result.ok, true)
+  assert.equal(readFileSync(file, 'utf8'), '## A\n- 改过\n- next\n')
+})
+
+test('append refuses a multi-line text instead of writing several entries', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- one\n', 'utf8')
+
+  const result = await s.store.append({ target: 'project-memory', section: 'A', text: '一条\n- 伪装成的第二条\n## 伪造的节' }, s.probe)
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'multiline_text')
+  assert.equal(readFileSync(file, 'utf8'), '## A\n- one\n', 'nothing was written')
+})
+
+test('append refuses a blank section name instead of creating an empty heading', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- one\n', 'utf8')
+
+  const result = await s.store.append({ target: 'project-memory', section: '   ', text: 'x' }, s.probe)
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'empty_heading')
+  assert.equal(readFileSync(file, 'utf8'), '## A\n- one\n')
+})
+
+test('append reports the section it actually landed in', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- one\n', 'utf8')
+
+  const explicit = await s.store.append({ target: 'project-memory', section: 'A', text: 'two' }, s.probe)
+  assert.equal(explicit.section, 'A')
+
+  // No section named: the default is visible in the result rather than guessed.
+  const fallback = await s.store.append({ target: 'project-memory', text: 'three' }, s.probe)
+  assert.equal(fallback.section, 'Notes')
+  assert.ok(readFileSync(file, 'utf8').includes('## Notes'))
+})
+
+test('a duplicate heading is refused rather than silently resolving to the first', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## 同名\n- A\n\n## 同名\n- B\n', 'utf8')
+  const before = readFileSync(file, 'utf8')
+
+  const edit = await s.store.edit({ target: 'project-memory', section: '同名', match: 'B', replacement: '改B' }, s.probe)
+  assert.equal(edit.ok, false)
+  assert.equal(edit.code, 'ambiguous_section')
+  assert.equal(edit.duplicates, 2)
+  assert.equal(readFileSync(file, 'utf8'), before)
+
+  // The line number is the escape hatch, and it reaches the second section.
+  const at = await s.store.editAt({ target: 'project-memory', section: '同名', line: 4, replacement: '改B' }, s.probe)
+  assert.equal(at.ok, true)
+  assert.equal(readFileSync(file, 'utf8'), '## 同名\n- A\n\n## 同名\n- 改B\n')
+})
+
+test('bullets above the first H2 are reachable as the top section', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '# 标题\n\n- 顶层条目\n\n## 节\n- 内层\n', 'utf8')
+
+  const edited = await s.store.edit({ target: 'project-memory', section: '(top)', match: '顶层条目', replacement: '改过' }, s.probe)
+  assert.equal(edited.ok, true)
+  assert.equal(readFileSync(file, 'utf8'), '# 标题\n\n- 改过\n\n## 节\n- 内层\n')
+
+  // The document title names the same region, so a person can type what they see.
+  const viaTitle = await s.store.edit({ target: 'project-memory', section: '标题', match: '改过', replacement: '再改' }, s.probe)
+  assert.equal(viaTitle.ok, true)
+  assert.ok(readFileSync(file, 'utf8').includes('- 再改'))
+})
+
+test('memory_replace_section compresses a section through the tool', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '# T\n\n## 环境\n- Node 22\n- pnpm 9\n- git 2.4\n\n## 偏好\n- 简体中文\n', 'utf8')
+
+  const tool = replaceSectionTool({ cfg: s.cfg, store: s.store })
+  const result = await tool.execute({ target: 'project-memory', section: '环境', body: '- Node 22 + pnpm 10\n- git 2.4\n' }, { agent: s.agent })
+  assert.equal(result.ok, true)
+  assert.equal(readFileSync(file, 'utf8'), '# T\n\n## 环境\n- Node 22 + pnpm 10\n- git 2.4\n\n## 偏好\n- 简体中文\n')
+})
+
+test('memory_list_revisions and memory_restore round-trip one backup', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- one\n', 'utf8')
+
+  await s.store.append({ target: 'project-memory', section: 'A', text: 'two' }, s.probe)
+  const list = await listRevisionsTool({ cfg: s.cfg, store: s.store }).execute({ target: 'project-memory' }, { agent: s.agent })
+  assert.equal(list.ok, true)
+  assert.equal(list.count, 1)
+
+  const revision = contentRevision(readFileSync(file, 'utf8'))
+  const restored = await restoreTool({ cfg: s.cfg, store: s.store }).execute(
+    { target: 'project-memory', name: list.revisions[0].name, expectedRevision: revision },
+    { agent: s.agent },
+  )
+  assert.equal(restored.ok, true)
+  assert.equal(readFileSync(file, 'utf8'), '## A\n- one\n')
+})
+
+test('the new write tools return a result the host can snapshot', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- one\n', 'utf8')
+  await s.store.append({ target: 'project-memory', section: 'A', text: 'two' }, s.probe)
+
+  const { lossless } = await import('../src/tools/index.js')
+  const calls = [
+    () => replaceSectionTool({ cfg: s.cfg, store: s.store }).execute({ target: 'project-memory', section: 'A', body: '- only\n' }, { agent: s.agent }),
+    () => listRevisionsTool({ cfg: s.cfg, store: s.store }).execute({ target: 'project-memory' }, { agent: s.agent }),
+    () => restoreTool({ cfg: s.cfg, store: s.store }).execute({ target: 'project-memory', name: 'nope.md', expectedRevision: 'x' }, { agent: s.agent }),
+  ]
+  for (const call of calls) {
+    const value = lossless(await call())
+    assert.equal(JSON.stringify(value).includes('undefined'), false)
+  }
+})
+
+test('ageInDays measures from local midnight, not UTC', () => {
+  // 00:30 local in UTC+8 is still the previous day in UTC. Parsing the file date
+  // as UTC made the "30 days old" boundary slide by the offset, so a 29-day-old
+  // note could be archived by beforeDays: 30.
+  const now = new Date(2026, 10, 13, 0, 30, 0).getTime()
+  assert.equal(ageInDays('2026-11-13', now), 0, 'today is zero days old whatever the hour')
+  assert.equal(ageInDays('2026-11-12', now), 1)
+  assert.equal(ageInDays('2026-10-14', now), 30)
+  assert.equal(ageInDays('2026-10-15', now), 29, '29 days must not round up to 30')
+})
+
+test('ageInDays refuses a date the calendar does not have', () => {
+  assert.equal(ageInDays('2026-02-31'), null)
+  assert.equal(ageInDays('not-a-date'), null)
+  assert.equal(ageInDays(''), null)
+})
+
+test('backupKeep keeps a whole tidy-up session restorable', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '## A\n- e0\n', 'utf8')
+  for (let i = 1; i <= 9; i += 1) {
+    const rev = contentRevision(readFileSync(file, 'utf8'))
+    await s.store.edit({ target: 'project-memory', section: 'A', match: `e${i - 1}`, replacement: `e${i}`, expectedRevision: rev }, s.probe)
+  }
+  // Nine edits is an ordinary distillation pass. The default used to be 5, which
+  // rotated away the state from before the first edit — the one worth restoring.
+  const rows = s.store.listRevisions(file)
+  assert.equal(rows.length, 9)
+  const texts = rows.map((row) => s.store.readRevision(file, row.name).text)
+  assert.ok(texts.some((text) => text.includes('- e0')), 'the pre-edit state is still there')
 })

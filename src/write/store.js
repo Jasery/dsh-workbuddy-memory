@@ -518,6 +518,11 @@ export function createStore({ cfg, stateDir }) {
 
     const text = String(input.text ?? '').trim()
     if (!text) return fail('empty_text')
+    // One call, one entry. A newline inside `text` used to be written verbatim:
+    // a `- ` in it became a bullet the caller never declared, and an unindented
+    // `## ` became a section. On the daily path that is the worse of the two
+    // targets, because a daily file is pure append and nothing can undo it.
+    if (/\r?\n/.test(text)) return fail('multiline_text', { target: input.target, hint: 'pass one line per call; call again for another entry' })
 
     if (resolved.mode === 'append') {
       // Daily files: pure append, so another writer's bytes cannot be lost.
@@ -540,12 +545,10 @@ export function createStore({ cfg, stateDir }) {
     }
 
     return writeEverywhere(resolved.path, input.target, input.expectedRevision, input.operationId, (current) => {
-      if (!input.section) {
-        const result = appendToSection(current, DEFAULT_SECTION, text)
-        return { text: result.text, created: result.created }
-      }
-      const result = appendToSection(current, input.section, text)
-      return { text: result.text, created: result.created }
+      const section = input.section ? String(input.section).trim() : DEFAULT_SECTION
+      const result = appendToSection(current, section, text)
+      if (!result.ok) return { text: current, replaced: 0, reason: result.reason, hits: result.lines ?? [] }
+      return { text: result.text, replaced: 1, created: result.created, section }
     })
   }
 
@@ -569,7 +572,13 @@ export function createStore({ cfg, stateDir }) {
         replacement: input.replacement,
         mode: input.mode ?? 'replace',
       })
-      return { text: result.text, replaced: result.replaced, reason: result.reason, hits: result.lines }
+      return {
+        text: result.text,
+        replaced: result.replaced,
+        reason: result.reason,
+        hits: result.lines,
+        duplicates: result.reason === 'ambiguous_section' ? result.lines?.length : undefined,
+      }
     })
   }
 
@@ -603,7 +612,13 @@ export function createStore({ cfg, stateDir }) {
       }
 
       const result = transform(current.text)
-      if (result.replaced === 0) return fail(result.reason ?? 'no_match', { path, hits: result.hits ?? [], issues: result.issues ?? [] })
+      if (result.replaced === 0) {
+        // `ambiguous_section` carries the duplicate headings' line numbers so the
+        // caller can retry by position instead of guessing which copy it meant.
+        const extra = { path, hits: result.hits ?? [], issues: result.issues ?? [] }
+        if (result.duplicates) extra.duplicates = result.duplicates
+        return fail(result.reason ?? 'no_match', extra)
+      }
 
       const snapshot = backup(path)
       // No backup, no destructive write: the atomic replace is the one step
@@ -619,7 +634,18 @@ export function createStore({ cfg, stateDir }) {
       // `null`, never `undefined`: the host validates a tool result as lossless
       // JSON, and a single undefined property makes the whole output illegal —
       // the write succeeds but the caller sees "value is not lossless JSON".
-      return { ok: true, revision, previous: before, path, bytes: after.bytes, backup: backupPath ?? null, created: Boolean(result.created) }
+      return {
+        ok: true,
+        revision,
+        previous: before,
+        path,
+        bytes: after.bytes,
+        backup: backupPath ?? null,
+        created: Boolean(result.created),
+        // The section an append actually landed in, so an implicit fallback to
+        // `Notes` is visible instead of being guessed from the file.
+        section: result.section ?? null,
+      }
     }).catch((error) => {
       if (error?.code === 'lock_timeout') return fail('lock_timeout', { owner: error.owner })
       return fail('write_failed', { message: error?.message ?? String(error) })

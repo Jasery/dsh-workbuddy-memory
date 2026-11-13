@@ -6,10 +6,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { normalizeConfig } from '../src/config.js'
+import { normalizeConfig, resolveDistillAbove } from '../src/config.js'
 import { probeEnvironment } from '../src/env.js'
 import { createTranslator } from '../src/locale.js'
-import { redact, renderSections, SECTION_ORDER } from '../src/render.js'
+import { distillHint, redact, renderSections, SECTION_ORDER } from '../src/render.js'
 
 const t = createTranslator('zh')
 
@@ -239,3 +239,41 @@ test('the user block is truncated at the new 8000 default', () => {
   assert.match(user.text, /截断/)
 })
 
+
+test('the pressure hint fires as soon as the file passes the injection limit', () => {
+  // The gap this closes: distillAbove defaults to twice the limit, so a file
+  // between the two was already losing content on every turn with no hint.
+  const body = '## A\n' + ('- ' + 'x'.repeat(90) + '\n').repeat(120)
+  const { cfg, probe } = fixture({ user: body, config: { inject: { limits: { user: 8000 }, distillAbove: 0 } } })
+  assert.ok(body.length > cfg.inject.limits.user, 'fixture is past the limit')
+  assert.ok(body.length < cfg.inject.distillAbove, 'but still under the distillation threshold')
+
+  const hint = distillHint({ cfg, probe, t })
+  assert.notEqual(hint, '', 'a file over the limit must say so')
+  assert.match(hint, /8000/)
+})
+
+test('the strong distillation hint still fires past the threshold', () => {
+  const body = '## A\n' + ('- ' + 'x'.repeat(90) + '\n').repeat(200)
+  const { cfg, probe } = fixture({ user: body, config: { inject: { limits: { user: 8000 }, distillAbove: 0 } } })
+  assert.ok(body.length > cfg.inject.distillAbove)
+  const hint = distillHint({ cfg, probe, t })
+  assert.notEqual(hint, '')
+  assert.match(hint, new RegExp(String(cfg.inject.distillAbove)))
+})
+
+test('no hint while the file fits the budget', () => {
+  const { cfg, probe } = fixture({ user: '## A\n- 短\n' })
+  assert.equal(distillHint({ cfg, probe, t }), '')
+})
+
+test('a removed conflictPolicy key is ignored, not resurrected', () => {
+  // The key was declared and normalized but never read, so a person who set
+  // `overwrite` still got `fail`. It is gone from the config entirely now.
+  const cfg = normalizeConfig({ write: { conflictPolicy: 'overwrite' } })
+  assert.equal('conflictPolicy' in cfg.write, false)
+})
+
+test('backupKeep defaults to a tidy-up-sized window', () => {
+  assert.equal(normalizeConfig({}).write.backupKeep, 20)
+})

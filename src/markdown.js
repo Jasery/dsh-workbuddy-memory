@@ -11,6 +11,30 @@ const HEADING = /^(#{1,6})[ \t]+(.*?)[ \t]*$/
 /** One bullet entry: indent, marker, spacing, body. Prose and headings do not match. */
 const BULLET = /^([ \t]*)([-*])([ \t]+)(\S.*)$/
 
+/**
+ * Heading of the pseudo-section that owns bullets above the first real heading.
+ *
+ * `parseSections` starts at level 2 on purpose (an H1 is a document title, not a
+ * topic), which left bullets written directly under the H1 with no section at
+ * all: they were injected and searchable but could not be edited or removed by
+ * any tool. Rather than widening `parseSections` — an H1 spans the whole file,
+ * so it would swallow every subsection and make `appendToSection` insert at the
+ * end of the document — the top region is addressable under this name.
+ */
+export const TOP_SECTION = '(top)'
+
+/** Indent width, with a tab counted as two so mixed indentation still orders. */
+function indentWidth(indent) {
+  let width = 0
+  for (const char of indent) width += char === '\t' ? 2 : 1
+  return width
+}
+
+/** Whether a line is a blank line once its terminator is removed. */
+function isBlank(body) {
+  return body.trim() === ''
+}
+
 /** Dominant line ending of a document. */
 export function detectEol(text) {
   const crlf = (text.match(/\r\n/g) ?? []).length
@@ -93,30 +117,171 @@ export function parseSections(text) {
   return sections
 }
 
-/** Find one section by heading text (exact, then case-insensitive). */
-export function findSection(text, heading) {
+/**
+ * Every section carrying one heading, exact matches first then case-insensitive.
+ *
+ * Duplicate headings are not hypothetical: merging two files, copy-pasting a
+ * block, or two clients each creating the same section all produce them. A
+ * lookup that silently returns the first one makes the second unreachable — the
+ * caller reads it, edits it, and gets `no_match` with no hint that the heading
+ * repeats.
+ *
+ * @param {string} text
+ * @param {string} heading
+ * @returns {{ heading: string, level: number, line: number, endLine: number, start: number, end: number }[]}
+ */
+export function findSections(text, heading) {
   const sections = parseSections(text)
   const wanted = String(heading ?? '').trim()
-  return sections.find((section) => section.heading === wanted) ?? sections.find((section) => section.heading.toLowerCase() === wanted.toLowerCase()) ?? null
+  const exact = sections.filter((section) => section.heading === wanted)
+  if (exact.length > 0) return exact
+  const folded = wanted.toLowerCase()
+  return sections.filter((section) => section.heading.toLowerCase() === folded)
+}
+
+/**
+ * Locate one section by heading text (exact, then case-insensitive).
+ *
+ * Returns the first match, so an existing caller keeps its old behaviour; use
+ * `findSections` when the caller must know whether the heading repeats.
+ *
+ * @param {string} text
+ * @param {string} heading
+ */
+export function findSection(text, heading) {
+  return findSections(text, heading)[0] ?? null
+}
+
+/**
+ * Resolve a section for a caller that also names a line number.
+ *
+ * With duplicate headings, "the section called X" is ambiguous but "the section
+ * called X that contains line N" is not: the line number disambiguates without
+ * asking the caller to re-read the file. Only when no match contains `line` is
+ * the ordinary `resolveSection` answer used, so the error codes stay the same.
+ *
+ * @param {string} text
+ * @param {string} heading
+ * @param {number} line
+ */
+export function resolveSectionAt(text, heading, line) {
+  if (Number.isInteger(line)) {
+    const containing = findSections(text, heading).find((section) => line > section.line && line <= section.endLine)
+    if (containing) return { ok: true, section: containing }
+  }
+  return resolveSection(text, heading)
+}
+
+/**
+ * The region above the first level-2 heading, as a pseudo-section.
+ *
+ * Its `line` is -1 so the "first body line" is `line + 1 === 0`, which lets the
+ * entry walkers in this module treat it like any other section. Only returned
+ * when it actually holds a bullet: an empty header region is not a target worth
+ * naming, and `no_section` is the more useful answer there.
+ *
+ * @param {string} text
+ */
+export function topSection(text) {
+  const lines = splitLines(text)
+  let fence = null
+  let first = lines.length
+  for (let index = 0; index < lines.length; index += 1) {
+    const body = lines[index].replace(/\r?\n$/, '')
+    const fenceMatch = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(body)
+    if (fenceMatch) {
+      if (!fence) fence = fenceMatch[1][0].repeat(3)
+      else if (fenceMatch[1].startsWith(fence)) fence = null
+      continue
+    }
+    if (fence) continue
+    const match = HEADING.exec(body)
+    if (match && match[1].length >= 2) {
+      first = index
+      break
+    }
+  }
+
+  for (let index = 0; index < first; index += 1) {
+    if (BULLET.test(lines[index].replace(/\r?\n$/, ''))) {
+      return { heading: TOP_SECTION, level: 1, line: -1, endLine: first - 1, start: 0, end: lines.slice(0, first).join('').length }
+    }
+  }
+  return null
+}
+
+/**
+ * Resolve a caller's section name to exactly one section, or explain why not.
+ *
+ * `duplicates > 1` is a refusal, not a guess: picking the first is how the
+ * second copy became unreachable in the first place, and the panel needs line
+ * numbers to offer "edit that one instead".
+ *
+ * @param {string} text
+ * @param {string} heading
+ * @returns {{ ok: true, section: object } | { ok: false, reason: 'no_section' | 'ambiguous_section', duplicates?: number, lines?: number[] }}
+ */
+export function resolveSection(text, heading) {
+  const wanted = String(heading ?? '').trim()
+  const matches = findSections(text, wanted)
+  if (matches.length > 1) {
+    return { ok: false, reason: 'ambiguous_section', duplicates: matches.length, lines: matches.map((section) => section.line) }
+  }
+  if (matches.length === 1) return { ok: true, section: matches[0] }
+
+  // The top region is only addressable by its pseudo name, or by the document's
+  // own title — the name a person reads at the top of the file and reasonably
+  // types into `section`.
+  if (wanted === TOP_SECTION) {
+    const top = topSection(text)
+    return top ? { ok: true, section: top } : { ok: false, reason: 'no_section' }
+  }
+  const top = topSection(text)
+  if (top) {
+    const title = splitLines(text)[0]?.replace(/\r?\n$/, '') ?? ''
+    const match = HEADING.exec(title)
+    if (match && match[1].length === 1 && match[2].trim().toLowerCase() === wanted.toLowerCase()) {
+      return { ok: true, section: top }
+    }
+  }
+  return { ok: false, reason: 'no_section' }
 }
 
 /**
  * Append one bullet to a section, creating the section when missing.
  *
+ * Refuses an empty heading and a multi-line entry rather than writing them:
+ * a whitespace heading produced a `##    ` line that no lookup could ever match
+ * again, and a newline inside `line` turned one call into several entries — an
+ * unindented `## ` in the text even created a section. Both are silent damage,
+ * so both are errors here, not something the caller discovers later.
+ *
  * @param {string} text - current document.
  * @param {string} heading - section heading without `##`.
  * @param {string} line - entry text without the leading `- `.
- * @returns {{ text: string, created: boolean }}
+ * @returns {{ ok: boolean, text: string, created: boolean, reason?: string }}
  */
 export function appendToSection(text, heading, line) {
   const eol = detectEol(text)
-  const entry = `- ${line.trim()}`
-  const section = findSection(text, heading)
+  const title = String(heading ?? '').trim()
+  if (!title) return { ok: false, text, created: false, reason: 'empty_heading' }
+
+  const raw = String(line ?? '').trim()
+  if (!raw) return { ok: false, text, created: false, reason: 'empty_text' }
+  if (/\r?\n/.test(raw)) return { ok: false, text, created: false, reason: 'multiline_text' }
+  // A body starting with a marker would become a second bullet on one line.
+  const entry = `- ${raw.replace(/^([-*])[ \t]+/, '')}`
+
+  const resolved = resolveSection(text, title)
+  if (!resolved.ok && resolved.reason === 'ambiguous_section') {
+    return { ok: false, text, created: false, reason: 'ambiguous_section', lines: resolved.lines, duplicates: resolved.duplicates }
+  }
+  const section = resolved.ok ? resolved.section : null
 
   if (!section) {
     const head = text.length === 0 ? '' : text.endsWith('\n') ? text : text + eol
     const spacer = head.length === 0 ? '' : eol
-    return { text: `${head}${spacer}## ${heading}${eol}${eol}${entry}${eol}`, created: true }
+    return { ok: true, text: `${head}${spacer}## ${title}${eol}${eol}${entry}${eol}`, created: true }
   }
 
   const lines = splitLines(text)
@@ -134,30 +299,115 @@ export function appendToSection(text, heading, line) {
   lines[insertAt] = withEol
   lines.splice(insertAt + 1, 0, `${entry}${eol}`)
 
-  return { text: lines.join(''), created: false }
+  return { ok: true, text: lines.join(''), created: false }
 }
 
 /**
- * Drop one bullet line without piling up blank lines.
+ * The span of one entry: its bullet line plus every line that belongs to it.
  *
- * A single removal keeps the line's terminator, so the file's shape survives.
- * But a second removal next to it would leave a second blank line, and a few
- * edits later the section is mostly whitespace. So a removal splices the whole
- * line out when the row above it is already blank (or it is the first line);
- * otherwise it blanks the line as before.
+ * An entry is not one line. A wrapped bullet — the common shape in a memory file
+ * written by hand or by a model — continues on indented lines, may contain blank
+ * lines inside a paragraph, and may own nested sub-bullets. Treating only the
+ * first line as the entry left the rest behind as orphaned text that no tool
+ * could then address, delete, or even see.
+ *
+ * Termination is deliberately conservative:
+ *  - a heading always ends the entry;
+ *  - a bullet at the same or shallower indent starts a new entry;
+ *  - a bullet *deeper* than the entry's own indent is a child, so it is kept;
+ *  - a blank line is kept only when the line after it is still indented past the
+ *    entry, so a blank line that separates two entries is not swallowed;
+ *  - anything else ends it.
+ *
+ * @param {string[]} lines - lines with their terminators.
+ * @param {number} index - 0-based index of the bullet line.
+ * @returns {{ start: number, end: number } | null} null when the line is not a bullet.
+ */
+export function entrySpan(lines, index) {
+  const body = (lines[index] ?? '').replace(/\r?\n$/, '')
+  const match = BULLET.exec(body)
+  if (!match) return null
+  const baseIndent = indentWidth(match[1])
+
+  let end = index
+  for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+    const next = lines[cursor].replace(/\r?\n$/, '')
+    if (HEADING.test(next)) break
+
+    if (isBlank(next)) {
+      // Keep the gap only when the entry resumes after it; otherwise this blank
+      // line is the separator between entries and belongs to neither.
+      const after = (lines[cursor + 1] ?? '').replace(/\r?\n$/, '')
+      if (after === '' || HEADING.test(after)) break
+      if (!/^([ \t]{2,}|\t)/.test(after) && !BULLET.test(after)) break
+      if (!/^([ \t]{2,}|\t)/.test(after) && indentWidth(BULLET.exec(after)?.[1] ?? '') <= baseIndent) break
+      end = cursor
+      continue
+    }
+
+    const child = BULLET.exec(next)
+    if (child) {
+      // A deeper bullet is this entry's child; one at the same or a shallower
+      // indent is the next entry.
+      if (indentWidth(child[1]) > baseIndent) {
+        end = cursor
+        continue
+      }
+      break
+    }
+
+    // An indented non-bullet line is a wrapped continuation.
+    if (/^([ \t]{2,}|\t)/.test(next)) {
+      end = cursor
+      continue
+    }
+    break
+  }
+  return { start: index, end }
+}
+
+/**
+ * Whether a line is inside an entry that starts above it.
+ *
+ * `editEntry` must not treat a continuation line as a candidate: the caller's
+ * `match` may well occur there, but the addressable thing is the entry it
+ * belongs to.
+ *
+ * @param {string[]} lines
+ * @param {number} index
+ * @returns {number} the entry's start line, or -1 when `index` is not a continuation.
+ */
+export function continuationOwner(lines, index) {
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    const body = lines[cursor].replace(/\r?\n$/, '')
+    if (isBlank(body) || HEADING.test(body)) return -1
+    const span = entrySpan(lines, cursor)
+    if (span && index >= span.start && index <= span.end) return span.start
+    if (BULLET.test(body)) return -1
+  }
+  return -1
+}
+
+/**
+ * Drop one entry — its bullet line and every continuation line — cleanly.
+ *
+ * Removing only the bullet left the indented remainder behind as orphaned text
+ * that no tool could address afterwards, so the whole span goes. The span is
+ * spliced rather than blanked: a blanked span would leave the same column of
+ * whitespace this function exists to avoid, only wider.
  *
  * @param {string[]} lines - mutable line array, terminators kept.
- * @param {number} index - 0-based line index.
+ * @param {number} index - 0-based line index of the entry's bullet line.
  * @param {string} eol - the document's line ending.
  * @returns {string[]} the array to keep using (splicing shortens it).
  */
 function removeBulletLine(lines, index, eol) {
-  const previous = index > 0 ? lines[index - 1].replace(/\r?\n$/, '') : ''
-  if (index === 0 || previous.trim() === '') {
+  const span = entrySpan(lines, index)
+  if (!span) {
     lines.splice(index, 1)
     return lines
   }
-  lines[index] = lines[index].endsWith('\n') ? eol : ''
+  lines.splice(span.start, span.end - span.start + 1)
   return lines
 }
 
@@ -202,29 +452,52 @@ function collapseBlankRuns(lines, eol, from = 0, to = lines.length - 1) {
 }
 
 /**
- * Rewrite one bullet's body, keeping its marker, indentation and spacing.
+ * Rewrite one entry's body, keeping its marker, indentation and spacing.
  *
  * A caller may pass the body with or without a leading `- `: the prefix is
  * owned by the document, not by the caller, so it is re-applied here instead of
  * being taken from the replacement. Dropping it would silently demote an entry
  * to a paragraph, which every later `memory_edit` then refuses to find.
  *
+ * A replacement containing newlines keeps them as continuation lines of the
+ * same entry, indented to match. Writing them through verbatim turned one call
+ * into several entries — a `- ` inside the text became a bullet the caller never
+ * declared, and an unindented `## ` became a section. Indenting is the faithful
+ * reading of "one entry whose text wraps".
+ *
  * @param {string} body - the current line without its terminator.
  * @param {string} replacement - new body, optionally prefixed with `- `.
- * @returns {string|null} the rewritten line without terminator, or null when empty.
+ * @param {string} eol - the document's line ending.
+ * @returns {string|null} the rewritten entry without terminator, or null when empty.
  */
-function rewriteBulletBody(body, replacement) {
+function rewriteBulletBody(body, replacement, eol = '\n') {
   const match = BULLET.exec(body)
   if (!match) return null
   const [, indent, marker, spacing] = match
-  let next = String(replacement ?? '').trim()
+  const raw = String(replacement ?? '').trim()
   // A bare marker is a caller that meant "no text", not an entry whose body is
   // the dash itself.
-  if (/^[-*]$/.test(next)) return null
-  const prefixed = /^([-*])[ \t]+/.exec(next)
-  if (prefixed) next = next.slice(prefixed[0].length).trim()
-  if (!next) return null
-  return `${indent}${marker}${spacing}${next}`
+  if (/^[-*]$/.test(raw)) return null
+
+  const segments = raw.split(/\r?\n/)
+  let head = segments[0].trim()
+  const prefixed = /^([-*])[ \t]+/.exec(head)
+  if (prefixed) head = head.slice(prefixed[0].length).trim()
+  if (!head) return null
+
+  const rest = segments.slice(1)
+  // Trailing blank lines are not part of the entry.
+  while (rest.length > 0 && rest[rest.length - 1].trim() === '') rest.pop()
+  if (rest.length === 0) return `${indent}${marker}${spacing}${head}`
+
+  const pad = `${indent}  `
+  const continuation = rest.map((line) => {
+    // A marker on a continuation line would read as a nested entry the caller
+    // never declared. It is wrapped text, so the marker goes.
+    const text = line.trim().replace(/^([-*])[ \t]+/, '')
+    return text === '' ? '' : `${pad}${text}`
+  })
+  return [`${indent}${marker}${spacing}${head}`, ...continuation].join(eol)
 }
 
 /**
@@ -235,23 +508,29 @@ function rewriteBulletBody(body, replacement) {
  * A match that exists only in prose is reported as `not_an_entry` rather than
  * `no_match`, so the caller learns the text is there but is not addressable.
  *
+ * A match that lands on a continuation line resolves to the entry that owns it:
+ * the text is genuinely there, and the addressable thing is its bullet. Reporting
+ * `not_an_entry` for it — as this did — told the caller the text could not be
+ * edited at all, when the entry was one line up.
+ *
  * @param {string} text
  * @param {string} heading
- * @param {string} match - literal text (or `literal`, see options) identifying the entry.
+ * @param {string} match - literal text identifying the entry.
  * @param {{ replacement?: string, mode?: 'replace'|'remove', all?: boolean }} options
  * @returns {{ text: string, replaced: number, lines: number[], reason?: string }}
  */
 export function editEntry(text, heading, match, options = {}) {
   const mode = options.mode ?? 'replace'
-  const section = findSection(text, heading)
-  if (!section) return { text, replaced: 0, lines: [], reason: 'no_section' }
+  const resolved = resolveSection(text, heading)
+  if (!resolved.ok) return { text, replaced: 0, lines: resolved.lines ?? [], reason: resolved.reason }
+  const section = resolved.section
 
   const lines = splitLines(text)
-  const hits = []
+  const hits = new Set()
   let proseHit = false
   let fence = null
   for (let index = section.line + 1; index <= section.endLine; index += 1) {
-    const body = lines[index].replace(/\r?\n$/, '')
+    const body = (lines[index] ?? '').replace(/\r?\n$/, '')
     const fenceMatch = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(body)
     if (fenceMatch) {
       if (!fence) fence = fenceMatch[1][0].repeat(3)
@@ -261,20 +540,28 @@ export function editEntry(text, heading, match, options = {}) {
     if (fence) continue
     if (!body.trim()) continue
     if (!body.includes(match)) continue
-    if (BULLET.test(body)) hits.push(index)
+    if (BULLET.test(body)) {
+      hits.add(index)
+      continue
+    }
+    // A continuation line belongs to the entry above it, so the hit is that
+    // entry — not a reason to refuse.
+    const owner = continuationOwner(lines, index)
+    if (owner >= 0 && owner > section.line) hits.add(owner)
     else proseHit = true
   }
 
-  if (hits.length === 0) {
+  const found = [...hits].sort((a, b) => a - b)
+  if (found.length === 0) {
     return { text, replaced: 0, lines: [], reason: proseHit ? 'not_an_entry' : 'no_match' }
   }
-  if (hits.length > 1 && options.all !== true) return { text, replaced: 0, lines: hits, reason: 'ambiguous' }
+  if (found.length > 1 && options.all !== true) return { text, replaced: 0, lines: found, reason: 'ambiguous' }
 
   const eol = detectEol(text)
-  const targets = options.all === true ? hits : [hits[0]]
+  const targets = options.all === true ? found : [found[0]]
 
   if (mode === 'remove') {
-    // Highest first, so splicing one row cannot shift the next index.
+    // Highest first, so splicing one span cannot shift the next index.
     for (const index of [...targets].sort((a, b) => b - a)) removeBulletLine(lines, index, eol)
     return {
       text: collapseBlankRuns(lines, eol, section.line, section.endLine).join(''),
@@ -288,12 +575,22 @@ export function editEntry(text, heading, match, options = {}) {
   const rewrites = new Map()
   for (const index of targets) {
     const body = lines[index].replace(/\r?\n$/, '')
-    const next = rewriteBulletBody(body, options.replacement)
+    const next = rewriteBulletBody(body, options.replacement, eol)
     if (next === null) return { text, replaced: 0, lines: targets, reason: 'empty_text' }
-    rewrites.set(index, `${next}${eol}`)
+    rewrites.set(index, next)
   }
 
-  for (const [index, line] of rewrites) lines[index] = line
+  // Replace each entry's whole span, highest first so earlier indices stay
+  // valid. Leaving the old continuation lines in place was the bug: the entry
+  // was rewritten but its wrapped text survived as orphans.
+  for (const index of [...targets].sort((a, b) => b - a)) {
+    const span = entrySpan(lines, index) ?? { start: index, end: index }
+    const next = rewrites.get(index)
+    const replacementLines = next.split(eol).map((line) => `${line}${eol}`)
+    // The last line of a document may have no terminator; keep that shape.
+    if (!lines[span.end].endsWith('\n')) replacementLines[replacementLines.length - 1] = replacementLines[replacementLines.length - 1].replace(/\r?\n$/, '')
+    lines.splice(span.start, span.end - span.start + 1, ...replacementLines)
+  }
   return { text: lines.join(''), replaced: targets.length, lines: targets }
 }
 
@@ -318,13 +615,18 @@ export function ensureTrailingEol(text) {
  * @returns {{ text: string, replaced: number, reason?: string, lines: number[] }}
  */
 export function editEntryAt(text, heading, line, options = {}) {
-  const section = findSection(text, heading)
-  if (!section) return { text, replaced: 0, lines: [], reason: 'no_section' }
+  const lines = splitLines(text)
+  // Resolve against the section that actually contains this line. With duplicate
+  // headings the first match ends above `line`, and answering `stale_line` there
+  // would strand the second section entirely — the line number is exactly the
+  // escape hatch a duplicate heading is supposed to have.
+  const resolved = resolveSectionAt(text, heading, line)
+  if (!resolved.ok) return { text, replaced: 0, lines: resolved.lines ?? [], reason: resolved.reason }
+  const section = resolved.section
   if (!Number.isInteger(line) || line <= section.line || line > section.endLine) {
     return { text, replaced: 0, lines: [], reason: 'stale_line' }
   }
 
-  const lines = splitLines(text)
   const body = lines[line]?.replace(/\r?\n$/, '') ?? ''
   if (!BULLET.test(body)) return { text, replaced: 0, lines: [line], reason: 'not_an_entry' }
 
@@ -338,13 +640,27 @@ export function editEntryAt(text, heading, line, options = {}) {
   }
   // The marker is the document's, not the caller's: it is preserved here so a
   // replacement written as plain text cannot demote the entry to a paragraph.
-  const next = rewriteBulletBody(body, options.replacement)
+  const next = rewriteBulletBody(body, options.replacement, eol)
   if (next === null) return { text, replaced: 0, lines: [line], reason: 'empty_text' }
-  lines[line] = `${next}${eol}`
+
+  const span = entrySpan(lines, line) ?? { start: line, end: line }
+  const replacementLines = next.split(eol).map((entry) => `${entry}${eol}`)
+  if (!lines[span.end].endsWith('\n')) replacementLines[replacementLines.length - 1] = replacementLines[replacementLines.length - 1].replace(/\r?\n$/, '')
+  lines.splice(span.start, span.end - span.start + 1, ...replacementLines)
   return { text: lines.join(''), replaced: 1, lines: [line] }
 }
 
-/** Bullet entries of a section with their line numbers, in document order. */
+/**
+ * Bullet entries of a section with their line numbers, in document order.
+ *
+ * Continuation lines and nested sub-bullets are not entries of their own; they
+ * belong to the bullet above them, so they are folded into that entry's `span`
+ * instead of being reported as separate rows. Counting them separately is what
+ * made the panel's "N entries" disagree with what a person sees.
+ *
+ * @param {string} text
+ * @param {string} heading
+ */
 export function sectionEntries(text, heading) {
   const section = findSection(text, heading)
   if (!section) return []
@@ -353,7 +669,12 @@ export function sectionEntries(text, heading) {
   for (let index = section.line + 1; index <= section.endLine; index += 1) {
     const body = (lines[index] ?? '').replace(/\r?\n$/, '')
     const match = /^([ \t]*)[-*][ \t]+(\S.*)$/.exec(body)
-    if (match) out.push({ line: index, indent: match[1].length, text: match[2].trim() })
+    if (!match) continue
+    const span = entrySpan(lines, index)
+    const end = span?.end ?? index
+    out.push({ line: index, indent: match[1].length, text: match[2].trim(), endLine: end })
+    // Skip the lines this entry already owns: they are its body, not entries.
+    index = end
   }
   return out
 }
@@ -395,12 +716,16 @@ export function removeLines(text, lineNumbers) {
   return squeezed.length === 0 ? '' : `${squeezed.join(eol)}${eol}`
 }
 
-/** Count `- ` entries under one section. */
+/**
+ * Count entries under one section.
+ *
+ * A continuation line is not an entry: counting it inflated every section that
+ * holds a wrapped bullet, which is what the panel's row counts show.
+ */
 export function countEntries(text, heading) {
   const section = findSection(text, heading)
   if (!section) return 0
-  const lines = splitLines(text).slice(section.line + 1, section.endLine + 1)
-  return lines.filter((line) => /^[ \t]*[-*][ \t]+\S/.test(line)).length
+  return sectionEntries(text, section.heading).length
 }
 
 /** Raw body of one section, without its heading line. */
@@ -418,10 +743,17 @@ export function sectionBody(text, heading) {
   }
 }
 
-/** Lines an L2 editor may not write: headings and prose have no entry identity. */
+/**
+ * Lines an L2 editor may not write: headings and prose have no entry identity.
+ *
+ * An indented line under a bullet is that entry's continuation, not prose — the
+ * editor refused multi-line entries outright, which made the L2 panel unable to
+ * reproduce the very shape `memory_edit` now preserves.
+ */
 function sectionBodyIssues(body) {
   const issues = []
   const lines = splitLines(body)
+  let ownerIndent = -1
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index].replace(/\r?\n$/, '')
     if (!line.trim()) continue
@@ -429,7 +761,14 @@ function sectionBodyIssues(body) {
       issues.push({ line: index + 1, text: line, code: 'heading' })
       continue
     }
-    if (!BULLET.test(line)) issues.push({ line: index + 1, text: line, code: 'not_entry' })
+    const bullet = BULLET.exec(line)
+    if (bullet) {
+      ownerIndent = indentWidth(bullet[1])
+      continue
+    }
+    // Indented under the entry above it: a continuation, not prose.
+    if (ownerIndent >= 0 && /^([ \t]{2,}|\t)/.test(line) && indentWidth(/^([ \t]*)/.exec(line)[1]) > ownerIndent) continue
+    issues.push({ line: index + 1, text: line, code: 'not_entry' })
   }
   return issues
 }
@@ -448,8 +787,9 @@ function sectionBodyIssues(body) {
  * @returns {{ ok: boolean, text: string, reason?: string, issues?: object[], entries?: number }}
  */
 export function replaceSectionBody(text, heading, body) {
-  const section = findSection(text, heading)
-  if (!section) return { ok: false, text, reason: 'no_section' }
+  const resolved = resolveSection(text, heading)
+  if (!resolved.ok) return { ok: false, text, reason: resolved.reason, lines: resolved.lines, duplicates: resolved.duplicates }
+  const section = resolved.section
 
   const issues = sectionBodyIssues(body)
   if (issues.length > 0) return { ok: false, text, reason: 'invalid_body', issues }
@@ -477,8 +817,9 @@ export function replaceSectionBody(text, heading, body) {
  * leaves behind. Every other byte stays where it was.
  */
 export function removeSection(text, heading) {
-  const section = findSection(text, heading)
-  if (!section) return { ok: false, text, reason: 'no_section' }
+  const resolved = resolveSection(text, heading)
+  if (!resolved.ok) return { ok: false, text, reason: resolved.reason, lines: resolved.lines, duplicates: resolved.duplicates }
+  const section = resolved.section
 
   const lines = splitLines(text)
   const before = lines.slice(0, section.line)

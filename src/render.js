@@ -97,33 +97,36 @@ export function renderSections({ cfg, probe, t }) {
 
 /**
  * A one-line pressure hint, appended to the rules block when the user memory
- * has outgrown its budget.
+ * has outgrown a budget.
  *
- * Without it the file only ever grows: the injected block is truncated silently
- * at `limits.user`, so the model keeps appending to a store whose tail nobody
- * reads, and the truncation is invisible from inside the conversation. The hint
- * names the actual numbers so the model can decide rather than guess.
+ * Two thresholds, because there are two distinct problems:
+ *  - past `limits.user`, the injected block is already truncated, so part of the
+ *    file is unreadable *right now* — that is a warning, not a suggestion;
+ *  - past `distillAbove`, the file is large enough that a by-topic distillation
+ *    is worth the turn.
  *
- * `distillAbove` is a threshold on the file's real size, not on the injected
- * text: a file just over the limit is still worth reading in full, while one at
- * twice the limit is already losing half of itself on every turn.
+ * The original single threshold was `distillAbove`, which defaults to twice the
+ * limit: a file between the two got no hint at all while already losing content
+ * on every turn. `limits.user` is the honest lower bound.
  *
  * @param {{ cfg: object, probe: object, t: Function }} input
- * @returns {string} the hint with a leading newline, or '' when not over.
+ * @returns {string} the hint with a leading newline, or '' when under both.
  */
 export function distillHint({ cfg, probe, t }) {
   if (!cfg.inject.user || !probe.user.memoryExists) return ''
+
+  const limit = Number(cfg.inject.limits.user) || 0
   const above = Number(cfg.inject.distillAbove) || 0
-  if (above <= 0) return ''
-
   const chars = fileCharCount(probe.user.memoryPath)
-  if (chars <= above) return ''
 
-  return `\n\n${t('distillOverLimit', {
-    chars,
-    above,
-    limit: cfg.inject.limits.user,
-  })}`
+  // Already losing content: say so first, whatever the distillation threshold is.
+  if (limit > 0 && chars > limit) {
+    return `\n\n${t('overLimitHint', { chars, limit, above })}`
+  }
+  if (above > 0 && chars > above) {
+    return `\n\n${t('distillOverLimit', { chars, above, limit })}`
+  }
+  return ''
 }
 
 /** Characters in a file, or 0 when it cannot be read. */

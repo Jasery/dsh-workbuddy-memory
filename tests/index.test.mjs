@@ -86,7 +86,7 @@ test('the plugin declares only the two services it cannot live without', () => {
   assert.equal(name, 'dsh-workbuddy-memory')
 })
 
-test('apply mounts four sections, six tools, one guard and the panel routes', () => {
+test('apply mounts four sections, nine tools, one guard and the panel routes', () => {
   const { home, root, config } = workspace()
   const { ctx, record } = fakeCtx()
   apply(ctx, config)
@@ -97,7 +97,7 @@ test('apply mounts four sections, six tools, one guard and the panel routes', ()
     'workbuddy-memory:user',
     'workbuddy-memory:profile',
   ])
-  assert.deepEqual(record.tools, ['memory_status', 'memory_read', 'memory_search', 'memory_append', 'memory_edit', 'memory_prune'])
+  assert.deepEqual(record.tools, ['memory_status', 'memory_read', 'memory_search', 'memory_append', 'memory_edit', 'memory_prune', 'memory_replace_section', 'memory_list_revisions', 'memory_restore'])
   assert.equal(record.guards, 1)
   assert.deepEqual(record.routes, ['/workbuddy-memory'])
   assert.deepEqual(record.injected, ['webServer'])
@@ -114,13 +114,13 @@ test('search.enabled: false leaves memory_search out of the catalog', () => {
   // the model should not see a tool it cannot use.
   assert.equal(record.tools.includes('memory_search'), false)
   assert.equal(record.tools.includes('memory_prune'), true)
-  assert.equal(record.tools.length, 5)
+  assert.equal(record.tools.length, 8)
 })
 
 test('an invalid config degrades to defaults instead of throwing', () => {
   const { ctx, record } = fakeCtx()
   assert.doesNotThrow(() => apply(ctx, 'not-an-object'))
-  assert.equal(record.tools.length, 6)
+  assert.equal(record.tools.length, 9)
   assert.equal(record.sections.length, 4)
 })
 
@@ -129,7 +129,7 @@ test('a headless host still gets tools, it just has no panel', () => {
   const { ctx, record } = fakeCtx({ withWebServer: false })
   apply(ctx, config)
 
-  assert.equal(record.tools.length, 6)
+  assert.equal(record.tools.length, 9)
   assert.deepEqual(record.routes, [])
 })
 
@@ -139,7 +139,7 @@ test('a host without tools.guard does not lose the rest', () => {
   apply(ctx, config)
 
   assert.equal(record.guards, 0)
-  assert.equal(record.tools.length, 6)
+  assert.equal(record.tools.length, 9)
 })
 
 test('ui.enabled: false leaves the routes unregistered', () => {

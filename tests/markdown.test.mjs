@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { allEntries, editEntryAt, removeLines, appendToSection, countEntries, editEntry, ensureTrailingEol, findSection, parseSections, splitLines } from '../src/markdown.js'
+import { allEntries, editEntryAt, removeLines, appendToSection, countEntries, editEntry, ensureTrailingEol, entrySpan, findSection, parseSections, resolveSection, splitLines, topSection } from '../src/markdown.js'
 
 const BASE = ['# Memory', '', '## 偏好', '- 用简体中文', '- 避免人称代词', '', '## 项目', '- DSH 插件', ''].join('\n')
 
@@ -186,7 +186,7 @@ test('a removal only tidies blanks inside the section it edited', () => {
   // Two blank lines separate B's entries. Editing A must not touch them: the
   // file is shared with another client, so unrelated bytes stay put.
   const text = '## A\n- a1\n- a2\n\n## B\n- b1\n\n\n- b2\n'
-  const expected = '## A\n\n- a2\n\n## B\n- b1\n\n\n- b2\n'
+  const expected = '## A\n- a2\n\n## B\n- b1\n\n\n- b2\n'
 
   const removed = editEntry(text, 'A', 'a1', { mode: 'remove' })
   assert.equal(removed.text, expected)
@@ -222,4 +222,108 @@ test('a nested heading ends its parent section, a deeper one does not', () => {
   assert.equal(byName.get('A').endLine, 3)
   assert.equal(byName.get('A1').endLine, 3)
   assert.equal(byName.get('B').endLine, 5)
+})
+
+test('entrySpan keeps wrapped lines, nested bullets and an inner blank line', () => {
+  const lines = splitLines('## S\n- head\n  续行一\n\n  续行二\n  - 子条目\n- next\n')
+  assert.deepEqual(entrySpan(lines, 1), { start: 1, end: 5 })
+  // A blank line that separates two entries belongs to neither.
+  const separated = splitLines('- one\n\n- two\n')
+  assert.deepEqual(entrySpan(separated, 0), { start: 0, end: 0 })
+})
+
+test('edit replaces a whole multi-line entry', () => {
+  const text = '## A\n- head\n  续行一\n  续行二\n- next\n'
+  const result = editEntry(text, 'A', 'head', { replacement: '改过' })
+  assert.equal(result.replaced, 1)
+  assert.equal(result.text, '## A\n- 改过\n- next\n')
+})
+
+test('remove takes the continuation lines with the entry', () => {
+  const text = '## A\n- head\n  续行一\n  续行二\n- next\n'
+  const result = editEntry(text, 'A', 'head', { mode: 'remove' })
+  assert.equal(result.text, '## A\n- next\n')
+  assert.equal(result.text.includes('续行'), false, 'no orphaned continuation text')
+})
+
+test('a match on a continuation line edits the entry that owns it', () => {
+  const text = '## A\n- head\n  关键词在这里\n- next\n'
+  const result = editEntry(text, 'A', '关键词', { replacement: '改过' })
+  assert.equal(result.replaced, 1)
+  assert.equal(result.text, '## A\n- 改过\n- next\n')
+})
+
+test('a multi-line replacement stays one entry', () => {
+  const text = '## A\n- one\n- two\n'
+  const result = editEntry(text, 'A', 'one', { replacement: '第一行\n第二行\n- 伪装的条目' })
+  assert.equal(result.replaced, 1)
+  // One bullet, and the wrapped text is indented under it — not three entries.
+  assert.equal(result.text, '## A\n- 第一行\n  第二行\n  伪装的条目\n- two\n')
+})
+
+test('append refuses a multi-line entry and a blank heading', () => {
+  const text = '## A\n- one\n'
+  assert.equal(appendToSection(text, 'A', 'x\ny').reason, 'multiline_text')
+  assert.equal(appendToSection(text, '  ', 'x').reason, 'empty_heading')
+  assert.equal(appendToSection(text, '', 'x').reason, 'empty_heading')
+})
+
+test('a duplicate heading is ambiguous, and a line number disambiguates it', () => {
+  const text = '## 同名\n- A\n\n## 同名\n- B\n'
+  assert.equal(resolveSection(text, '同名').reason, 'ambiguous_section')
+  assert.deepEqual(resolveSection(text, '同名').lines, [0, 3])
+
+  const at = editEntryAt(text, '同名', 4, { replacement: '改B' })
+  assert.equal(at.replaced, 1)
+  assert.equal(at.text, '## 同名\n- A\n\n## 同名\n- 改B\n')
+})
+
+test('bullets above the first H2 belong to the top section', () => {
+  const text = '# 标题\n\n- 顶层\n\n## 节\n- 内层\n'
+  assert.equal(parseSections(text).map((section) => section.heading).join(','), '节', 'parseSections still starts at level 2')
+  assert.equal(topSection(text)?.heading, '(top)')
+
+  const viaPseudo = editEntry(text, '(top)', '顶层', { replacement: '改过' })
+  assert.equal(viaPseudo.text, '# 标题\n\n- 改过\n\n## 节\n- 内层\n')
+
+  const viaTitle = editEntry(viaPseudo.text, '标题', '改过', { replacement: '再改' })
+  assert.equal(viaTitle.text, '# 标题\n\n- 再改\n\n## 节\n- 内层\n')
+})
+
+test('countEntries does not count continuation lines as entries', () => {
+  const text = '## A\n- one\n  续行\n  - 子条目\n- two\n'
+  assert.equal(countEntries(text, 'A'), 2)
+})
+
+test('all=true removes every matching multi-line span, not just their first lines', () => {
+  const text = '## A\n- KEY one\n  cont a\n- KEY two\n  cont b\n- keep\n'
+  const result = editEntry(text, 'A', 'KEY', { mode: 'remove', all: true })
+  assert.equal(result.replaced, 2)
+  assert.equal(result.text, '## A\n- keep\n', 'both continuation blocks go with their entries')
+})
+
+test('all=true replaces every matching span in place', () => {
+  const text = '## A\n- KEY one\n  cont a\n- KEY two\n  cont b\n- keep\n'
+  const result = editEntry(text, 'A', 'KEY', { replacement: 'X', all: true })
+  assert.equal(result.replaced, 2)
+  assert.equal(result.text, '## A\n- X\n- X\n- keep\n')
+})
+
+test('a nested sub-bullet is not counted as a top-level entry, but is addressable', () => {
+  const text = '## A\n- parent\n  - child\n- sibling\n'
+  // Two top-level entries: the child belongs to `parent`'s span.
+  assert.equal(countEntries(text, 'A'), 2)
+  // It is still a bullet line, so it can be rewritten in place without touching
+  // its parent — useful when one sub-point is wrong.
+  const result = editEntry(text, 'A', 'child', { replacement: 'CHILD' })
+  assert.equal(result.text, '## A\n- parent\n  - CHILD\n- sibling\n')
+  // Removing it leaves the parent intact.
+  const removed = editEntry(text, 'A', 'child', { mode: 'remove' })
+  assert.equal(removed.text, '## A\n- parent\n- sibling\n')
+})
+
+test('a nested sub-bullet goes away with its parent entry', () => {
+  const text = '## A\n- parent\n  - child\n- sibling\n'
+  const result = editEntry(text, 'A', 'parent', { mode: 'remove' })
+  assert.equal(result.text, '## A\n- sibling\n', 'the child must not be orphaned')
 })

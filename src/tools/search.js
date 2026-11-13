@@ -42,11 +42,15 @@ export function searchTool({ cfg }) {
 
       const files = collectFiles(probe, scope, includeDaily)
       const hits = []
+      const truncatedFiles = []
       const needle = query.toLowerCase()
 
       for (const file of files) {
         const read = readTextSafe(file.path, { maxBytes: cfg.search.indexMaxFileBytes })
         if (!read.ok) continue
+        // A capped read used to be silent: everything past the cut simply was
+        // not there, and an empty result read as "memory does not mention it".
+        if (read.truncated) truncatedFiles.push({ file: file.label, bytes: read.bytes, limit: cfg.search.indexMaxFileBytes })
         const sections = parseSections(read.text)
         const lines = read.text.split(/\r?\n/)
         let sectionIndex = -1
@@ -67,7 +71,27 @@ export function searchTool({ cfg }) {
         if (hits.length >= limit) break
       }
 
-      return { ok: true, query, files: files.length, hits, truncated: hits.length >= limit }
+      const hitsTruncated = hits.length >= limit
+      const result = {
+        ok: true,
+        query,
+        scope,
+        files: files.length,
+        hits,
+        hitsTruncated,
+        truncated: hitsTruncated,
+        truncatedFiles,
+      }
+      // A zero-file scan is the one result most easily mistaken for "not in
+      // memory", so it says which scope it looked at and what to try instead.
+      if (files.length === 0) {
+        result.hint =
+          scope === 'project'
+            ? 'no project memory files in this workspace; pass scope:"user" or scope:"all" to search the user-level memory'
+            : 'no memory files found for this scope'
+      }
+      if (hitsTruncated) result.hint = 'hits reached the limit; raise limit or narrow the query'
+      return result
     },
   })
 }

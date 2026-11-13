@@ -3,7 +3,7 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { probeEnvironment } from '../env.js'
 import { resolveCwd } from '../inject.js'
-import { TARGETS } from '../write/store.js'
+import { TARGETS, resolveTarget } from '../write/store.js'
 
 /**
  * @param {object} deps
@@ -77,6 +77,113 @@ export function editTool({ cfg, store }) {
         },
         probe,
       )
+    },
+  })
+}
+
+/**
+ * `memory_replace_section`: rewrite one section's body in place.
+ *
+ * The panel has had this since the L2 editor; the model did not, so compressing
+ * a nine-entry section into four meant nine `memory_edit` calls plus four
+ * `memory_append` calls — slow, and each one burned a backup slot. The store
+ * method, its validation and its lock/CAS/backup chain already existed.
+ */
+export function replaceSectionTool({ cfg, store }) {
+  return defineTool({
+    name: 'memory_replace_section',
+    description:
+      'Replace one section body of a WorkBuddy MEMORY.md, keeping its heading and every line outside the section byte-identical. The body must be only `- ` entries, continuation lines and blank lines: headings and prose are refused with invalid_body, because a heading here would split the section. Use this to compress a section instead of many memory_edit calls. Discards the section\'s other entries, so pass the complete new body.',
+    parameters: {
+      target: { type: 'string', required: true, description: 'project-memory | user-memory' },
+      section: { type: 'string', required: true, description: 'section heading whose body is replaced' },
+      body: { type: 'string', required: true, description: 'the complete new body: `- ` entries, continuation lines and blank lines only' },
+      expectedRevision: { type: 'string', description: 'revision from memory_read; the write is refused when it no longer matches' },
+      operationId: { type: 'string', description: 'idempotency key' },
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args, exec) {
+      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }) ?? null, detail: false })
+      return store.replaceSection(
+        {
+          target: String(args.target ?? ''),
+          section: String(args.section ?? ''),
+          body: String(args.body ?? ''),
+          expectedRevision: args.expectedRevision ? String(args.expectedRevision) : undefined,
+          operationId: args.operationId ? String(args.operationId) : undefined,
+        },
+        probe,
+      )
+    },
+  })
+}
+
+/**
+ * `memory_restore`: put a memory file back to one of its own backups.
+ *
+ * The last resort for a bad batch of edits, and the only path back once a
+ * destructive write has landed. `expectedRevision` is mandatory: a restore must
+ * not silently discard writes made after the caller looked at the file. The file
+ * as it stands is backed up first, so the restore itself is undoable.
+ */
+export function restoreTool({ cfg, store }) {
+  return defineTool({
+    name: 'memory_restore',
+    description:
+      'Put a WorkBuddy memory file back to one of its own backups. Call memory_list_revisions first to see the available names. expectedRevision is mandatory: pass the revision you last read, so a restore cannot silently discard newer writes. The current file is backed up first, so the restore is itself undoable.',
+    parameters: {
+      target: { type: 'string', required: true, description: 'project-memory | user-memory' },
+      name: { type: 'string', required: true, description: 'backup file name from memory_list_revisions' },
+      expectedRevision: { type: 'string', required: true, description: 'revision from memory_read; mandatory' },
+      operationId: { type: 'string', description: 'idempotency key' },
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args, exec) {
+      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }) ?? null, detail: false })
+      return store.restore(
+        {
+          target: String(args.target ?? ''),
+          name: String(args.name ?? ''),
+          expectedRevision: args.expectedRevision ? String(args.expectedRevision) : undefined,
+          operationId: args.operationId ? String(args.operationId) : undefined,
+        },
+        probe,
+      )
+    },
+  })
+}
+
+/**
+ * `memory_list_revisions`: the backups a restore can name.
+ *
+ * `memory_restore` takes a backup file name, and a caller cannot guess one. The
+ * panel already had this list over `/revisions`; without it the tool pair would
+ * be unusable from the model side.
+ */
+export function listRevisionsTool({ cfg, store }) {
+  return defineTool({
+    name: 'memory_list_revisions',
+    description:
+      'List the backups of one WorkBuddy memory file, newest first. Use a name from here as memory_restore.name. Backups are taken before every write, and older ones are rotated away, so a long batch of edits can use up the earliest restore points.',
+    parameters: {
+      target: { type: 'string', required: true, description: 'project-memory | user-memory' },
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args, exec) {
+      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }) ?? null, detail: false })
+      const resolved = resolveTarget(String(args.target ?? ''), probe)
+      if (!resolved.path || resolved.mode !== 'rewrite') return { ok: false, code: 'bad_target', target: String(args.target ?? '') }
+      const revisions = store.listRevisions(resolved.path)
+      return { ok: true, target: String(args.target ?? ''), path: resolved.path, count: revisions.length, revisions }
     },
   })
 }

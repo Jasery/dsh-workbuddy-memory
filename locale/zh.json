@@ -11,7 +11,8 @@
     "写入失败返回 conflict 时不要重试覆盖：重新读一遍，确认目标仍在，再决定是改写还是放弃。",
     "日期文件（YYYY-MM-DD.md）只追加、不注入，是流水档案。超过 30 天的日期文件：先按主题把值得长期保留的结论蒸馏进 MEMORY.md（memory_append / memory_edit），再用 memory_prune 归档旧日期文件；不要把流水原样搬进 MEMORY.md，那会撑爆注入限额。"
   ],
-  "truncated": "（内容超限，已截断到 {limit} 字节）",
+  "truncated": "（内容超限，已截断到 {limit} 字符）",
+  "overLimitHint": "**注意：用户 MEMORY.md 已到 {chars} 字符，超过注入上限 {limit} 字符，超出部分本会话读不到。** 下次改动用户记忆时，先按主题把仍成立的结论压缩进更少的条目（memory_read 拿 revision → memory_edit 逐条改写/合并 → 内容搬完再删冗余条目），不要继续往后追加。蒸馏阈值 {above}。",
   "distillOverLimit": "**注意：用户 MEMORY.md 已到 {chars} 字符，超过蒸馏阈值 {above}，而注入上限只有 {limit} 字符。** 也就是说这个文件的大部分内容当前会话读不到。下次改动用户记忆时，先按主题把仍成立的结论压缩进更少的条目（memory_read 拿 revision → memory_edit 逐条改写/合并 → 内容搬完再删冗余条目），不要继续往后追加。别把流水原样搬进 MEMORY.md，那只会让情况更糟。",
   "noProject": "本次会话没有可用的项目记忆目录。",
   "ambiguousProfile": "画像候选不止一个且未指定 profileUid，已跳过注入。",
