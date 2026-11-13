@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dsh-workbuddy-memory 优化方案 · 2026-11-13</title>
+<style>
+  :root{
+    --bg:#0d1219; --bg2:#111823; --card:#151d29; --card2:#1a2431;
+    --line:#26313f; --line2:#344252;
+    --tx:#e6edf5; --tx2:#a7b6c8; --tx3:#7d8da1;
+    --a:#4dd0c1; --b:#ffa657; --warn:#ff6b6b; --ok:#7ee787; --info:#79c0ff; --purple:#c297ff;
+    --mono:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    font-size:15px;line-height:1.75;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:32px 24px 80px}
+  a{color:var(--info);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{font-family:var(--mono);font-size:.88em;background:#1d2734;border:1px solid var(--line);
+    border-radius:4px;padding:1px 5px;color:#d5e2f0;word-break:break-word}
+  h1{font-size:29px;line-height:1.3;margin:0 0 10px}
+  h2{font-size:22px;margin:0 0 16px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+  h3{font-size:17px;margin:26px 0 10px}
+  h4{font-size:14px;margin:16px 0 6px;color:var(--tx2)}
+  p{margin:10px 0}
+  ul,ol{margin:10px 0 10px 22px;padding:0}
+  li{margin:5px 0}
+  .sub{color:var(--tx2);font-size:14px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 0}
+  .pill{font-size:12px;color:var(--tx2);background:var(--card2);border:1px solid var(--line);
+    border-radius:999px;padding:4px 11px}
+  .pill.a{border-color:#2a5c58;color:var(--a)}
+  .pill.b{border-color:#6b4a27;color:var(--b)}
+  header{padding-bottom:22px;border-bottom:1px solid var(--line)}
+  .toc{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0 8px}
+  .toc a{font-size:13px;padding:5px 10px;border:1px solid var(--line);border-radius:6px;
+    background:var(--card);color:var(--tx2)}
+  .toc a:hover{border-color:var(--a);color:var(--a);text-decoration:none}
+  section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px 26px;margin:22px 0}
+  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:18px}
+  .mini{background:var(--card2);border:1px solid var(--line);border-radius:9px;padding:14px}
+  .mini .k{font-size:12px;color:var(--tx3)}
+  .mini .v{font-size:21px;font-weight:700;margin:3px 0;color:var(--a)}
+  .mini .d{font-size:12.5px;color:var(--tx2);line-height:1.6}
+  table{width:100%;border-collapse:collapse;margin:12px 0 6px;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:9px 11px;text-align:left;vertical-align:top}
+  th{background:var(--bg2);color:var(--tx2);font-weight:600;white-space:nowrap}
+  tbody tr:nth-child(even){background:#131b26}
+  .num{font-family:var(--mono);color:var(--info)}
+  .pr{display:inline-block;font-size:11px;padding:2px 8px;border-radius:4px;white-space:nowrap;font-weight:600}
+  .pr.p0{color:#0d1219;background:var(--a)}
+  .pr.p1{color:#0d1219;background:var(--purple)}
+  .pr.p2{color:#0d1219;background:var(--b)}
+  .pr.no{color:var(--warn);border:1px solid #6b3030;background:#241a1d}
+  .why{border-left:3px solid var(--info);background:#14202b;border:1px solid #2c4a66;
+    border-left-width:4px;border-radius:8px;padding:12px 16px;margin:12px 0}
+  .why .h{font-weight:700;color:var(--info);font-size:13px;margin-bottom:4px}
+  .why p{margin:4px 0;font-size:13.5px}
+  .box{border:1px solid var(--line);border-radius:9px;padding:14px 16px;margin:14px 0;background:var(--card2)}
+  .box.danger{border-color:#6b3030;background:#241a1d}
+  .box.good{border-color:#2a5c58;background:#132421}
+  .box .h{font-weight:700;margin-bottom:6px}
+  .box.danger .h{color:var(--warn)}
+  .box.good .h{color:var(--a)}
+  .item{border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:16px 0;background:var(--card2)}
+  .item .hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+  .item .hd .t{font-size:16px;font-weight:700}
+  .item .hd .id{font-family:var(--mono);font-size:12px;color:var(--tx3)}
+  .kv{display:grid;grid-template-columns:88px 1fr;gap:6px 10px;font-size:13.5px;margin:10px 0}
+  .kv .k{color:var(--tx3);white-space:nowrap}
+  .ev{font-family:var(--mono);font-size:12px;color:var(--tx3)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .chartbox{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:16px;margin:14px 0}
+  .chartbox .t{font-size:14px;font-weight:600;margin-bottom:4px}
+  .chartbox .s{font-size:12px;color:var(--tx3);margin-bottom:12px}
+  .canvas-holder{position:relative;height:320px}
+  .fallback{display:none;color:var(--warn);font-size:13px;padding:10px}
+  .note{font-size:13px;color:var(--tx3);margin:8px 0 0}
+  .strike{color:var(--tx3);text-decoration:line-through}
+  footer{color:var(--tx3);font-size:12px;text-align:center;margin-top:30px;line-height:1.8}
+  @media (max-width:900px){
+    .cards,.grid2{grid-template-columns:1fr}
+    .wrap{padding:18px 12px 60px}
+    section{padding:18px 14px}
+    table{font-size:12.5px}
+    .kv{grid-template-columns:1fr}
+  }
+  @media print{
+    body{background:#fff;color:#111}
+    section,.mini,.chartbox,.box,.item,.why{background:#fff;border-color:#ccc}
+    th{background:#f2f2f2;color:#222}
+    code{background:#f4f4f4;color:#222;border-color:#ddd}
+    a{color:#065f9b}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>dsh-workbuddy-memory 优化方案</h1>
+  <p class="sub">依据 2026-11-13《dsh-memory-palace × dsh-workbuddy-memory 详细对比报告》及随后四轮追问核实结论。每一项均注明「为什么做」与「为什么这样做」，不做无理由的功能搬运。</p>
+  <div class="meta">
+    <span class="pill">方案日期 2026-11-13</span>
+    <span class="pill a">基线版本 v0.1.4 · HEAD 48f0569</span>
+    <span class="pill b">对比基线 dsh-memory-palace v1.8.5 · 081582e</span>
+    <span class="pill">交付格式：单文件 HTML</span>
+  </div>
+  <nav class="toc">
+    <a href="#basis">1 依据与范围</a><a href="#principle">2 四条硬原则</a><a href="#summary">3 优化项总表</a>
+    <a href="#charts">4 优先级可视化</a><a href="#p0">5 P0 逐项</a><a href="#p1">6 P1 逐项</a>
+    <a href="#p2">7 P2 逐项</a><a href="#reject">8 明确不做</a><a href="#batch">9 实施批次</a>
+    <a href="#accept">10 验收标准</a><a href="#risk">11 风险与回退</a><a href="#index">12 原因索引</a>
+    <a href="#mapping">13 与报告对应</a>
+  </nav>
+</header>
+
+<section id="basis">
+  <h2>1. 依据与范围</h2>
+  <p>本方案只覆盖 <code>dsh-workbuddy-memory</code> 一个仓库。所有结论来自对比报告锁定的两个版本：本项目 <code>0.1.4 / 48f0569</code>，对比项目 <code>1.8.5 / 081582e</code>；后续追问又核实了四件事，构成本方案的直接输入：</p>
+  <table>
+    <thead><tr><th>已核实结论</th><th>来源</th><th>对本方案的约束</th></tr></thead>
+    <tbody>
+      <tr><td>对方也会写 buddy 目录，但同时维护 dsh 原生目录与独立用户级文件，是「一套系统、多个落盘点」</td><td><code>src/common/paths.mjs:15-81</code>、<code>index.mjs:65-80</code></td><td>优化不能引入第二份真源，不能把 buddy 目录变成「输出目标之一」</td></tr>
+      <tr><td>对方项目级读 dsh 优先、写 buddy 优先（读写刻意不对称），用户级完全不读 WorkBuddy</td><td><code>paths.mjs:39</code>、报告第 3 / 7 节</td><td>「单一真源」是本项目的核心价值，任何优化都要先证明不破坏它</td></tr>
+      <tr><td>对方每轮结算必跑一次 LLM 判定，闲聊也调用；长期 MEMORY.md 由主 AI 按需维护</td><td><code>index.mjs:656-715</code>、<code>hybrid/prompts.mjs:34-75</code></td><td>自动化要放在筛选之后，不引入每轮固定模型调用</td></tr>
+      <tr><td>对方值得学的是工程判断：敢删、机器门禁、成本透明、把缺陷写进代码</td><td>报告第 8 节 + 追问结论</td><td>方案按「思路 → 动作」组织，每条附证据与因果链</td></tr>
+      <tr><td>同装风险：<code>memory_read</code> 同名、同文件双写、双通道重复注入、用户级分裂</td><td>报告第 7 节</td><td>共存问题列为 P0，但优先用「文档 + 可选前缀」低破坏方式处理</td></tr>
+    </tbody>
+  </table>
+  <div class="box">
+    <div class="h">范围外</div>
+    <p style="margin:0">不做运行时同装实测（需要干净 DSH profile 分别装 A / B / A+B 抓工具目录与注入文本）；不改记忆文件格式（条目跨度模型保持不变）；不改宿主兼容下限 <code>dsh &gt;= 0.2.0</code>；不新增任何依赖。</p>
+  </div>
+  <div class="cards">
+    <div class="mini"><div class="k">优化项</div><div class="v">11</div><div class="d">P0 3 项 / P1 4 项 / P2 4 项</div></div>
+    <div class="mini"><div class="k">明确不做</div><div class="v" style="color:var(--warn)">5</div><div class="d">每轮子代理、历史投影等</div></div>
+    <div class="mini"><div class="k">新增依赖</div><div class="v">0</div><div class="d">纯 Node 内置能力 + 现有宿主 API</div></div>
+    <div class="mini"><div class="k">额外 LLM 调用</div><div class="v">0</div><div class="d">方案不引入任何模型调用</div></div>
+  </div>
+</section>
+
+<section id="principle">
+  <h2>2. 四条硬原则（所有优化项的前置约束）</h2>
+  <table>
+    <thead><tr><th>#</th><th>原则</th><th>为什么立这条（原因）</th><th>违反时的后果</th></tr></thead>
+    <tbody>
+      <tr><td>P-1</td><td><strong>不产生第二份记忆真源</strong></td><td>本项目全部价值来自「WorkBuddy 与 DSH 看到同一个字节」；对比项目正是因为多落盘点才需要承认「最坏 8 条投影 ≈ 5 万字符」和读写不对称（<code>CONFIG.md:64</code>、<code>paths.mjs:39</code>）</td><td>退化为对方那套系统，差异化消失，且本项目的 revision/备份链失去意义</td></tr>
+      <tr><td>P-2</td><td><strong>不增加每轮固定成本</strong></td><td>对比项目每轮结算跑一次 <code>ctx.llm.stream</code>，连闲聊也要模型回答「无需写入」；v1.8.0 删掉本地防闲聊闸门后，过滤成本从本地挪给了 LLM</td><td>用 token 换「不用管」，且换来的省心并不彻底（还要标删、重整、处理失败补蒸）</td></tr>
+      <tr><td>P-3</td><td><strong>软规则不能当安全边界</strong></td><td>本项目目前靠 <code>locale/zh.json</code> 的文案约束模型「conflict 不要重试覆盖」「先蒸馏再归档」；对比项目把重整、删除做成机器门禁 + 原生确认弹窗，不信任模型会乖</td><td>模型一次不遵守就产生不可回滚的写入，而备份链本可避免</td></tr>
+      <tr><td>P-4</td><td><strong>发布动作必须人工确认</strong></td><td>项目既有约定：<code>npm publish</code> / GitHub Release / 打 tag 之前必须先问一句。对比项目的 CI 是 tag 触发自动 publish，直接照搬会绕过这条约定</td><td>未确认就对外发版，属于流程违规而非技术故障</td></tr>
+    </tbody>
+  </table>
+  <div class="box good">
+    <div class="h">由 P-4 直接产生的一条方案约束</div>
+    <p style="margin:0">P2-1 的 CI <strong>只做校验与产物准备，不做自动发布</strong>：tag 触发后跑版本一致性检查、<code>npm test</code>、覆盖率、构建校验，产出 release draft 或待发布包；<code>npm publish</code> 与打 tag 保留为人工确认后执行的步骤。这是与对比项目 CI 唯一被刻意改掉的地方。</p>
+  </div>
+</section>
+
+<section id="summary">
+  <h2>3. 优化项总表</h2>
+  <p class="sub">「原因」列是每项的核心，完整因果链在第 5–7 节展开。成本为相对量（1 最低 / 5 最高），用于第 4 节气泡图。</p>
+  <table>
+    <thead><tr><th>编号</th><th>优先级</th><th>优化项</th><th>原因（一句话）</th><th>主要落点</th><th>成本</th><th>收益</th></tr></thead>
+    <tbody>
+      <tr><td>O-01</td><td><span class="pr p0">P0</span></td><td>截断改为「结构行保留 + 尾部优先」</td><td>写入追加在文件尾部，头截会让最新结论最先丢，等于「写了没写」</td><td><code>src/fsx.js</code> / <code>src/render.js</code></td><td class="num">1</td><td class="num">5</td></tr>
+      <tr><td>O-02</td><td><span class="pr p0">P0</span></td><td>工具名冲突：可选前缀 + 文档声明</td><td>对方也注册 <code>memory_read</code> 且语义不同，同 profile 会覆盖或让模型传错参数</td><td><code>src/tools/index.js</code> / README</td><td class="num">2</td><td class="num">4</td></tr>
+      <tr><td>O-03</td><td><span class="pr p0">P0</span></td><td>三条软规则升级为硬门禁</td><td>删除、整文件重写、归档属于不可逆动作，不能靠 prompt 约束模型</td><td><code>src/write/store.js</code> / <code>src/host/routes.js</code></td><td class="num">3</td><td class="num">5</td></tr>
+      <tr><td>O-04</td><td><span class="pr p1">P1</span></td><td>配置键审计与收敛</td><td>30+ 键里存在「设了不生效」的风险；本项目已有删 <code>conflictPolicy</code> 的先例</td><td><code>src/config.js</code> / CHANGELOG</td><td class="num">2</td><td class="num">3</td></tr>
+      <tr><td>O-05</td><td><span class="pr p1">P1</span></td><td>会话级状态分桶 + 静默预设工具掩码</td><td>DSH 长驻多会话，全局单例状态会串台；minimal 裸测环境不该看到记忆工具</td><td>新增 <code>src/session.js</code> / <code>tools/index.js</code></td><td class="num">4</td><td class="num">3</td></tr>
+      <tr><td>O-06</td><td><span class="pr p1">P1</span></td><td>注入成本核算 + 恒定前缀拆分</td><td>规则块含随文件大小变化的动态行，<code>on-change</code> 每轮重算，前缀缓存从未核算</td><td><code>src/inject.js</code> / <code>render.js</code> / <code>tools/status.js</code></td><td class="num">3</td><td class="num">4</td></tr>
+      <tr><td>O-07</td><td><span class="pr p1">P1</span></td><td>跨会话 / 并发写入回归测试</td><td>现有 14 个测试文件没有「上次出过的串台 bug 会不会回来」这类回归</td><td><code>tests/</code></td><td class="num">2</td><td class="num">3</td></tr>
+      <tr><td>O-08</td><td><span class="pr p2">P2</span></td><td>CI 校验（不自动发布）</td><td>5 个 release 全手工、无版本一致性校验；但发布必须人工确认（P-4）</td><td><code>.github/workflows/ci.yml</code></td><td class="num">2</td><td class="num">4</td></tr>
+      <tr><td>O-09</td><td><span class="pr p2">P2</span></td><td>双门禁重整命令</td><td>目前只有「规则提示蒸馏」，没有可机器校验的触发条件与冷却期</td><td><code>src/tools/write.js</code> / <code>store.js</code></td><td class="num">4</td><td class="num">3</td></tr>
+      <tr><td>O-10</td><td><span class="pr p2">P2</span></td><td>多 buddy 目录<strong>只读</strong>兼容</td><td>对方支持 <code>.codebuddy</code>，本项目 <code>dataFolderName</code> 只能指一个；但双写会破坏 P-1</td><td><code>src/paths.js</code> / <code>env.js</code></td><td class="num">3</td><td class="num">2</td></tr>
+      <tr><td>O-11</td><td><span class="pr p2">P2</span></td><td>文档：定位说明 + 契约风险清单</td><td>用户会把两个插件当成竞品靠猜；宿主预览期 API 风险目前分散在注释里</td><td><code>README*.md</code> / <code>docs/</code></td><td class="num">1</td><td class="num">3</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="charts">
+  <h2>4. 优先级可视化</h2>
+  <div class="grid2">
+    <div class="chartbox">
+      <div class="t">图 1 · 成本 × 收益分布（气泡大小 = 优先级权重）</div>
+      <div class="s">成本与收益为相对估计（1–5），悬停查看编号与名称。左上区 = 优先做。原始数据见第 3 节总表。</div>
+      <div class="canvas-holder"><canvas id="chartBubble"></canvas></div>
+      <div class="fallback" id="fbBubble">图表库未加载，原始数值见第 3 节总表。</div>
+    </div>
+    <div class="chartbox">
+      <div class="t">图 2 · 能力取向：现状 vs 方案目标</div>
+      <div class="s">沿用对比报告第 5 节雷达口径，目标值为主观估计、不是承诺。「自动化」刻意只小幅提升 —— 本方案不引入每轮子代理。</div>
+      <div class="canvas-holder"><canvas id="chartRadar"></canvas></div>
+      <div class="fallback" id="fbRadar">图表库未加载。</div>
+    </div>
+  </div>
+  <div class="box">
+    <div class="h">读图要点</div>
+    <p style="margin:0">O-01 落在「成本最低、收益最高」象限，且修的是既有 bug 而非新增能力，无条件先做。O-02 / O-03 成本低但需要动契约，紧随其后。O-05 / O-09 成本高、收益中等，放在后批次。雷达图里「数据一致性」「写入安全」「可视化编辑」三项保持 5 分不动 —— 这是本项目的护城河，优化不以牺牲它们为代价。</p>
+  </div>
+</section>
+
+<section id="p0">
+  <h2>5. P0 · 立即处理（3 项）</h2>
+
+  <div class="item">
+    <div class="hd"><span class="id">O-01</span><span class="pr p0">P0</span><span class="t">截断改为「结构行保留 + 尾部优先」</span></div>
+    <div class="why">
+      <div class="h">为什么做</div>
+      <p><strong>现象</strong>：<code>renderFileBlock()</code> 用 <code>truncateChars(body, limit)</code> 从头保留字符（<code>src/render.js:139-148</code>、<code>src/fsx.js:100-113</code>），而 <code>memory_append</code> 把新条目追加到章节末尾（<code>store.js:547-552</code>）。</p>
+      <p><strong>后果</strong>：文件一旦超过 <code>inject.limits.project/user</code>，最新写进去的结论恰好落在被截掉的尾部 —— 模型刚写完，下一轮就读不到自己写的内容。对比项目 <code>common/text.mjs:67-69</code> 把这个 bug 写得很清楚：「修 LIFO/FIFO 错配，旧实现只留头部，写了等于没写」。</p>
+      <p><strong>为什么这样改</strong>：不是照搬对方功能，而是让截断方向与写入方向一致；同时保留结构行（<code>#</code>/<code>##</code>/HTML 注释），因为章节大纲丢失会让模型连「有哪些主题」都看不到。对方的实现还把窗口外的中部结构行列在截断标记后且不计预算，这个细节一并吸收。</p>
+    </div>
+    <div class="kv">
+      <div class="k">动作</div><div>新增 <code>clipForInjection(text, limit)</code>（建议放 <code>src/render.js</code> 内部或 <code>src/fsx.js</code>）：按行处理 → 头部连续结构行无条件保留 → 从尾部向前累积内容行到预算用尽 → 中部结构行按原序列在截断标记后 → 保持 UTF-16 代理对安全（沿用现有 <code>truncateChars</code> 的码元处理）。</div>
+      <div class="k">单独处理</div><div>规则块 <code>render.js:55-60</code> 用 <code>truncateChars(base, room)</code> 给 <code>distillHint</code> 留位置，提示行必须完整存活，不能套用同一个尾部优先函数；保留现有「base 让位、hint 完整」的算法，只把 base 的截断换成结构行感知版本。</div>
+      <div class="k">回退开关</div><div>新增 <code>inject.clipMode: 'tail' | 'head'</code>，默认 <code>tail</code>；CHANGELOG 注明旧行为可用 <code>head</code> 恢复。</div>
+      <div class="k">验收</div><div><code>tests/render.test.mjs</code> 补 4 例：尾部新条目在超限后仍可见；中部 <code>##</code> 标题完整；超长中文/emoji 不产生半个代理对；规则块的 hint 不被截断。</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="hd"><span class="id">O-02</span><span class="pr p0">P0</span><span class="t">工具名冲突：可选前缀 + 文档声明</span></div>
+    <div class="why">
+      <div class="h">为什么做</div>
+      <p><strong>现象</strong>：双方都注册 <code>memory_read</code>（本项目 <code>src/tools/read.js:19</code>，对方 <code>src/tools.mjs:221</code>），但本项目按 <code>target</code> 返回 revision + 小节列表，对方按 <code>scope</code> 聚合读长期记忆与近三天日志。</p>
+      <p><strong>后果</strong>：同一 profile 同装时，要么后注册者覆盖，要么注册报错；即使不报错，模型也会按错误语义传参。此外两边都会写 <code>.workbuddy/memory/MEMORY.md</code>，本项目的 CAS 会检出冲突，对方无全局锁。</p>
+      <p><strong>为什么用「可选前缀 + 文档」而不是直接改名</strong>：直接改名会破坏现有调用方、注入规则文案与用户习惯；默认保持原名、只提供 <code>compat.toolPrefix</code>（如 <code>wbm_</code>）给需要共存的用户，同时在 README 明确「不建议与 dsh-memory-palace 同 profile 同装」。用最小破坏换掉最大风险。</p>
+    </div>
+    <div class="kv">
+      <div class="k">动作</div><div>在 <code>registerTools()</code>（<code>src/tools/index.js:120-133</code>）注册前对 <code>tool.name</code> 应用可选前缀；<code>locale/{zh,en}.json</code> 的规则文案按前缀动态生成（避免文案里写死工具名）；新增配置键 <code>compat.toolPrefix</code>（默认 <code>''</code>）；README 中英各增一节「与其他记忆插件共存」。</div>
+      <div class="k">验收</div><div>默认配置下注册的工具名与 0.1.4 完全一致（回归断言）；设 <code>wbm_</code> 后 9 个工具全部带前缀且规则文案同步；README 中明确列出 5 条同装风险。</div>
+      <div class="k">成本来源</div><div>前缀要贯穿「工具注册 → 规则文案 → 面板提示 → 测试」，容易漏一处，故列 P0 但排第二。</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="hd"><span class="id">O-03</span><span class="pr p0">P0</span><span class="t">三条软规则升级为硬门禁</span></div>
+    <div class="why">
+      <div class="h">为什么做</div>
+      <p><strong>现象</strong>：<code>locale/zh.json</code> 里「写记忆只用 memory_append/edit/prune」「conflict 时不要重试覆盖」「先蒸馏再归档」全是自然语言约束；真要违反，代码不会拦。</p>
+      <p><strong>后果</strong>：<code>remove</code>、<code>replaceDocument</code>、<code>prune</code>（非 dryRun）都是不可逆或高影响动作。其中 <code>replaceDocument</code> 绕过条目模型，<code>prune</code> 会移动整批日期文件。模型一次不遵守，备份链虽能恢复，但用户已经看到「记忆没了」。</p>
+      <p><strong>为什么学对方的门禁而不是照抄弹窗</strong>：对方用 <code>tools/pre-execute</code> 把 <code>confirm:true</code> 路由到宿主原生 <code>kind:"ask"</code> 弹窗，模型误传也要真人点允许（<code>tools.mjs:456-481</code>），重整还在门禁前后双重复核（<code>hybrid/tools.mjs:36-55/330</code>）。这个「不信任模型」的思路值得学；但宿主 API 是否在本项目目标版本 <code>dsh &gt;= 0.2.0</code> 可用需先验证，因此先在工具层做两阶段，不硬依赖宿主弹窗。</p>
+    </div>
+    <div class="kv">
+      <div class="k">动作 A</div><div>删除类（<code>store.js:127-129</code> 的 remove、<code>replaceDocument</code>:166-185、<code>prune</code>:243-302 的非 dryRun 路径）增加两阶段：首次调用返回命中位置/影响条目数与一次性 <code>confirmToken</code>，第二次带 token 才执行；token 与 <code>operationId</code> 幂等台账绑定，过期或路径变化即作废。</div>
+      <div class="k">动作 B</div><div><code>replaceDocument</code> 强制要求 <code>expectedRevision</code>（目前只校验 <code>allowFullTextEdit</code>），杜绝「整文件覆盖不带版本」。</div>
+      <div class="k">动作 C</div><div>面板 <code>/action</code>（<code>host/routes.js:447</code>）沿用同一 token 机制，不另开后门 —— 与现有「工具和面板共用同一 store」原则一致。</div>
+      <div class="k">不动的部分</div><div><code>append</code> / <code>edit</code> / <code>replaceSection</code> 保持单阶段，否则每次写记忆都要多一次往返，违背「不加每轮固定成本」。</div>
+      <div class="k">验收</div><div>不带 token 调用删除类一律返回 <code>confirmation_required</code> 且文件 mtime 不变；token 重放第二次返回 <code>duplicate</code>；<code>replaceDocument</code> 缺 revision 返回 <code>revision_required</code>。</div>
+    </div>
+  </div>
+</section>
+
+<section id="p1">
+  <h2>6. P1 · 工程加固（4 项）</h2>
+
+  <div class="item">
+    <div class="hd"><span class="id">O-04</span><span class="pr p1">P1</span><span class="t">配置键审计与收敛</span></div>
+    <div class="why">
+      <div class="h">为什么做</div>
+      <p><code>src/config.js</code> 现有约 30 个可配键（inject / write / guard / ui / search / locale 六组）。项目自己已经踩过一次：<code>config.js:73-77</code> 注释记载 <code>conflictPolicy</code> 提供 <code>fail|merge|overwrite</code> 但没有任何代码读它，设了 <code>overwrite</code> 仍返回 <code>fail</code>，最后删掉 —— 注释原话「一个说谎的开关比没有开关更糟」。对比项目 v1.8.0 一次性删掉三模式与写入总开关，正是同类判断。配置越多，组合语义越容易产生「设了不生效」。</p>
+    </div>
+    <div class="kv">
+      <div class="k">动作</div><div>产出一份「键 → 读取点 → 生效时机 → 与其他键是否冲突」清单（可放 <code>docs/implementation-notes.md</code>）；逐个核对哪些键只在 schema 里出现、哪些组合会互相否决（例如 <code>readOnly</code> 与 <code>ui.allowWriteActions</code>、<code>inject.enabled</code> 与四个子开关）；删掉无读取点的键，合并语义重复的键。</div>
+      <div class="k">兼容</div><div>被删键在 <code>normalizeConfig()</code> 里保持「未知键静默失效、绝不抛错」，与现有容错一致；CHANGELOG 明确写出旧值失效，必要时给一版兼容读取 + 警告日志。不学对方 v1.8.4「迁到新文件且不迁移存量值」的硬切法。</div>
+      <div class="k">验收</div><div>清单里每个存活键都能定位到 <code>src/</code> 下的读取行；删键后旧配置传入不抛异常；<code>tests/index.test.mjs</code> 增加「未知键不破坏装配」用例。</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="hd"><span class="id">O-05</span><span class="pr p1">P1</span><span class="t">会话级状态分桶 + 静默预设工具掩码</span></div>
+    <div class="why">
+      <div class="h">为什么做</div>
+      <p>DSH 是长驻进程，多个会话可能同时工作在不同 cwd。本项目目前靠每次调用时的 <code>probeEnvironment({cwd})</code> 解析路径，本身不易串台，但 <code>recent</code>（<code>index.js:52-64</code>）、冻结快照键（<code>inject.js:70-75</code>）、面板状态都是插件级单例。对比项目为此用四张按 sessionId 分桶的 Map，并专门写了 <code>test-planmode-crosstalk</code> / <code>test-settle-cwd</code> / <code>test-session-cwd</code> 三个回归测试；它还让官方 <code>minimal</code> 预设下连 7 个记忆工具的 schema 都从模型可见集移除，做到「零 token 足迹」的裸测环境（<code>index.mjs:318-357</code>）。这类问题只有在长期多会话运行后才暴露，值得提前防。</p>
+    </div>
+    <div class="kv">
+      <div class="k">动作</div><div>新增 <code>src/session.js</code>：按 sessionId 保存 cwd / 最近项目 / 冻结快照键；<code>registerSections</code> 与 <code>createProjectCatalog</code> 读取分桶状态。新增 <code>session.silentPresets</code>（默认空，不默认改行为），命中时用宿主工具掩码把写工具从模型可见集移除；判据缺失一律 fail-open（不静默），与对方一致。</div>
+      <div class="k">前置验证</div><div>先在目标 DSH 版本上确认 <code>ctx.tools.restrict</code> / 等价 API 是否可用；不可用则退化为「工具执行时返回 <code>silent</code> 拒绝」，并在文档注明「schema 仍在可见集，非零足迹」。</div>
+      <div class="k">验收</div><div>两个不同 cwd 的会话交替调用，注入块与面板项目列表互不污染；静默预设下写工具调用一律被拒。</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="hd"><span class="id">O-06</span><span class="pr p1">P1</span><span class="t">注入成本核算 + 恒定前缀拆分</span></div>
+    <div class="why">
+      <div class="h">为什么做</div>
+      <p>本项目四个注入块里，<code>rules</code> 块含随用户记忆文件大小变化的 <code>distillHint</code>（<code>render.js:50/115-130</code>），<code>inject.refresh</code> 默认 <code>on-change</code> 每轮重新装配。也就是说 system prompt 前缀里有一段每轮可能变化的内容，而这一点目前没有任何度量。对比项目 <code>projection.mjs:1-32</code> 通篇解释「把易变内容移出 system prompt，前缀缓存才永久有效」，<code>CONFIG.md:64</code> 甚至主动算出最坏注入份数 —— 哪怕它的实现有预览期 API 风险，这种成本意识本身值得学。本项目不需要改成历史投影，只需要把账算清、把恒定与动态拆开。</p>
+    </div>
+    <div class="kv">
+      <div class="k">动作 A</div><div><code>memory_status</code>（<code>src/tools/status.js</code>）增加 <code>injectedChars</code>：按块返回本次装配的字符数、是否被截断、截断丢了多少字符。让「预算是否够」从猜测变成可查询。</div>
+      <div class="k">动作 B</div><div>把 <code>rules</code> 拆成「恒定规则段」与「动态压力提示段」两个 section（order 相邻），动态段单独返回空串即可被宿主丢弃；这样文件没超限时 system prompt 前缀完全稳定。</div>
+      <div class="k">动作 C</div><div>文档补一份「每轮注入多少字符、哪些段每步在变、<code>first-turn</code> 与 <code>on-change</code> 的缓存代价」对照表，作为后续是否引入投影通道的决策依据。</div>
+      <div class="k">验收</div><div><code>memory_status</code> 返回值通过 <code>lossless()</code> 校验；规则段在文件未超限时逐字相同；新增测试断言动态段为空时该 section 返回 <code>''</code>。</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="hd"><span class="id">O-07</span><span class="pr p1">P1</span><span class="t">跨会话 / 并发写入回归测试</span></div>
+    <div class="why">
+      <div class="h">为什么做</div>
+      <p>现有 14 个测试文件、4441 行，框架比对方规范（<code>node:test</code> + coverage），但覆盖的是「函数返回对不对」；缺一类「上次出过的 bug 会不会回来」的回归。对比项目虽然只有自研 assert，却专门有 <code>test-planmode-crosstalk.mjs</code>、<code>test-settle-cwd.mjs</code>、<code>test-session-cwd.mjs</code> 三个按真实事故命名的测试。本项目的写链（跨进程锁 + CAS + 备份）是整个产品的信任基础，尤其需要这类测试守住。</p>
+    </div>
+    <div class="kv">
+      <div class="k">动作</div><div>新增 <code>tests/session-crosstalk.test.mjs</code>（两个 cwd 交替装配与写入，断言不串项目）、<code>tests/concurrent-write.test.mjs</code>（两个 writer 同时写同一目标，断言一个成功一个 <code>conflict</code> 或 <code>lock_timeout</code>，且备份可恢复）、<code>tests/confirmation.test.mjs</code>（配合 O-03，断言未确认不落盘、token 重放幂等）。</div>
+      <div class="k">验收</div><div><code>npm test</code> 全绿；<code>npm run test:coverage</code> 的 <code>src/**/*.js</code> 覆盖率不低于改造前基线（先记录一次基线值）。</div>
+    </div>
+  </div>
+</section>
+
+<section id="p2">
+  <h2>7. P2 · 排期项（4 项）</h2>
+
+  <div class="item">
+    <div class="hd"><span class="id">O-08</span><span class="pr p2">P2</span><span class="t">CI 校验（明确不自动发布）</span></div>
+    <div class="why">
+      <div class="h">为什么做 / 为什么改掉对方做法</div>
+      <p>本项目仓库无 <code>.github/</code>，5 个 release 与 npm 版本靠手工，没有「tag 与 package.json 版本是否一致」的机器校验；对比项目的 <code>publish.yml</code> 把版本校验、构建、selftest、dist-tag 计算串成流水线，这部分值得学。但它的最后一步是 <code>npm publish --tag</code> 自动发版，与项目既有约定（发布前必须人工确认，P-4）冲突，因此<strong>刻意只截取前半段</strong>：CI 负责校验与产物准备，发布保持人工。</p>
+    </div>
+    <div class="kv">
+      <div class="k">动作</div><div>新增 <code>.github/workflows/ci.yml</code>：<code>push</code> / <code>pull_request</code> 触发 → <code>npm test</code> → <code>npm run test:coverage</code>；<code>tag v*</code> 额外校验 tag 与 <code>package.json.version</code> 一致、产出待发布包与 release draft。<strong>不包含 <code>npm publish</code>、不创建 Release、不打 tag</strong>。这些动作由人工确认后执行，命令写入 <code>docs/implementation-notes.md</code>。</div>
+      <div class="k">附带</div><div>把 awesome-dsh-plugin 收录 PR #14592 的 gate 状态检查纳入文档清单（按已有经验：仓库年龄门槛由 <code>regate.yml</code> 自动重跑，不要推空提交催绿）。</div>
+      <div class="k">验收</div><div>PR 上能看到测试状态；故意制造 tag/version 不一致时 CI 失败；workflow 文件里 grep 不到 <code>npm publish</code>。</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="hd"><span class="id">O-09</span><span class="pr p2">P2</span><span class="t">双门禁重整命令</span></div>
+    <div class="why">
+      <div class="h">为什么做</div>
+      <p>本项目现在只给「蒸馏提示」：超过 <code>limits.user</code> 警告部分读不到，超过 <code>distillAbove</code> 要求按主题压缩（<code>render.js:98-130</code>）。全是软约束，也没有冷却期，模型可能反复做整文件重写。对方把重整做成机器门禁（超预算 <strong>且</strong> 冷却 ≥7 天，pre-execute 与 execute 双重复核，时间戳由机器写、先剥模型自带注释，用户确认弹窗，整档备份 + 失败回滚：<code>hybrid/tools.mjs:36-55/330-354</code>）。本项目已有 <code>replaceDocument</code> 与完整备份链，缺的只是门禁与触发入口，补齐成本可控。</p>
+    </div>
+    <div class="kv">
+      <div class="k">动作</div><div>新增一个不与对方同名的工具/命令（建议 <code>wbm_reorganize</code>）：门禁 = 目标文件字符数 &gt; <code>inject.limits.project</code> <strong>且</strong> 距上次重整 ≥ <code>reorgCooldownDays</code>（默认 7）；时间戳作为 HTML 注释由机器追加；执行前强制 <code>expectedRevision</code> + 两阶段确认（复用 O-03）；复用 <code>replaceDocument</code> 与备份链，不新开写路径。</div>
+      <div class="k">不照搬</div><div>不做「超预算回显附门禁指引」那类 prompt 补丁，也不允许用户级重整（用户级文件超限应靠 O-01 + 规则提示处理）。</div>
+      <div class="k">验收</div><div>未超预算 / 冷却期内一律拒绝且不落盘；带伪造时间戳的输入会被剥离；重整后 <code>memory_list_revisions</code> 能列出备份并可 <code>memory_restore</code> 回滚。</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="hd"><span class="id">O-10</span><span class="pr p2">P2</span><span class="t">多 buddy 目录只读兼容</span></div>
+    <div class="why">
+      <div class="h">为什么做 / 为什么只做读</div>
+      <p>对方默认桥接 <code>.workbuddy/memory</code> 与 <code>.codebuddy/memory</code>，本项目 <code>dataFolderName</code> 一次只能指一个名字（<code>src/paths.js:40-45</code>）。对同时使用 CodeBuddy 的工作区，本项目看不到另一侧的记忆，是一个真实的兼容缺口。但对方的做法是「所有已存在目录全部同步写」，会把一条事实复制成两份 —— 直接违反 P-1。所以只扩<strong>读取候选</strong>，写入目标仍保持单一。</p>
+    </div>
+    <div class="kv">
+      <div class="k">动作</div><div>新增 <code>inject.readFolderCandidates</code>（默认 <code>['.workbuddy']</code>），解析时按优先级挑第一个存在且含 <code>memory/</code> 的目录作为<strong>唯一</strong>项目真源；<code>memory_status</code> 显示「发现但未采用的候选目录」及原因。写入继续只用选定目录，绝不双写、绝不主动创建任何 buddy 目录（与 <code>write.ensureLayout</code> 默认 <code>false</code> 保持一致）。</div>
+      <div class="k">验收</div><div>同时存在两个目录时只注入一份；<code>memory_append</code> 只改选定文件；候选清单在 <code>memory_status</code> 中可见。</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="hd"><span class="id">O-11</span><span class="pr p2">P2</span><span class="t">文档：定位说明 + 宿主契约风险清单</span></div>
+    <div class="why">
+      <div class="h">为什么做</div>
+      <p>两个插件同处一个类目、同样围绕 <code>MEMORY.md</code>，用户很容易靠猜二选一 —— 本次对话连续四轮追问（「是不是迁移」「也会写 buddy 吗」「每轮都写吗」）本身就是证据。对比项目把自承限制集中写在 <code>CONFIG.md</code> / <code>DEVELOPMENT.md</code>（最坏注入 8 条 ≈ 5 万字符、<code>pre-step</code> 抛错毁整轮、预览期 API 升级需核对类型声明），这种「把风险摊开写」比漂亮 README 有用。本项目 <code>docs/implementation-notes.md</code> 有类似味道但没成体系。</p>
+    </div>
+    <div class="kv">
+      <div class="k">动作 A</div><div>README 中英各增「与 dsh-memory-palace 的区别」：三行讲清「共用文件 vs 自带系统」「显式工具 vs 每轮子代理」「system prompt 四段 vs 历史投影」，并写明不建议同 profile 同装。</div>
+      <div class="k">动作 B</div><div><code>docs/</code> 增「注入成本与宿主契约风险」：列出本项目依赖的宿主 API（<code>systemPrompt.section</code>、<code>tools.register/guard</code>、<code>webServer.register</code>、locale、<code>connection.requestRejection</code>）、各自的降级路径、以及升级 DSH 时需要复核的点；补「已知做不到的事」（对不遵守锁的外部编辑器只能检出已知冲突，毫秒级并写仍可能被覆盖）。</div>
+      <div class="k">验收</div><div>README 与 docs 两份文件都被 <code>files</code> 发布清单覆盖或明确标注为仓库内文档；中不出现「自动」「同步」「零成本」等会误导的表述。</div>
+    </div>
+  </div>
+</section>
+
+<section id="reject">
+  <h2>8. 明确不做（含原因）</h2>
+  <table>
+    <thead><tr><th>不做的事</th><th>原因</th><th>未来若重新评估的前提</th></tr></thead>
+    <tbody>
+      <tr><td><span class="strike">每轮自动记忆子代理</span></td><td>每轮结算固定一次 LLM 调用，闲聊也要模型回答「无需写入」（<code>SUBAGENT_SYSTEM:38-40</code>）；对方 v1.8.0 删掉本地防闲聊闸门后，过滤成本全压给模型。日志永不过期不删 → 回喂膨胀 → 目录模式 → 更多工具轮次，形成自放大循环</td><td>先做本地预筛（无工具执行/文件改动/错误信号/用户明确偏好即跳过）或事件触发，默认关闭、强制指定廉价模型，且实测每轮额外 token 可接受</td></tr>
+      <tr><td><span class="strike">按文件身份的历史投影</span></td><td>依赖宿主预览期 API（<code>agent/pre-step</code>、<code>session.surface.eventAt</code>、<code>MessageSourceMap.form</code>）；对方 <code>DEVELOPMENT.md §7.4</code> 自承抛错会毁整轮 turn、契约失效表现为「记忆静默不注入」</td><td>宿主 API 稳定并进入公开类型声明；且 O-06 的成本核算证明当前 system prompt 方案确实成为瓶颈</td></tr>
+      <tr><td><span class="strike">用户级真源独立 / 多目录双写</span></td><td>直接违反 P-1。对方用户级用 <code>~/.deepseek-harness/MEMORY.md</code>，WorkBuddy 端改偏好 DSH 端看不到；项目级多目录双写还会导致「dsh 目录旧内容 + buddy 新内容」同时注入</td><td>无。这是定位差异，不是待优化项</td></tr>
+      <tr><td><span class="strike">MEMORY.md 去掉全局锁 / 移除写入总开关</span></td><td>本项目写链（跨进程锁 → revision → 备份 → 原子写）与 <code>readOnly</code> 是信任基础；对方靠章节 stale 校验，粒度不同</td><td>无</td></tr>
+      <tr><td><span class="strike">破坏性变更不迁移存量配置值</span></td><td>对方 v1.8.4 把自定义指令迁到新文件且明确不迁移存量值，用户旧配置静默丢失。本项目删键应保持宽容读取 + 明确告知</td><td>无</td></tr>
+    </tbody>
+  </table>
+  <div class="box danger">
+    <div class="h">一句话边界</div>
+    <p style="margin:0">这份方案要的是「对方已经踩过坑并验证过的工程判断」，不是「对方有的功能」。11 项里没有一项会引入第二个记忆真源、第二个 LLM 调用或第二个发布路径。</p>
+  </div>
+</section>
+
+<section id="batch">
+  <h2>9. 实施批次（按依赖排序，不排工期）</h2>
+  <table>
+    <thead><tr><th>批次</th><th>包含</th><th>为什么这样分组</th><th>批次出口</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pr p0">批次 1</span></td><td>O-01、O-02、O-03</td><td>三项互不依赖；O-01 修既有 bug、O-02 防共存事故、O-03 补安全边界，都是「不做会有实际损失」</td><td><code>npm test</code> 全绿；新增断言全部通过；README 共存说明上线</td></tr>
+      <tr><td><span class="pr p1">批次 2</span></td><td>O-04、O-06、O-07</td><td>O-04 先收敛配置，避免 O-06 新增 <code>injectedChars</code> 与前缀拆分时又堆键；O-07 为批次 1 的写链改动补回归</td><td>配置清单可逐键定位读取点；<code>memory_status</code> 可查注入字符数；覆盖率不低于基线</td></tr>
+      <tr><td><span class="pr p1">批次 3</span></td><td>O-05</td><td>依赖宿主工具掩码 API 的可用性验证；验证不通过就走「执行时拒绝」的降级实现，不阻塞其他批次</td><td>跨会话串台测试通过；静默预设行为有文档说明</td></tr>
+      <tr><td><span class="pr p2">批次 4</span></td><td>O-08、O-11</td><td>CI 与文档都不改运行时行为，风险最低；文档需要批次 1–3 的最终结论才能写准</td><td>PR 可见测试状态；workflow 内无自动发布；README/doc 与实现一致</td></tr>
+      <tr><td><span class="pr p2">批次 5</span></td><td>O-09、O-10</td><td>O-09 复用 O-03 的确认机制与现有备份链，必须后置；O-10 涉及路径解析，改动面广且收益最低</td><td>门禁拒绝路径不落盘；多目录场景只注入一份、只写一处</td></tr>
+    </tbody>
+  </table>
+  <p class="note">批次顺序只表达依赖关系，不代表时间估算。每项完成后单独提交，便于按 <code>git revert</code> 精确回退。</p>
+</section>
+
+<section id="accept">
+  <h2>10. 验收标准</h2>
+  <table>
+    <thead><tr><th>层面</th><th>检查项</th><th>判定</th></tr></thead>
+    <tbody>
+      <tr><td>测试</td><td><code>npm test</code> 全绿；<code>npm run test:coverage</code> 不低于改造前基线</td><td>机器</td></tr>
+      <tr><td>截断</td><td>超限后尾部新条目可见、中部 <code>##</code> 标题完整、emoji/中文不半截、规则 hint 完整</td><td>4 条断言</td></tr>
+      <tr><td>契约</td><td>默认配置下 9 个工具名与 0.1.4 一致；设前缀后全部与规则文案同步</td><td>机器</td></tr>
+      <tr><td>安全</td><td>删除/整文件重写/归档未确认不落盘；token 重放幂等；<code>replaceDocument</code> 缺 revision 被拒</td><td>机器</td></tr>
+      <tr><td>并发</td><td>两个 cwd 交替不串台；并发写只有一个成功，另一个 <code>conflict</code>/<code>lock_timeout</code>，备份可恢复</td><td>机器</td></tr>
+      <tr><td>成本可见性</td><td><code>memory_status.injectedChars</code> 与实际注入文本长度一致；规则段未超限时逐字稳定</td><td>机器 + 手工</td></tr>
+      <tr><td>CI</td><td>workflow 中不存在 <code>npm publish</code> / Release 创建；版本不一致时失败</td><td>grep + 手工</td></tr>
+      <tr><td>双端一致性</td><td>WorkBuddy 手改一条 → DSH 注入可见；DSH 写一条 → WorkBuddy 文件可见；外部改动返回 <code>conflict</code> 且有备份</td><td>手工（同一 profile 只装本项目）</td></tr>
+      <tr><td>无回归</td><td>不产生第二个记忆目录；不出现第二个 <code>MEMORY.md</code> 真源；不新增依赖；不新增 LLM 调用</td><td>手工 + 依赖清单比对</td></tr>
+    </tbody>
+  </table>
+  <p class="note">验收第 9 行「双端一致性」必须在「只装本项目」的干净 profile 里做；同装场景属于范围外，需要另立实测任务。</p>
+</section>
+
+<section id="risk">
+  <h2>11. 风险与回退</h2>
+  <table>
+    <thead><tr><th>优化项</th><th>风险</th><th>缓解 / 回退</th></tr></thead>
+    <tbody>
+      <tr><td>O-01</td><td>截断方向改变后，模型看到的片段与旧版不同，已有超大文件的「开头内容」不再优先可见</td><td><code>inject.clipMode: 'head'</code> 一键回到旧行为；CHANGELOG 写明；结构行始终保留，章节大纲不丢</td></tr>
+      <tr><td>O-02</td><td>前缀若漏改某处文案，会出现「规则让模型调 <code>memory_append</code>，实际注册的是 <code>wbm_memory_append</code>」</td><td>默认前缀为空（零行为变化）；规则文案改为由注册名动态生成；加一条「规则文案中出现的工具名必须存在于注册表」的测试</td></tr>
+      <tr><td>O-03</td><td>两阶段确认让删除/归档多一次往返；面板交互要同步改</td><td>只对三类高影响动作启用；面板与工具共用同一 token，不另开后门；<code>append/edit</code> 保持单阶段</td></tr>
+      <tr><td>O-04</td><td>删键后旧 profile 配置里残留未知键</td><td><code>normalizeConfig()</code> 保持宽容；必要时保留一版兼容读取 + 警告日志；不做对方那种静默硬切</td></tr>
+      <tr><td>O-05</td><td>宿主工具掩码 API 在 <code>dsh 0.2.0</code> 上不可用</td><td>先验证再实现；不可用则退化为执行时拒绝，并如实说明「非零 token 足迹」</td></tr>
+      <tr><td>O-06 / O-11</td><td>新增诊断字段可能触发宿主 <code>lossless JSON</code> 快照校验</td><td>所有新字段经现有 <code>lossless()</code> 兜底（<code>src/tools/index.js:28-47</code>），不返回 <code>undefined</code>/NaN/-0</td></tr>
+      <tr><td>O-08</td><td>CI 被误配成自动发版，绕过人工确认</td><td>验收里明文 grep 检查；workflow 只校验不发布；发布命令单独写文档</td></tr>
+      <tr><td>O-09 / O-10</td><td>重整门禁误判导致该重整时拒绝；只读候选挑错目录</td><td>门禁状态与候选清单都在 <code>memory_status</code> 可见；每项单独提交，可 <code>git revert</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="index">
+  <h2>12. 原因索引（快速检索「为什么」）</h2>
+  <table>
+    <thead><tr><th>成因类别</th><th>具体原因 / 证据</th><th>对应优化项</th></tr></thead>
+    <tbody>
+      <tr><td>既有功能缺陷</td><td>头截 + 尾部追加 = 最新结论读不到（<code>render.js:139-148</code>、对方 <code>text.mjs:67-69</code> 同类修复）</td><td>O-01</td></tr>
+      <tr><td>兼容性事故</td><td><code>memory_read</code> 同名不同义、同文件双写、双通道重复注入（报告第 7 节）</td><td>O-02、O-11</td></tr>
+      <tr><td>软约束不可靠</td><td>规则文案无法阻止不可逆写入（<code>locale/zh.json</code>）；对方用机器门禁 + 双重复核</td><td>O-03、O-09</td></tr>
+      <tr><td>配置腐化</td><td>「说谎的开关」先例（<code>config.js:73-77</code>）；对方 v1.8.0 敢删三模式</td><td>O-04</td></tr>
+      <tr><td>长驻进程并发</td><td>插件级单例状态在多会话下串台；对方四张分桶 Map + 三个串台回归测试</td><td>O-05、O-07</td></tr>
+      <tr><td>成本不透明</td><td>动态规则行每轮重算、前缀缓存未核算；对方主动量化最坏注入份数</td><td>O-06、O-11</td></tr>
+      <tr><td>发布流程风险</td><td>手工发版无版本校验；但项目约定发布必须人工确认，所以只取 CI 前半段</td><td>O-08</td></tr>
+      <tr><td>兼容缺口</td><td><code>.codebuddy</code> 用户看不到另一侧记忆，但双写会破坏单一真源</td><td>O-10</td></tr>
+      <tr><td>产品定位</td><td>用户会靠猜在两个插件间二选一（本次连续四轮追问即为证据）</td><td>O-11</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="mapping">
+  <h2>13. 与对比报告的对应关系</h2>
+  <table>
+    <thead><tr><th>报告章节</th><th>结论</th><th>本方案落地</th></tr></thead>
+    <tbody>
+      <tr><td>3 定位与架构</td><td>单一真源 vs 一套系统多落盘点</td><td>原则 P-1；O-10 只扩读取；O-11 写清区别</td></tr>
+      <tr><td>4.2 注入机制</td><td>头截 vs 尾截；总量上限 vs 每文件上限；前缀缓存</td><td>O-01、O-06</td></tr>
+      <tr><td>4.3 写入与工具</td><td>显式工具 vs 每轮子代理；完整写链 vs 无全局锁；删除确认、重整门禁</td><td>原则 P-2/P-3；O-03、O-09；第 8 节「不做每轮子代理」</td></tr>
+      <tr><td>4.4 UI / 安全 / 工程</td><td>宿主信任栅栏、静默预设、CI、i18n、测试框架</td><td>O-05、O-07、O-08</td></tr>
+      <tr><td>5 量化对比</td><td>本项目 0 CI、对方 2；测试规模与成熟度差距</td><td>O-08、O-07</td></tr>
+      <tr><td>6 差异深挖 / 7 同装冲突</td><td>工具同名、双写、双注入、用户级分裂</td><td>O-02、O-11</td></tr>
+      <tr><td>8 可借鉴清单</td><td>P0 尾截与工具名、P1 确认/静默、P2 重整/CI/多 buddy</td><td>O-01、O-02、O-03、O-05、O-08、O-09、O-10（并补上「工程判断」层：O-04、O-06、O-07、O-11）</td></tr>
+      <tr><td>9 决策建议</td><td>守住「不自动、不复制、可回滚」</td><td>四条硬原则全节</td></tr>
+    </tbody>
+  </table>
+  <div class="box good">
+    <div class="h">相对报告第 8 节的增量</div>
+    <p style="margin:0">报告第 8 节是「按功能列可借鉴项」；本方案额外补了四层：① 每条的因果链与反例；② 发布确认约定对 CI 方案的硬约束（P-4）；③ 配置腐化、注入成本、并发回归、定位说明四个对方没直接给但被其做法反证出来的缺口；④ 明确「不做」清单与重新评估的前提。</p>
+  </div>
+</section>
+
+<footer>
+  dsh-workbuddy-memory 优化方案 · 2026-11-13 · 单文件 HTML（图表依赖 Chart.js CDN，离线时总表与逐项说明仍完整可读）<br>
+  依据版本：本项目 v0.1.4 / 48f0569 · 对比项目 v1.8.5 / 081582e · 本方案为静态源码分析结论，未做运行时同装实测
+</footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+(function(){
+  if(typeof Chart === 'undefined'){
+    ['fbBubble','fbRadar'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='block'; });
+    return;
+  }
+  Chart.defaults.color = '#a7b6c8';
+  Chart.defaults.borderColor = '#26313f';
+  Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif';
+
+  var items = [
+    {id:'O-01', n:'截断改尾部优先', x:1, y:5, r:18, g:'P0'},
+    {id:'O-02', n:'工具名冲突处理', x:2, y:4, r:16, g:'P0'},
+    {id:'O-03', n:'软规则升级硬门禁', x:3, y:5, r:18, g:'P0'},
+    {id:'O-04', n:'配置键审计', x:2, y:3, r:12, g:'P1'},
+    {id:'O-05', n:'会话分桶/静默掩码', x:4, y:3, r:12, g:'P1'},
+    {id:'O-06', n:'注入成本核算', x:3, y:4, r:13, g:'P1'},
+    {id:'O-07', n:'并发回归测试', x:2, y:3, r:11, g:'P1'},
+    {id:'O-08', n:'CI 校验(不发布)', x:2, y:4, r:12, g:'P2'},
+    {id:'O-09', n:'双门禁重整', x:4, y:3, r:11, g:'P2'},
+    {id:'O-10', n:'多 buddy 只读兼容', x:3, y:2, r:9, g:'P2'},
+    {id:'O-11', n:'定位与契约文档', x:1, y:3, r:10, g:'P2'}
+  ];
+  var colors = {P0:'rgba(77,208,193,.72)', P1:'rgba(194,151,255,.72)', P2:'rgba(255,166,87,.72)'};
+  var edges  = {P0:'#4dd0c1', P1:'#c297ff', P2:'#ffa657'};
+  var groups = ['P0','P1','P2'];
+  var datasets = groups.map(function(g){
+    return {
+      label: g,
+      data: items.filter(function(i){return i.g===g;}).map(function(i){return {x:i.x,y:i.y,r:i.r,id:i.id,n:i.n};}),
+      backgroundColor: colors[g], borderColor: edges[g], borderWidth: 1
+    };
+  });
+  new Chart(document.getElementById('chartBubble'), {
+    type:'bubble',
+    data:{datasets:datasets},
+    options:{responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:'#e6edf5'}},
+        tooltip:{callbacks:{label:function(c){var d=c.raw;return d.id+' '+d.n+' · 成本 '+d.x+' / 收益 '+d.y;}}}},
+      scales:{
+        x:{min:0,max:5.4,title:{display:true,text:'改造成本（1 低 → 5 高）',color:'#7d8da1'},
+           ticks:{stepSize:1,color:'#a7b6c8'},grid:{color:'#26313f'}},
+        y:{min:0,max:5.8,title:{display:true,text:'预期收益（1 低 → 5 高）',color:'#7d8da1'},
+           ticks:{stepSize:1,color:'#a7b6c8'},grid:{color:'#26313f'}}
+      }}
+  });
+
+  new Chart(document.getElementById('chartRadar'), {
+    type:'radar',
+    data:{labels:['数据一致性','注入预算可控','写入安全/回滚','自动化','可视化编辑','工程保障'],
+      datasets:[
+        {label:'现状 0.1.4',data:[5,4,5,2,5,4],borderColor:'#a7b6c8',
+         backgroundColor:'rgba(167,182,200,.10)',pointBackgroundColor:'#a7b6c8',borderWidth:2,borderDash:[4,4]},
+        {label:'方案目标（估计）',data:[5,5,5,2.5,5,5],borderColor:'#4dd0c1',
+         backgroundColor:'rgba(77,208,193,.16)',pointBackgroundColor:'#4dd0c1',borderWidth:2}
+      ]},
+    options:{responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:'#e6edf5'}},
+        tooltip:{callbacks:{label:function(c){return c.dataset.label+'：'+c.parsed.r+' / 5';}}}},
+      scales:{r:{beginAtZero:true,max:5,ticks:{stepSize:1,color:'#7d8da1',backdropColor:'transparent'},
+        grid:{color:'#2b3a4a'},angleLines:{color:'#2b3a4a'},
+        pointLabels:{color:'#c9d6e5',font:{size:12}}}}}
+  });
+})();
+</script>
+</body>
+</html>
