@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>dsh-workbuddy-memory 优化方案 · 2026-11-13</title>
+<title>dsh-workbuddy-memory 优化方案 v1.2 · 2026-11-13</title>
 <style>
   :root{
     --bg:#0d1219; --bg2:#111823; --card:#151d29; --card2:#1a2431;
@@ -117,10 +117,10 @@
     <span class="pill a">基线版本 v0.1.4 · HEAD 48f0569</span>
     <span class="pill b">对比基线 dsh-memory-palace v1.8.5 · 081582e</span>
     <span class="pill">交付格式：单文件 HTML</span>
-    <span class="pill a">v1.1 · 每项补充「背景」与「现有问题」</span>
+    <span class="pill a">v1.2 · 背景改大白话 + 通俗导读</span>
   </div>
   <nav class="toc">
-    <a href="#basis">1 依据与范围</a><a href="#principle">2 四条硬原则</a><a href="#summary">3 优化项总表</a>
+    <a href="#plain">0 一分钟读懂</a><a href="#basis">1 依据与范围</a><a href="#principle">2 四条硬原则</a><a href="#summary">3 优化项总表</a>
     <a href="#charts">4 优先级可视化</a><a href="#p0">5 P0 逐项</a><a href="#p1">6 P1 逐项</a>
     <a href="#p2">7 P2 逐项</a><a href="#reject">8 明确不做</a><a href="#batch">9 实施批次</a>
     <a href="#accept">10 验收标准</a><a href="#risk">11 风险与回退</a><a href="#index">12 原因索引</a>
@@ -128,6 +128,33 @@
   </nav>
 </header>
 
+<section id="plain">
+  <h2>0. 一分钟读懂这份方案</h2>
+  <div class="box good">
+    <div class="h">这个插件是干什么的</div>
+    <p style="margin:0">把 WorkBuddy 的那本 Markdown 记事本，直接递给 DSH 用。两个程序看的是同一本，不留副本、不用同步；谁改了，另一个立刻能看到。</p>
+  </div>
+  <p>为什么会有一份优化方案：发现另一个插件也在做类似的事，逐项对比之后，看清自己哪些地方还差一口气。下面 11 项，就是「差的那几口气」。</p>
+  <table>
+    <thead><tr><th>问题分三堆</th><th>大白话</th><th>对应项</th></tr></thead>
+    <tbody>
+      <tr><td>写了却看不见</td><td>记事本太厚的时候，被撕掉的恰好是最新写的那几页</td><td>O-01</td></tr>
+      <tr><td>怕手滑、怕撞车</td><td>按钮和别人撞名、误删没人拦、多个窗口共用一份状态、并发场景没人测过</td><td>O-02 / O-03 / O-05 / O-07</td></tr>
+      <tr><td>该算清的账</td><td>开关有没有真在用、每轮花多少 token、什么时候该整理、发版怎么走、别家目录认不认、话有没有说清楚</td><td>O-04 / O-06 / O-08 / O-09 / O-10 / O-11</td></tr>
+    </tbody>
+  </table>
+  <h3>四条底线，用大白话说</h3>
+  <ol>
+    <li><strong>不抄第二本记事本</strong> —— 一旦有两份，就永远说不清哪份才是最新的。</li>
+    <li><strong>不每轮多烧一次模型</strong> —— 让模型判断「这轮没啥可记」，本身也要花钱。</li>
+    <li><strong>别指望模型一定听话</strong> —— 「请不要这么做」写在说明书里不算保护，代码拦住才算。</li>
+    <li><strong>发版必须有人点头</strong> —— 自动检查欢迎，自动发布不行。</li>
+  </ol>
+  <div class="box">
+    <div class="h">后面怎么读</div>
+    <p style="margin:0">每项先看「背景（大白话）」＝这块管什么、当初为什么这么做；再看「现有问题」＝什么时候会出事。代码行号、提交号、验收命令都集中在「现有问题」和「动作 / 验收」里，只想看结论可以跳过那部分。</p>
+  </div>
+</section>
 <section id="basis">
   <h2>1. 依据与范围</h2>
   <p>本方案只覆盖 <code>dsh-workbuddy-memory</code> 一个仓库。所有结论来自对比报告锁定的两个版本：本项目 <code>0.1.4 / 48f0569</code>，对比项目 <code>1.8.5 / 081582e</code>；后续追问又核实了四件事，构成本方案的直接输入：</p>
@@ -172,7 +199,7 @@
 
 <section id="summary">
   <h2>3. 优化项总表</h2>
-  <p class="sub">「原因」列是每项的一句话摘要。v1.1 起，第 5–7 节的每一项都按<strong>背景 → 现有问题 → 原因与取舍 → 动作 / 验收 / 回退</strong>展开，背景与问题均带代码行号、提交记录或实现笔记出处。成本为相对量（1 最低 / 5 最高），用于第 4 节气泡图。</p>
+  <p class="sub">「原因」列是每项的一句话摘要。v1.2 起，第 5–7 节每项按<strong>背景（大白话）→ 现有问题 → 原因与取舍 → 动作 / 验收 / 回退</strong>展开；背景只讲「这块是干什么的、当初为什么这么做」，代码行号、提交记录与技术证据集中在「现有问题」和「动作 / 验收」里。成本为相对量（1 最低 / 5 最高），用于第 4 节气泡图。</p>
   <table>
     <thead><tr><th>编号</th><th>优先级</th><th>优化项</th><th>原因（一句话）</th><th>主要落点</th><th>成本</th><th>收益</th></tr></thead>
     <tbody>
@@ -219,9 +246,8 @@
   <div class="item">
     <div class="hd"><span class="id">O-01</span><span class="pr p0">P0</span><span class="t">截断改为「结构行保留 + 尾部优先」</span></div>
     <div class="ctx">
-      <div class="h">背景</div>
-      <p>注入由 4 个 <code>systemPrompt.section</code> provider 组成（<code>src/inject.js:78-96</code>），每个块走 <code>renderFileBlock()</code>：读文件 → <code>truncateChars(body, limit)</code> → 拼标题（<code>src/render.js:139-148</code>）。<code>truncateChars</code> 按 UTF-16 码元<strong>从头保留</strong>（<code>src/fsx.js:100-113</code>）。四个块的默认上限是 10000 / 2000 / 8000 / 2000 字符（<code>src/config.js:52-55</code>），其中用户级上限与蒸馏阈值是 <code>1e5a0c1</code> 才做成可配的。</p>
-      <p>另一侧，写入走 <code>appendToSection()</code>：新条目插到目标章节末尾（<code>src/markdown.js:264-294</code>），章节不存在时整个新章节追加到文件末尾（<code>:284</code>）；<code>store.append</code> 再套上锁、CAS、备份、原子写。缓存层按 <code>mtime + size</code> 复用文件文本，让 <code>on-change</code> 装配不重复读盘（<code>src/cache.js:1-55</code>）。截断与写入是两组独立代码，从未对齐过方向。</p>
+      <div class="h">背景（大白话）</div>
+      <p>记忆文件就是一本越写越厚的记事本。每一轮对话，插件都要把这本子递给模型看，但一次只能递固定字数 —— 比如用户记忆最多 8000 字，超了就得裁掉一部分。现在的裁法是「从第一页开始留，把最后几页撕掉」，可偏偏新写的内容都记在最后几页。当初选这个裁法只是因为最好实现，没人把「新内容写在末尾」这件事放在一起想。</p>
     </div>
     <div class="prob">
       <div class="h">现有问题</div>
@@ -244,9 +270,8 @@
   <div class="item">
     <div class="hd"><span class="id">O-02</span><span class="pr p0">P0</span><span class="t">工具名冲突：可选前缀 + 文档声明</span></div>
     <div class="ctx">
-      <div class="h">背景</div>
-      <p>9 个工具在 <code>src/tools/index.js:120-133</code> 统一注册，名字硬编码在各工具文件里（如 <code>tools/read.js:19</code>）。工具名同时被写进注入给模型的规则文案（<code>locale/zh.json</code> 的「写记忆只用 memory_append / memory_edit / memory_prune」）、README 中英两张工具表、以及面板的提示语。宿主侧 <code>defineTool</code> 的 <code>output.schema</code> 必须显式声明 <code>additionalProperties</code>（实现笔记 §6），注册表按 name 索引。</p>
-      <p>最近一次提交 <code>48f0569</code> 是「条目跨度模型与记忆工具契约修复」，一次动了 README、locale、config、env、markdown、render、read、search、write、store、client 等十余个文件 —— 说明工具契约一改就是全仓联动。项目此前完全没有「与其他记忆插件共存」的概念，README 里最接近的一条提醒还是「不要手写 insert，会和配置卡写出两条同 id 记录」（实现笔记 §11.4）。</p>
+      <div class="h">背景（大白话）</div>
+      <p>插件给模型配了 9 个「按钮」，比如 <code>memory_read</code>（读记忆）。这些名字就像快捷指令，模型的操作说明、README、界面提示里都写死了。麻烦的是另一款同类插件也用了同一个按钮名，按下去干的却不是一回事。当初只按「机器上只装我一个」来设计，没考虑撞名。</p>
     </div>
     <div class="prob">
       <div class="h">现有问题</div>
@@ -269,10 +294,8 @@
   <div class="item">
     <div class="hd"><span class="id">O-03</span><span class="pr p0">P0</span><span class="t">三条软规则升级为硬门禁</span></div>
     <div class="ctx">
-      <div class="h">背景</div>
-      <p>所有写入共用一条链：跨进程锁 → revision 比对 → 备份 → 原子写 → 操作台账（<code>src/write/store.js:585-653</code>）；<code>guard.js:19-44</code> 拦住 <code>write / edit / apply_patch</code> 绕过去；面板写路由接宿主信任栅栏并做同源检查（<code>src/host/routes.js:556-560</code>）。<code>bfbe7e7</code> 已做过一次开源前安全审计（信任栅栏 + 截断文件禁止整节写回）。</p>
-      <p>面板侧其实有确认机制：实现笔记 §14.7 记载「设置卡打开全文编辑先弹确认、面板第一次进源码模式弹一次」，并明确写下「两处都只是 UI 确认，真正的写入仍经过锁、CAS、备份和账本」。§12.4 还记录了一次方向修正：早期 <code>consolidate</code> 把 30 天前日期条目<strong>原样</strong>搬进 <code>MEMORY.md</code>，被判定会撑爆 10000 字符限额，改成 <code>prune</code>（移动而非删除、<code>dryRun</code> 默认 true）+ 交给模型按主题蒸馏。</p>
-      <p>版本约束方面：<code>expectedRevision</code> 在 append / edit / replace_section 都是<strong>可选</strong>（<code>tools/write.js:23/59/101</code>），只有 <code>memory_restore</code> 强制（<code>:140</code>）。</p>
+      <div class="h">背景（大白话）</div>
+      <p>写记忆这件事本身做得挺稳：同一时刻只让一个人改、改之前先留底稿、改完能一键退回。人在界面上删东西、改整篇，也会先弹窗问一句。但这些保护只管「人点按钮」；如果模型自己决定删一条、重写整篇、把一批旧笔记搬走，目前一路绿灯，全靠说明书上一句「请不要这么做」。</p>
     </div>
     <div class="prob">
       <div class="h">现有问题</div>
@@ -301,9 +324,8 @@
   <div class="item">
     <div class="hd"><span class="id">O-04</span><span class="pr p1">P1</span><span class="t">配置键审计与收敛</span></div>
     <div class="ctx">
-      <div class="h">背景</div>
-      <p><code>src/config.js</code> 共 239 行，六组约 30 个键（inject / write / guard / ui / search / locale）。宿主对配置有硬约束：<code>volatile</code> 只能标在「没有 volatile 祖先」的叶子上，嵌套标注会直接让插件加载失败（实现笔记 §3）；配置卡是否渲染取决于 Config 里至少有一个 volatile 字段（§5）；配置值最终写进 profile 的 <code>cordis.patch.yml</code>（§9）。<code>bacd30c</code> 还专门补过一次「注入上限与蒸馏阈值」的配置卡控件 —— 加一个键要同步 schema、客户端控件与 <code>normalizeConfig</code> 三处。</p>
-      <p>项目自己已经收敛过一次：<code>config.js:73-77</code> 的注释记载 <code>conflictPolicy</code> 曾提供 <code>fail | merge | overwrite</code> 但没有任何代码读它，设了 <code>overwrite</code> 仍返回 <code>fail</code>，最后删掉，理由是「一个说谎的开关比没有开关更糟」。实现笔记 §11.4 还记过一次配置层事故：手写 insert 与配置卡写出两条同 id 记录，表现为「勾了没反应」。</p>
+      <div class="h">背景（大白话）</div>
+      <p>设置页里有一堆开关，大约 30 个。开关越多越容易出问题：有的勾了没反应，有的两个一起打开会互相打架。项目里已经删过一个「骗人」的开关 —— 界面给三个选项，代码其实只认一种。当初是每加一个功能就顺手加一个开关，没定期回头清点。</p>
     </div>
     <div class="prob">
       <div class="h">现有问题</div>
@@ -326,9 +348,8 @@
   <div class="item">
     <div class="hd"><span class="id">O-05</span><span class="pr p1">P1</span><span class="t">会话级状态分桶 + 静默预设工具掩码</span></div>
     <div class="ctx">
-      <div class="h">背景</div>
-      <p><code>src/index.js:52-64</code> 的 <code>recent</code> 是插件级单例（一个 <code>cwd</code> + 12 条上限的 <code>Map&lt;cwd, ts&gt;</code>），来源是注入 provider 顺手记下的会话 cwd。实现笔记 §13.1 明写「面板没有会话，只能沿用最近装配过的 cwd，没说过话就没有项目 —— 这是设计如此，但不是好的交互」；§13.2 用 <code>sha1(cwd).slice(0,8)</code> 白名单把面板限制在「插件见过的工作区」，避免变成文件浏览器。</p>
-      <p>缓存层其实已经按工作区分键：<code>createFrozenStore()</code> 的注释写「Keyed by workspace so two sessions in different projects do not share text」（<code>src/cache.js:84-105</code>），<code>inject.js:70-72</code> 用 cwd 作 key。路径解析本身按会话 cwd 逐次传参（<code>probeEnvironment({cwd})</code>），写入不会写错项目；<code>workspaceRegistry</code> 用 <code>ctx.get()</code> 懒读、缺失降级（§14.1）。宿主存在「模式 / agent 预设」概念（对比项目的 <code>silentPresets</code> 默认 <code>minimal</code> 就是针对官方极简预设），但本项目没有任何会话级开关。</p>
+      <div class="h">背景（大白话）</div>
+      <p>DSH 是个一直开着的程序，可以同时开好几个窗口、聊好几个项目。插件里那份「最近用过哪些项目」的清单，是全局只此一份，不分哪个窗口。平时够用，但同一个项目开两个窗口，或者用「极简模式」做对照测试时就会别扭：一个窗口刚写完记忆，另一个窗口的缓存被一起清掉；极简模式下还照旧把记忆和 9 个按钮都摆给模型看。</p>
     </div>
     <div class="prob">
       <div class="h">现有问题</div>
@@ -351,10 +372,8 @@
   <div class="item">
     <div class="hd"><span class="id">O-06</span><span class="pr p1">P1</span><span class="t">注入成本核算 + 恒定前缀拆分</span></div>
     <div class="ctx">
-      <div class="h">背景</div>
-      <p>项目已经为「前缀稳定」做过两级缓存：同一 <code>AssembleContext</code> 只探测一次（WeakMap），文件文本按 <code>mtime + size</code> 复用，注释写明目的是「keep the injected prefix stable without re-reading the disk」（<code>src/cache.js:1-55</code>）。<code>inject.refresh</code> 默认 <code>on-change</code>，另有 <code>first-turn</code> 冻结模式（<code>src/inject.js:67-76</code>）。</p>
-      <p>度量也并非从零开始：<code>memory_status</code> 已报告用户级文件字符数、<code>injected: Math.min(chars, limits.user)</code>、<code>overLimit</code>、<code>distillDue</code> 以及全量 <code>config.inject</code>（<code>src/tools/status.js:51-104</code>），这些是 <code>1e5a0c1</code> 引入的。<code>render.js:115-130</code> 的 <code>distillHint</code> 按文件大小生成两级提示并追加到规则块末尾，规则块还有「先给 hint 留位置、再截断 base」的算法（<code>:50-60</code>）。</p>
-      <p>实现笔记 §2 记录了一条有用的宿主行为：返回 <code>''</code> 的 section 仍留在 <code>assembly.sections</code> 里，只是渲染时被过滤 —— 这意味着「动态段为空」不需要注销 section。</p>
+      <div class="h">背景（大白话）</div>
+      <p>每轮对话都要把几段文字塞进提示词里，这是要花 token 的。项目已经做了缓存，避免反复读硬盘；也有个状态查询能看到用户记忆有多大、有没有超预算。但「这一轮到底塞了多少字、哪一段被裁掉、比上一轮多花了多少」，查不到 —— 有点像家里有总电表，却看不到每台电器的用电量。</p>
     </div>
     <div class="prob">
       <div class="h">现有问题</div>
@@ -378,9 +397,8 @@
   <div class="item">
     <div class="hd"><span class="id">O-07</span><span class="pr p1">P1</span><span class="t">跨会话 / 并发写入回归测试</span></div>
     <div class="ctx">
-      <div class="h">背景</div>
-      <p>现有 14 个测试文件、约 4441 行，用 <code>node --test</code> + <code>--experimental-test-coverage</code>，按模块切分：markdown / store / guard / routes / inject / render / tools / panel / i18n / paths / client / e2e / dev-install / index。框架规范程度高于对比项目的自研 <code>assert</code> 脚本。</p>
-      <p>项目其实已经吃过「共享状态污染」的亏：实现笔记 §12.5 记载 <code>tests/helpers/react.mjs</code> 的 hook 槽是模块级的，跨用例会带上一个用例的选中态，所以每个用例前必须 <code>runtime.reset()</code>。写链的文件头也如实划了边界（<code>store.js:8-14</code>）：「DSH 对不遵守锁的外部编辑器只能检出已知冲突，毫秒级并写仍可能被覆盖，靠备份可恢复」。</p>
+      <div class="h">背景（大白话）</div>
+      <p>项目有 14 个测试文件，主要验证「给这个输入，一定得到那个结果」。缺的是另一类：把以前出过的事故重演一遍，确认没再犯 —— 两个窗口同时写同一个文件、同一个操作被重试两次之类。写记忆这条链路是整个插件最不能出错的地方，动它之前最好先把这些场景钉死。</p>
     </div>
     <div class="prob">
       <div class="h">现有问题</div>
@@ -405,9 +423,8 @@
   <div class="item">
     <div class="hd"><span class="id">O-08</span><span class="pr p2">P2</span><span class="t">CI 校验（明确不自动发布）</span></div>
     <div class="ctx">
-      <div class="h">背景</div>
-      <p><code>package.json</code> 只有 <code>test</code> 与 <code>test:coverage</code> 两个 script，没有构建步骤（<code>files</code> 直接发布 <code>src/</code>）；仓库根没有 <code>.github/</code>。目前 5 个 tag / 5 个 GitHub release / 6 个 npm 版本全部手工产出，README 给的安装路径是 <code>dsh plugin --profile web add dsh-workbuddy-memory</code> 与开发用的 <code>scripts/dev-install.mjs</code>。</p>
-      <p>项目有一条明确的流程约定：<code>npm publish</code> / GitHub Release / 打 tag 之前必须先人工确认，「改完了、测过了」不构成自动发版的许可。收录方面，<code>awesome-dsh-plugin</code> PR #14592 还在等仓库年龄门槛由 <code>regate.yml</code> 自动重跑。</p>
+      <div class="h">背景（大白话）</div>
+      <p>现在发版本全靠手工：改完、跑一遍测试、打标签、发到 npm。没有机器帮忙核对「标签和版本号对不对」，也没一份写下来的发版清单。而且项目有规矩：发版前必须先问过人，不能测完就顺手发出去。所以缺的是「自动帮忙检查」，不是「自动帮忙发布」。</p>
     </div>
     <div class="prob">
       <div class="h">现有问题</div>
@@ -429,9 +446,8 @@
   <div class="item">
     <div class="hd"><span class="id">O-09</span><span class="pr p2">P2</span><span class="t">双门禁重整命令</span></div>
     <div class="ctx">
-      <div class="h">背景</div>
-      <p>实现笔记 §12.4 记录了一次方向修正：早期 <code>consolidate</code> 把 30 天前日期条目原样按 <code>## YYYY-MM-DD</code> 成节 append 进 <code>MEMORY.md</code>，被判定「只会撑爆 10000 字符注入限额」，改成 <code>prune</code> 归档 + 模型按主题蒸馏。<code>1e5a0c1</code> 随后引入 <code>inject.distillAbove</code>（默认 <code>limits.user × 2</code>）与两级提示：<code>render.js:115-130</code> 在文件超过注入上限时先警告「部分读不到」，超过蒸馏阈值时再要求按主题压缩；<code>locale/zh.json</code> 第 6 条规则写明「超过 30 天的日期文件：先蒸馏进 MEMORY.md，再 memory_prune 归档」。</p>
-      <p>全量写入能力其实已经具备：<code>replaceDocument</code>（<code>store.js:166-185</code>）走同一条锁 / CAS / 备份 / 原子写链，另有 <code>memory_list_revisions</code> + <code>memory_restore</code> 可回滚；目前只受 <code>ui.allowFullTextEdit</code> 与 <code>validateDocument()</code> 约束。</p>
+      <div class="h">背景（大白话）</div>
+      <p>记忆写久了会变厚，得定期压缩。早期做法是把旧流水原样搬进长期记忆，后来发现只会越搬越肿，改成「让模型按主题提炼，再把旧笔记归档」。方向对了，但「什么时候该压、多久能压一次、压之前要不要问人」全写在说明书里，没有任何机器把关。</p>
     </div>
     <div class="prob">
       <div class="h">现有问题</div>
@@ -453,9 +469,8 @@
   <div class="item">
     <div class="hd"><span class="id">O-10</span><span class="pr p2">P2</span><span class="t">多 buddy 目录只读兼容</span></div>
     <div class="ctx">
-      <div class="h">背景</div>
-      <p><code>src/paths.js:40-45</code> 的 <code>resolveDataFolderName()</code> 支持配置值与 <code>WORKBUDDY_DATA_FOLDER_NAME</code> 环境变量，但结果始终是<strong>一个字符串</strong>；<code>memoryLayout()</code>（<code>:93-109</code>）据此生成唯一的项目记忆目录。用户级已经做了多来源兼容：<code>resolveWorkbuddyHome()</code> 依次尝试配置值 → <code>WORKBUDDY_CONFIG_DIR</code> → <code>CODEBUDDY_CONFIG_DIR</code> → <code>~/.workbuddy</code>（含多实例后缀，<code>:62-74</code>），项目级没有对应的候选列表。</p>
-      <p><code>write.ensureLayout</code> 默认 <code>false</code>（<code>config.js:85-88</code>），注释写明「凭空造一个隐藏 .workbuddy 会和 WorkBuddy 自己的工作区初始化抢跑」；目录不存在时 <code>store.append</code> 返回 <code>no_store</code>（<code>:504-513</code>）。所有写入只指向解析出的那一个目录 —— 这是「一份真源」定位的直接体现。</p>
+      <div class="h">背景（大白话）</div>
+      <p>插件默认去项目的 <code>.workbuddy/memory</code> 找记忆。有些人的工作区用的是 CodeBuddy，记忆放在 <code>.codebuddy/memory</code>，插件就扑空，看起来像没生效。用户级的路径其实已经兼容两种，项目级还没有。当初按「一个项目只该有一个记忆目录」设计，因为多一份就得同步、容易乱 —— 这条底线后面也要守住。</p>
     </div>
     <div class="prob">
       <div class="h">现有问题</div>
@@ -476,9 +491,8 @@
   <div class="item">
     <div class="hd"><span class="id">O-11</span><span class="pr p2">P2</span><span class="t">文档：定位说明 + 宿主契约风险清单</span></div>
     <div class="ctx">
-      <div class="h">背景</div>
-      <p>文档资产其实不少：README 中英两份、5 份设计 / 审计 HTML、以及 <code>docs/implementation-notes.md</code> 的 14 节宿主契约实测（注入 provider 读 <code>agent.session.header.cwd</code>、空 section 不会从数组消失、volatile 不能嵌套、settings 命名空间 = profile entry id、<code>assemble()</code> 需要工具执行器在场、面板写路由状态码映射、<code>workspaceRegistry</code> 要懒读不能 inject 等）。这些是实测结论，价值很高。</p>
-      <p>但它们都围绕「本插件怎么跑起来」，没有一份集中回答「依赖了宿主哪些 API、各自降级路径是什么、升级 DSH 时该复核哪几行」。README 也只讲本插件，不提同类插件；对比报告与优化方案都是 2026-11-13 才新增的。</p>
+      <div class="h">背景（大白话）</div>
+      <p>文档其实不少：两份 README、几份设计稿，还有一本记满「宿主实际行为和文档不一样」的踩坑笔记。但都是给自己人排障用的，没有一段是写给「正在两个插件之间挑一个」的用户看的，也没有一张「升级宿主时该检查哪几处」的清单。这次对话连着问了四轮才把两个插件的关系理清，就是缺这段说明的证据。</p>
     </div>
     <div class="prob">
       <div class="h">现有问题</div>
