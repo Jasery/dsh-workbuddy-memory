@@ -117,7 +117,7 @@ export function createStore({ cfg, stateDir, onCommit }) {
   const lockDir = join(stateDir, 'locks')
   const backupDir = join(stateDir, 'backups')
   const logDir = join(stateDir, 'log')
-  const receipts = createReceiptStore({ stateDir })
+  const receipts = createReceiptStore({ stateDir, lockWaitMs: cfg.write.lockWaitMs })
   const plans = createPlanStore()
   const listeners = new Set()
   if (typeof onCommit === 'function') listeners.add(onCommit)
@@ -191,20 +191,34 @@ export function createStore({ cfg, stateDir, onCommit }) {
     return { ok: true, exists: true, text: file.text, bytes: file.bytes }
   }
 
-  function markReceipt(record, patch) {
-    if (!record) return null
+  /**
+   * Persist one receipt transition.
+   *
+   * A receipt the store could not durably update is not a receipt: callers
+   * branch on `ok`, because continuing as if the transition had landed is how
+   * a crashed `applying` record turns a later legitimate deletion into a
+   * rewrite that revives it.
+   */
+  function markReceipt(tx, record, patch) {
+    if (!record || !tx) return { ok: false, code: 'receipt_capacity', reason: 'no_receipt' }
     const next = { ...record, ...patch }
-    receipts.update(next)
-    return next
+    const written = tx.update(next)
+    if (!written.ok) {
+      return { ok: false, code: written.code ?? 'receipt_capacity', reason: written.reason ?? 'update_failed' }
+    }
+    return { ok: true, record: written.record ?? next }
   }
 
   /**
-   * Shared operation lock → receipt lookup → file lock → CAS → transform →
+   * Shared operation lock → receipt transaction → file lock → CAS → transform →
    * backup → receipt applying → atomic replace → verified post-read.
    *
-   * Everything that can change source bytes happens inside both locks. The
-   * receipt is written before the destructive step, so a crash leaves evidence
-   * a retry can interpret.
+   * The receipt transaction is taken before the file lock and held for the
+   * whole write. That serializes memory writes across processes, which is the
+   * price of making admission, expiry and the duplicate lookup true at the same
+   * time; memory writes are rare. Everything that can change source bytes
+   * happens inside both locks, and the receipt is written before the
+   * destructive step so a crash leaves evidence a retry can interpret.
    */
   async function commitRewrite({
     action,
@@ -222,202 +236,233 @@ export function createStore({ cfg, stateDir, onCommit }) {
     if (!op.ok) return fail(op.code)
     const fingerprint = fingerprintFor({ action, paths: [path], request })
 
-    const exec = async (id) =>
-      withLock(join(lockDir, `${pathKey(path)}.lock`), cfg.write.lockWaitMs, () => {
-        const prior = id ? receipts.read(id) : { ok: true, record: null }
-        if (!prior.ok) return fail(prior.code, { reason: prior.reason, operationId: id })
-        let record = prior.record
-        if (record) {
-          if (record.fingerprint !== fingerprint) return fail('operation_mismatch', { operationId: id, path })
-          if (record.status === 'committed') return { result: { ...record.result, duplicate: true }, event: null }
-          if (record.status === 'partial' || record.status === 'outcome_unknown') {
-            return fail('outcome_unknown', { operationId: id, path, reason: record.status })
-          }
-        }
+    const exec = async (id) => {
+      const body = (tx) =>
+        withLock(join(lockDir, `${pathKey(path)}.lock`), cfg.write.lockWaitMs, () => run(tx, id))
+      return id ? receipts.withTransaction(body, { waitMs: cfg.write.lockWaitMs }) : body(null)
+    }
 
-        const current = readForWrite(path)
-        if (!current.ok) return fail(current.code, { path, error: current.error, bytes: current.bytes })
-        const before = contentRevision(current.text)
-
-        if (record?.status === 'applying') {
-          if (before === record.after) {
-            const done = markReceipt(record, { status: 'committed' })
-            return { result: { ...(done?.result ?? record.result), duplicate: true }, event: null }
-          }
-          if (before !== record.before) {
-            markReceipt(record, { status: 'outcome_unknown', result: { ...record.result, ok: false, code: 'outcome_unknown' } })
-            return fail('outcome_unknown', { operationId: id, path })
-          }
+    const run = (tx, id) => {
+      const prior = id ? tx.read(id) : { ok: true, record: null }
+      if (!prior.ok) return fail(prior.code, { reason: prior.reason, operationId: id })
+      let record = prior.record
+      if (record) {
+        if (record.fingerprint !== fingerprint) return fail('operation_mismatch', { operationId: id, path })
+        if (record.status === 'committed') return { result: { ...record.result, duplicate: true }, event: null }
+        if (record.status !== 'applying') {
+          // partial/outcome_unknown is unresolved: only a person may resolve it.
+          return fail('outcome_unknown', { operationId: id, path, reason: record.status })
         }
+      }
 
-        // Every destructive action on existing content must name what it saw.
-        if (requireCas && current.exists && !expectedRevision) {
-          return fail('revision_required', { path, revision: before })
+      const current = readForWrite(path)
+      if (!current.ok) return fail(current.code, { path, error: current.error, bytes: current.bytes })
+      const before = contentRevision(current.text)
+
+      if (record) {
+        if (before === record.after) {
+          // The source holds exactly the planned bytes: this is the commit a
+          // crash never got to record. Record it, or say that we could not.
+          const done = markReceipt(tx, record, { status: 'committed' })
+          if (!done.ok) {
+            return {
+              result: fail('outcome_unknown', {
+                operationId: id,
+                path,
+                committed: true,
+                revision: before,
+                reason: 'receipt_update_failed',
+              }),
+              event: { path, target, operation: action, revision: before, operationId: id },
+            }
+          }
+          return { result: { ...(done.record.result ?? record.result), duplicate: true }, event: null }
         }
-        if (expectedRevision && String(expectedRevision) !== before) {
-          recordOperation({
-            id,
-            at: Date.now(),
-            target,
-            path,
-            status: 'conflict',
+        // Matching the old snapshot is not proof the write never ran: the file
+        // could have been changed to `after` and back. Refuse to redo it.
+        markReceipt(tx, record, {
+          status: 'outcome_unknown',
+          result: { ...record.result, ok: false, code: 'outcome_unknown' },
+        })
+        return fail('outcome_unknown', { operationId: id, path, reason: 'applying_unverified' })
+      }
+
+      // Every destructive action on existing content must name what it saw.
+      if (requireCas && current.exists && !expectedRevision) {
+        return fail('revision_required', { path, revision: before })
+      }
+      if (expectedRevision && String(expectedRevision) !== before) {
+        recordOperation({
+          id,
+          at: Date.now(),
+          target,
+          path,
+          status: 'conflict',
+          expectedRevision: String(expectedRevision),
+          revision: before,
+        })
+        return {
+          result: {
+            ok: false,
+            code: 'conflict',
             expectedRevision: String(expectedRevision),
             revision: before,
-          })
-          return {
-            result: {
-              ok: false,
-              code: 'conflict',
-              expectedRevision: String(expectedRevision),
-              revision: before,
-              path,
-              hint: 'the file changed since it was read; read again before writing',
-            },
-            event: null,
-          }
-        }
-
-        let output
-        try {
-          output = prepare ? prepare() : transform(current.text)
-        } catch (error) {
-          return fail('write_failed', { path, message: String(error?.message ?? error) })
-        }
-        if (!output || output.ok === false) {
-          return fail(output?.reason ?? 'no_match', { path, hits: output?.hits ?? [], issues: output?.issues ?? [] })
-        }
-        if (output.replaced === 0) {
-          const extra = { path, hits: output.hits ?? [], issues: output.issues ?? [] }
-          if (output.duplicates) extra.duplicates = output.duplicates
-          return fail(output.reason ?? 'no_match', extra)
-        }
-
-        const afterText = String(output.text ?? '')
-        const afterRevision = contentRevision(afterText)
-        const extra = pickExtra(output)
-        const planned = {
-          ok: true,
-          revision: afterRevision,
-          previous: before,
-          path,
-          bytes: Buffer.byteLength(afterText, 'utf8'),
-          backup: null,
-          created: Boolean(output.created),
-          section: output.section ?? null,
-          ...extra,
-        }
-
-        // No byte changed (a restore that restores the current text): report it
-        // without taking a backup or replacing the file for no reason.
-        if (afterRevision === before) {
-          planned.changed = false
-          planned.created = Boolean(output.created)
-          if (id) {
-            const seeded = record ?? {
-              version: 1,
-              id,
-              fingerprint,
-              action,
-              target,
-              path,
-              before,
-              after: before,
-              status: 'committed',
-              result: planned,
-              createdAt: Date.now(),
-            }
-            if (record) {
-              markReceipt(record, { status: 'committed', result: planned })
-            } else {
-              const begun = receipts.begin(seeded)
-              if (!begun.ok) return fail(begun.code, { reason: begun.reason, path })
-            }
-          }
-          return { result: planned, event: null }
-        }
-
-        if (!allowNoBackup && current.exists && cfg.write.backupKeep <= 0) {
-          if (id && !record) receipts.drop(id)
-          return fail('backup_required', { path, backupKeep: cfg.write.backupKeep })
-        }
-
-        if (id) {
-          if (!record) {
-            const begun = receipts.begin({
-              version: 1,
-              id,
-              fingerprint,
-              action,
-              target,
-              path,
-              before,
-              after: afterRevision,
-              status: 'applying',
-              result: planned,
-              createdAt: Date.now(),
-            })
-            if (!begun.ok) return fail(begun.code, { reason: begun.reason, path })
-            record = begun.record ?? null
-          } else {
-            const updated = markReceipt(record, {
-              status: 'applying',
-              before,
-              after: afterRevision,
-              result: planned,
-            })
-            if (!updated) return fail('receipt_capacity', { reason: 'update_failed', path })
-            record = updated
-          }
-        }
-
-        let snapshot = { ok: true, path: null }
-        if (cfg.write.backupKeep > 0 && current.exists) {
-          snapshot = backup(path)
-          if (!snapshot.ok) {
-            // Nothing changed yet; a retry of the same id may proceed.
-            if (id && !prior.record) receipts.drop(id)
-            return fail('backup_failed', { path, error: snapshot.error })
-          }
-          planned.backup = snapshot.path ?? null
-        }
-
-        try {
-          writeFileAtomic(path, afterText, { fsync: cfg.write.fsync })
-        } catch (error) {
-          return fail('write_failed', { path, message: String(error?.message ?? error) })
-        }
-
-        const after = readForWrite(path)
-        if (!after.ok) {
-          if (id) markReceipt(record, { status: 'outcome_unknown', result: { ...planned, ok: false, code: 'outcome_unknown' } })
-          return fail('outcome_unknown', {
             path,
-            committed: true,
-            error: after.error,
-            revision: null,
-          })
-        }
-        const actual = contentRevision(after.text)
-        if (actual !== afterRevision) {
-          if (id) markReceipt(record, { status: 'outcome_unknown', result: { ...planned, ok: false, code: 'outcome_unknown' } })
-          return fail('outcome_unknown', { path, committed: true, expectedRevision: afterRevision, revision: actual })
-        }
-
-        planned.bytes = after.bytes
-        const result = { ...planned, revision: actual }
-        if (id && record) markReceipt(record, { status: 'committed', after: actual, result })
-        recordOperation({ id, at: Date.now(), target, path, status: 'committed', before, after: actual, backup: snapshot.path ?? null })
-        return {
-          result,
-          event: {
-            path,
-            target,
-            operation: action,
-            revision: actual,
-            operationId: id ?? null,
+            hint: 'the file changed since it was read; read again before writing',
           },
+          event: null,
         }
-      })
+      }
+
+      let output
+      try {
+        output = prepare ? prepare() : transform(current.text)
+      } catch (error) {
+        return fail('write_failed', { path, message: String(error?.message ?? error) })
+      }
+      if (!output || output.ok === false) {
+        return fail(output?.reason ?? 'no_match', { path, hits: output?.hits ?? [], issues: output?.issues ?? [] })
+      }
+      if (output.replaced === 0) {
+        const extra = { path, hits: output.hits ?? [], issues: output.issues ?? [] }
+        if (output.duplicates) extra.duplicates = output.duplicates
+        return fail(output.reason ?? 'no_match', extra)
+      }
+
+      const afterText = String(output.text ?? '')
+      const afterRevision = contentRevision(afterText)
+      const extra = pickExtra(output)
+      const planned = {
+        ok: true,
+        revision: afterRevision,
+        previous: before,
+        path,
+        bytes: Buffer.byteLength(afterText, 'utf8'),
+        backup: null,
+        created: Boolean(output.created),
+        section: output.section ?? null,
+        ...extra,
+      }
+
+      // No byte changed (a restore that restores the current text): report it
+      // without taking a backup or replacing the file for no reason.
+      if (afterRevision === before) {
+        planned.changed = false
+        planned.created = Boolean(output.created)
+        if (id) {
+          const begun = tx.begin({
+            version: 1,
+            id,
+            fingerprint,
+            action,
+            target,
+            path,
+            before,
+            after: before,
+            status: 'committed',
+            result: planned,
+            createdAt: Date.now(),
+          })
+          if (!begun.ok) return fail(begun.code, { reason: begun.reason, path })
+        }
+        return { result: planned, event: null }
+      }
+
+      if (!allowNoBackup && current.exists && cfg.write.backupKeep <= 0) {
+        if (id) tx.drop(id)
+        return fail('backup_required', { path, backupKeep: cfg.write.backupKeep })
+      }
+
+      if (id) {
+        const begun = tx.begin({
+          version: 1,
+          id,
+          fingerprint,
+          action,
+          target,
+          path,
+          before,
+          after: afterRevision,
+          status: 'applying',
+          result: planned,
+          createdAt: Date.now(),
+        })
+        if (!begun.ok) return fail(begun.code, { reason: begun.reason, path })
+        record = begun.record
+        if (!record) return fail('receipt_capacity', { reason: 'begin_returned_nothing', path })
+      }
+
+      let snapshot = { ok: true, path: null }
+      if (cfg.write.backupKeep > 0 && current.exists) {
+        snapshot = backup(path)
+        if (!snapshot.ok) {
+          // Nothing changed yet; drop the receipt so the id stays reusable.
+          if (id) tx.drop(id)
+          return fail('backup_failed', { path, error: snapshot.error })
+        }
+        planned.backup = snapshot.path ?? null
+      }
+
+      try {
+        writeFileAtomic(path, afterText, { fsync: cfg.write.fsync })
+      } catch (error) {
+        // Atomic replace either landed or it did not; a throw means it did not,
+        // so the id can be cleared instead of being left to haunt the caller.
+        if (id) tx.drop(id)
+        return fail('write_failed', { path, message: String(error?.message ?? error) })
+      }
+
+      const after = readForWrite(path)
+      if (!after.ok) {
+        if (id) {
+          markReceipt(tx, record, { status: 'outcome_unknown', result: { ...planned, ok: false, code: 'outcome_unknown' } })
+        }
+        return fail('outcome_unknown', {
+          path,
+          committed: true,
+          error: after.error,
+          revision: null,
+        })
+      }
+      const actual = contentRevision(after.text)
+      if (actual !== afterRevision) {
+        if (id) {
+          markReceipt(tx, record, { status: 'outcome_unknown', result: { ...planned, ok: false, code: 'outcome_unknown' } })
+        }
+        return fail('outcome_unknown', { path, committed: true, expectedRevision: afterRevision, revision: actual })
+      }
+
+      planned.bytes = after.bytes
+      const result = { ...planned, revision: actual }
+      if (id) {
+        const done = markReceipt(tx, record, { status: 'committed', after: actual, result })
+        if (!done.ok) {
+          // The bytes are verified on disk but the receipt did not land. Say
+          // that plainly, and still tell listeners the path changed.
+          return {
+            result: fail('outcome_unknown', {
+              path,
+              committed: true,
+              revision: actual,
+              operationId: id,
+              reason: 'receipt_update_failed',
+            }),
+            event: { path, target, operation: action, revision: actual, operationId: id },
+          }
+        }
+      }
+      recordOperation({ id, at: Date.now(), target, path, status: 'committed', before, after: actual, backup: snapshot.path ?? null })
+      return {
+        result,
+        event: {
+          path,
+          target,
+          operation: action,
+          revision: actual,
+          operationId: id ?? null,
+        },
+      }
+    }
 
     return runOperation({ op, action, exec })
   }
@@ -691,51 +736,57 @@ export function createStore({ cfg, stateDir, onCommit }) {
 
     let outcome
     try {
-      outcome = await withLock(opLockPath(op.id), cfg.write.lockWaitMs, async () => {
-        const prior = receipts.read(op.id)
-        if (!prior.ok) return { result: fail(prior.code, { reason: prior.reason, operationId: op.id }) }
-        let receipt = prior.record
-        if (receipt) {
-          if (receipt.fingerprint !== fingerprint) return { result: fail('operation_mismatch', { operationId: op.id }) }
-          if (receipt.status === 'committed') return { result: { ...receipt.result, duplicate: true }, events: [] }
-          if (!Array.isArray(receipt.manifest)) return { result: fail('outcome_unknown', { operationId: op.id }), events: [] }
-          return applyArchive({ dir, archiveDir, operationId: op.id, fingerprint, receipt })
-        }
+      outcome = await withLock(opLockPath(op.id), cfg.write.lockWaitMs, () =>
+        receipts.withTransaction(
+          (tx) => {
+            const prior = tx.read(op.id)
+            if (!prior.ok) return { result: fail(prior.code, { reason: prior.reason, operationId: op.id }), events: [] }
+            const receipt = prior.record
+            if (receipt) {
+              if (receipt.fingerprint !== fingerprint) return { result: fail('operation_mismatch', { operationId: op.id }), events: [] }
+              if (receipt.status === 'committed') return { result: { ...receipt.result, duplicate: true }, events: [] }
+              if (!Array.isArray(receipt.manifest)) return { result: fail('outcome_unknown', { operationId: op.id }), events: [] }
+              return applyArchive({ dir, archiveDir, operationId: op.id, fingerprint, receipt, tx })
+            }
 
-        const plan = plans.get(input.planId)
-        if (!plan) return { result: fail('plan_required', { reason: 'unknown_plan' }), events: [] }
-        if (plan.projectDir !== canonicalPath(dir)) return { result: fail('plan_conflict', { reason: 'project' }), events: [] }
-        if (Date.now() > plan.expiresAt) return { result: fail('plan_conflict', { reason: 'expired' }), events: [] }
-        if (dates.list.length > PLAN_LIMITS.maxFiles) {
-          return { result: fail('archive_capacity', { limit: PLAN_LIMITS.maxFiles }), events: [] }
-        }
+            const plan = plans.get(input.planId)
+            if (!plan) return { result: fail('plan_required', { reason: 'unknown_plan' }), events: [] }
+            if (plan.projectDir !== canonicalPath(dir)) return { result: fail('plan_conflict', { reason: 'project' }), events: [] }
+            if (Date.now() > plan.expiresAt) return { result: fail('plan_conflict', { reason: 'expired' }), events: [] }
+            if (dates.list.length > PLAN_LIMITS.maxFiles) {
+              return { result: fail('archive_capacity', { limit: PLAN_LIMITS.maxFiles }), events: [] }
+            }
 
-        const byDate = new Map(plan.candidates.map((row) => [row.date, row]))
-        const items = []
-        for (const date of dates.list) {
-          const candidate = byDate.get(date)
-          if (!candidate) return { result: fail('plan_conflict', { reason: 'unknown_date', date }), events: [] }
-          if (!candidate.revision) {
-            return { result: fail(candidate.error === 'too_large' ? 'too_large' : 'unreadable', { date }), events: [] }
-          }
-          items.push({
-            date,
-            name: candidate.name,
-            revision: candidate.revision,
-            archivePath: null,
-            status: 'pending',
-          })
-        }
+            const byDate = new Map(plan.candidates.map((row) => [row.date, row]))
+            const items = []
+            for (const date of dates.list) {
+              const candidate = byDate.get(date)
+              if (!candidate) return { result: fail('plan_conflict', { reason: 'unknown_date', date }), events: [] }
+              if (!candidate.revision) {
+                return { result: fail(candidate.error === 'too_large' ? 'too_large' : 'unreadable', { date }), events: [] }
+              }
+              items.push({
+                date,
+                name: candidate.name,
+                revision: candidate.revision,
+                archivePath: null,
+                status: 'pending',
+              })
+            }
 
-        return applyArchive({
-          dir,
-          archiveDir,
-          operationId: op.id,
-          fingerprint,
-          receipt: null,
-          fresh: { planId: plan.planId, items },
-        })
-      })
+            return applyArchive({
+              dir,
+              archiveDir,
+              operationId: op.id,
+              fingerprint,
+              receipt: null,
+              fresh: { planId: plan.planId, items },
+              tx,
+            })
+          },
+          { waitMs: cfg.write.lockWaitMs },
+        ),
+      )
     } catch (error) {
       if (error?.code === 'lock_timeout') return fail('lock_timeout', { owner: error.owner })
       return fail('write_failed', { message: String(error?.message ?? error) })
@@ -746,22 +797,23 @@ export function createStore({ cfg, stateDir, onCommit }) {
   }
 
   /**
-   * Move a prepared manifest. The lock order is operation → archive → sorted
-   * source file locks; all source locks are taken before any move, so a plan
-   * whose files changed is refused without moving a subset.
+   * Move a prepared manifest. The lock order is operation → receipt
+   * transaction → archive → sorted source file locks; all source locks are taken
+   * before any move, and every manifest update happens inside the transaction,
+   * so a concurrent retry cannot observe half a move.
    */
-  async function applyArchive({ dir, archiveDir, operationId, fingerprint, receipt, fresh }) {
+  async function applyArchive({ dir, archiveDir, operationId, fingerprint, receipt, fresh, tx }) {
     const sourcePaths = (receipt ? receipt.manifest : fresh.items).map((item) => join(dir, item.name))
     return withLock(join(lockDir, `${pathKey(archiveDir)}.lock`), cfg.write.lockWaitMs, () =>
       withManyLocks(
         sourcePaths.map((path) => join(lockDir, `${pathKey(path)}.lock`)),
         cfg.write.lockWaitMs,
-        async () => {
+        () => {
           let record = receipt
           let items = receipt ? receipt.manifest.map((item) => ({ ...item })) : fresh.items.map((item) => ({ ...item }))
 
           if (record) {
-            const again = receipts.read(operationId)
+            const again = tx.read(operationId)
             if (!again.ok) return { result: fail(again.code, { reason: again.reason }), events: [] }
             if (!again.record) return { result: fail('outcome_unknown', { reason: 'receipt_disappeared' }), events: [] }
             if (again.record.fingerprint !== fingerprint) {
@@ -795,7 +847,7 @@ export function createStore({ cfg, stateDir, onCommit }) {
               if (!target) return { result: fail('archive_capacity', { date: item.date }), events: [] }
               item.archivePath = target
             }
-            const begun = receipts.begin({
+            const begun = tx.begin({
               version: 1,
               id: operationId,
               fingerprint,
@@ -891,19 +943,54 @@ export function createStore({ cfg, stateDir, onCommit }) {
 
             record.manifest = items
             record.status = 'applying'
-            receipts.update(record)
+            const saved = tx.update(record)
+            if (!saved.ok) {
+              // Stop here: the durable manifest is now behind the disk. A retry
+              // resolves each item by source/target hash instead of re-enumerating.
+              return {
+                result: {
+                  ok: false,
+                  code: 'partial',
+                  pruned,
+                  failed,
+                  archive: archiveDir,
+                  planId: record.planId ?? null,
+                  receipt: 'outcome_unknown',
+                  reason: 'receipt_update_failed',
+                },
+                events,
+              }
+            }
           }
 
           const result = { ok: failed.length === 0, pruned, failed, archive: archiveDir, planId: record.planId ?? null }
-          if (failed.length === 0) {
-            record.status = 'committed'
-            record.result = { ...result, ok: true }
-          } else {
-            record.status = 'partial'
-            record.result = { ...result, ok: false, code: 'partial' }
-          }
+          record.status = failed.length === 0 ? 'committed' : 'partial'
+          record.result = failed.length === 0 ? { ...result, ok: true } : { ...result, ok: false, code: 'partial' }
           record.manifest = items
-          receipts.update(record)
+          const saved = tx.update(record)
+          if (!saved.ok) {
+            // The moves are real but the final status is not durable: never
+            // report this as ok.
+            if (failed.length === 0) {
+              return {
+                result: {
+                  ok: false,
+                  code: 'outcome_unknown',
+                  committed: true,
+                  pruned,
+                  failed,
+                  archive: archiveDir,
+                  planId: record.planId ?? null,
+                  reason: 'receipt_update_failed',
+                },
+                events,
+              }
+            }
+            return {
+              result: { ...result, ok: false, code: 'partial', receipt: 'outcome_unknown', reason: 'receipt_update_failed' },
+              events,
+            }
+          }
           recordOperation({ id: operationId, at: Date.now(), target: 'project-daily', path: archiveDir, status: failed.length === 0 ? 'committed' : 'partial', pruned: pruned.map((row) => row.date) })
           if (failed.length === 0) return { result, events }
           return { result: { ...result, code: 'partial' }, events }
@@ -1176,117 +1263,154 @@ export function createStore({ cfg, stateDir, onCommit }) {
   /** Append to a daily file: O_APPEND, optional CAS, receipt and verified read. */
   async function appendDaily({ target, path, op, text, expectedRevision, request }) {
     const fingerprint = fingerprintFor({ action: 'append', paths: [path], request })
-    const exec = async (id) =>
-      withLock(join(lockDir, `${pathKey(path)}.lock`), cfg.write.lockWaitMs, () => {
-        const prior = id ? receipts.read(id) : { ok: true, record: null }
-        if (!prior.ok) return { result: fail(prior.code, { reason: prior.reason, operationId: id }) }
-        let record = prior.record
-        if (record) {
-          if (record.fingerprint !== fingerprint) {
-            return { result: fail('operation_mismatch', { operationId: id, path }) }
-          }
-          if (record.status === 'committed') return { result: { ...record.result, duplicate: true } }
-          if (record.status !== 'applying') {
-            return { result: fail('outcome_unknown', { operationId: id, path, reason: record.status }) }
-          }
+    const exec = async (id) => {
+      // Same order as a rewrite: receipt transaction before the file lock, so
+      // admission and the duplicate lookup cannot interleave with a sweep.
+      const body = (tx) =>
+        withLock(join(lockDir, `${pathKey(path)}.lock`), cfg.write.lockWaitMs, () => run(tx, id))
+      return id ? receipts.withTransaction(body, { waitMs: cfg.write.lockWaitMs }) : body(null)
+    }
+
+    const run = (tx, id) => {
+      const prior = id ? tx.read(id) : { ok: true, record: null }
+      if (!prior.ok) return { result: fail(prior.code, { reason: prior.reason, operationId: id }) }
+      let record = prior.record
+      if (record) {
+        if (record.fingerprint !== fingerprint) {
+          return { result: fail('operation_mismatch', { operationId: id, path }) }
         }
-
-        const current = existsSync(path)
-          ? readTextSafe(path, { maxBytes: MAX_SOURCE_BYTES })
-          : { ok: true, text: '', bytes: 0, truncated: false }
-        // `changed` used to look like an empty file here, so an append could
-        // overwrite the EOL/prefix decision and write over a raced snapshot.
-        if (!current.ok) return { result: fail('unreadable', { path, error: current.error }) }
-        if (current.truncated) return { result: fail('too_large', { path, bytes: current.bytes }) }
-
-        const before = contentRevision(current.text)
-        if (record?.status === 'applying') {
-          if (before === record.after) {
-            const done = markReceipt(record, { status: 'committed' })
-            return { result: { ...(done?.result ?? record.result), duplicate: true } }
-          }
-          if (before !== record.before) {
-            markReceipt(record, { status: 'outcome_unknown', result: { ...record.result, ok: false, code: 'outcome_unknown' } })
-            return { result: fail('outcome_unknown', { operationId: id, path }) }
-          }
+        if (record.status === 'committed') return { result: { ...record.result, duplicate: true } }
+        if (record.status !== 'applying') {
+          return { result: fail('outcome_unknown', { operationId: id, path, reason: record.status }) }
         }
+      }
 
-        if (expectedRevision && String(expectedRevision) !== before) {
-          recordOperation({
-            id,
-            at: Date.now(),
-            target,
-            path,
-            status: 'conflict',
+      const current = existsSync(path)
+        ? readTextSafe(path, { maxBytes: MAX_SOURCE_BYTES })
+        : { ok: true, text: '', bytes: 0, truncated: false }
+      // `changed` used to look like an empty file here, so an append could
+      // overwrite the EOL/prefix decision and write over a raced snapshot.
+      if (!current.ok) return { result: fail('unreadable', { path, error: current.error }) }
+      if (current.truncated) return { result: fail('too_large', { path, bytes: current.bytes }) }
+
+      const before = contentRevision(current.text)
+      if (record) {
+        if (before === record.after) {
+          const done = markReceipt(tx, record, { status: 'committed' })
+          if (!done.ok) {
+            return {
+              result: fail('outcome_unknown', {
+                operationId: id,
+                path,
+                committed: true,
+                revision: before,
+                reason: 'receipt_update_failed',
+              }),
+              event: { path, target, operation: 'append', revision: before, operationId: id },
+            }
+          }
+          return { result: { ...(done.record.result ?? record.result), duplicate: true } }
+        }
+        // Appended and then changed back is indistinguishable from "never ran".
+        markReceipt(tx, record, {
+          status: 'outcome_unknown',
+          result: { ...record.result, ok: false, code: 'outcome_unknown' },
+        })
+        return { result: fail('outcome_unknown', { operationId: id, path, reason: 'applying_unverified' }) }
+      }
+
+      if (expectedRevision && String(expectedRevision) !== before) {
+        recordOperation({
+          id,
+          at: Date.now(),
+          target,
+          path,
+          status: 'conflict',
+          expectedRevision: String(expectedRevision),
+          revision: before,
+        })
+        return {
+          result: {
+            ok: false,
+            code: 'conflict',
             expectedRevision: String(expectedRevision),
             revision: before,
-          })
-          return {
-            result: {
-              ok: false,
-              code: 'conflict',
-              expectedRevision: String(expectedRevision),
-              revision: before,
-              path,
-            },
-          }
+            path,
+          },
         }
+      }
 
-        const eol = current.text.includes('\r\n') ? '\r\n' : '\n'
-        const prefix = !current.text ? '' : current.text.endsWith('\n') ? '' : eol
-        const body = `${prefix}- ${text}${eol}`
-        const afterRevision = contentRevision(current.text + body)
+      const eol = current.text.includes('\r\n') ? '\r\n' : '\n'
+      const prefix = !current.text ? '' : current.text.endsWith('\n') ? '' : eol
+      const body = `${prefix}- ${text}${eol}`
+      const afterRevision = contentRevision(current.text + body)
 
+      if (id) {
+        const begun = tx.begin({
+          version: 1,
+          id,
+          fingerprint,
+          action: 'append',
+          target,
+          path,
+          before,
+          after: afterRevision,
+          status: 'applying',
+          result: { ok: true, revision: afterRevision, path },
+          createdAt: Date.now(),
+        })
+        if (!begun.ok) return { result: fail(begun.code, { reason: begun.reason, path }) }
+        record = begun.record
+        if (!record) return { result: fail('receipt_capacity', { reason: 'begin_returned_nothing', path }) }
+      }
+
+      try {
+        appendFileDurable(path, body, { fsync: cfg.write.fsync })
+      } catch (error) {
+        // A failed append is not provably a zero-byte write, so the receipt
+        // stays `applying` and a retry refuses instead of appending twice.
+        return { result: fail('write_failed', { path, message: String(error?.message ?? error) }) }
+      }
+
+      const after = readTextSafe(path, { maxBytes: MAX_SOURCE_BYTES })
+      if (!after.ok || after.truncated) {
         if (id) {
-          if (!record) {
-            const begun = receipts.begin({
-              version: 1,
-              id,
-              fingerprint,
-              action: 'append',
-              target,
-              path,
-              before,
-              after: afterRevision,
-              status: 'applying',
-              result: { ok: true, revision: afterRevision, path },
-              createdAt: Date.now(),
-            })
-            if (!begun.ok) return { result: fail(begun.code, { reason: begun.reason, path }) }
-            record = begun.record ?? null
-          } else {
-            record = markReceipt(record, { status: 'applying', before, after: afterRevision })
-            if (!record) return { result: fail('receipt_capacity', { reason: 'update_failed', path }) }
-          }
+          markReceipt(tx, record, { status: 'outcome_unknown', result: { ok: false, code: 'outcome_unknown', path } })
         }
-
-        try {
-          appendFileDurable(path, body, { fsync: cfg.write.fsync })
-        } catch (error) {
-          return { result: fail('write_failed', { path, message: String(error?.message ?? error) }) }
-        }
-
-        const after = readTextSafe(path, { maxBytes: MAX_SOURCE_BYTES })
-        if (!after.ok || after.truncated) {
-          if (id) markReceipt(record, { status: 'outcome_unknown', result: { ok: false, code: 'outcome_unknown', path } })
-          return {
-            result: fail('outcome_unknown', { path, committed: true, error: after.error ?? (after.truncated ? 'too_large' : null) }),
-          }
-        }
-        if (!after.text.endsWith(body)) {
-          if (id) markReceipt(record, { status: 'outcome_unknown', result: { ok: false, code: 'outcome_unknown', path } })
-          return { result: fail('outcome_unknown', { path, committed: true, reason: 'appended_text_missing' }) }
-        }
-
-        const actual = contentRevision(after.text)
-        const result = { ok: true, revision: actual, path, bytes: after.bytes, appended: true }
-        if (id && record) markReceipt(record, { status: 'committed', after: actual, result })
-        recordOperation({ id, at: Date.now(), target, path, status: 'committed', before, after: actual })
         return {
-          result,
-          event: { path, target, operation: 'append', revision: actual, operationId: id ?? null },
+          result: fail('outcome_unknown', { path, committed: true, error: after.error ?? (after.truncated ? 'too_large' : null) }),
         }
-      })
+      }
+      if (!after.text.endsWith(body)) {
+        if (id) {
+          markReceipt(tx, record, { status: 'outcome_unknown', result: { ok: false, code: 'outcome_unknown', path } })
+        }
+        return { result: fail('outcome_unknown', { path, committed: true, reason: 'appended_text_missing' }) }
+      }
+
+      const actual = contentRevision(after.text)
+      const result = { ok: true, revision: actual, path, bytes: after.bytes, appended: true }
+      if (id) {
+        const done = markReceipt(tx, record, { status: 'committed', after: actual, result })
+        if (!done.ok) {
+          return {
+            result: fail('outcome_unknown', {
+              path,
+              committed: true,
+              revision: actual,
+              operationId: id,
+              reason: 'receipt_update_failed',
+            }),
+            event: { path, target, operation: 'append', revision: actual, operationId: id },
+          }
+        }
+      }
+      recordOperation({ id, at: Date.now(), target, path, status: 'committed', before, after: actual })
+      return {
+        result,
+        event: { path, target, operation: 'append', revision: actual, operationId: id ?? null },
+      }
+    }
 
     return runOperation({ op, exec })
   }

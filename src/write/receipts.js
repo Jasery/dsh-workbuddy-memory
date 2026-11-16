@@ -12,19 +12,28 @@
  *  - one JSON file per operationId, named by its hash, so lookup is O(1);
  *  - a hard cap on records (2000) and unresolved operations (100), checked
  *    before anything is created — at the cap the caller refuses without
- *    touching the source, and no unknown receipt is ever evicted to make room;
+ *    touching the source, and no unresolved receipt is ever evicted to make
+ *    room;
  *  - one megabyte per receipt, so a corrupted or pathological record cannot
  *    make every read pay for it;
- *  - terminal records expire after 24 hours. Deduplication is honest only
- *    inside that window, which is why the window is stated, not hidden.
+ *  - only *committed* records expire (after 24 hours). `applying`, `partial` and
+ *    `outcome_unknown` are unresolved: they may describe a write that is still
+ *    in flight or one whose result nobody knows, so they stay forever, count
+ *    toward the pending cap, and are never aged out by mtime.
+ *
+ * Every read, expiry sweep, capacity admission and write runs under one
+ * cross-process lock for this state directory. The counts and expiry decisions
+ * are therefore atomic across processes: two writers cannot both see 99
+ * unresolved receipts, and a sweep cannot delete a receipt created after it
+ * scanned the directory.
  */
 
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { readTextSafe } from '../fsx.js'
-import { writeFileAtomic, writeFileExclusive } from './fslock.js'
+import { withLock, writeFileAtomic, writeFileExclusive } from './fslock.js'
 
 export const RECEIPT_LIMITS = Object.freeze({
   terminalMs: 24 * 60 * 60 * 1000,
@@ -33,14 +42,15 @@ export const RECEIPT_LIMITS = Object.freeze({
   maxBytes: 1024 * 1024,
 })
 
-const EXPIRABLE = new Set(['committed', 'partial', 'outcome_unknown'])
-const PENDING = new Set(['applying', 'partial'])
+/** Only a proven terminal record may age out. */
+const EXPIRABLE = new Set(['committed'])
 
 /**
- * @param {{ stateDir: string }} deps
+ * @param {{ stateDir: string, lockWaitMs?: number }} deps
  */
-export function createReceiptStore({ stateDir }) {
+export function createReceiptStore({ stateDir, lockWaitMs = 3000 }) {
   const dir = join(stateDir, 'receipts')
+  const lockPath = join(stateDir, 'locks', 'receipts.lock')
 
   function fileFor(operationId) {
     const digest = createHash('sha1').update(String(operationId), 'utf8').digest('hex')
@@ -50,8 +60,11 @@ export function createReceiptStore({ stateDir }) {
   /**
    * Read one receipt. A missing file is not an error; a corrupt or oversized
    * one is, because overwriting it could erase the only record of a write.
+   *
+   * Must run under the store lock: expiring a committed record is a durable
+   * decision and a concurrent create of the same id must not be swallowed.
    */
-  function read(operationId) {
+  function readLocked(operationId) {
     const file = fileFor(operationId)
     if (!existsSync(file)) return { ok: true, record: null }
     const loaded = readTextSafe(file, { maxBytes: RECEIPT_LIMITS.maxBytes })
@@ -65,7 +78,8 @@ export function createReceiptStore({ stateDir }) {
       const updated = Number(record.updatedAt ?? record.createdAt ?? 0)
       if (EXPIRABLE.has(record.status) && Date.now() - updated > RECEIPT_LIMITS.terminalMs) {
         // Deduplication is promised only inside the retention window. An old
-        // terminal record is gone, not silently reused forever.
+        // terminal record is gone, not silently reused forever. Unresolved
+        // records never take this branch.
         rmSync(file, { force: true })
         return { ok: true, record: null }
       }
@@ -76,8 +90,8 @@ export function createReceiptStore({ stateDir }) {
   }
 
   /** Write a new receipt without ever replacing an existing one. */
-  function begin(record) {
-    const room = maintain()
+  function beginLocked(record) {
+    const room = maintainLocked()
     if (!room.ok) return room
     const body = serialize(record)
     if (!body.ok) return body
@@ -91,7 +105,7 @@ export function createReceiptStore({ stateDir }) {
   }
 
   /** Replace the record for an id already created by `begin`. */
-  function update(record) {
+  function updateLocked(record) {
     const body = serialize(record)
     if (!body.ok) return body
     try {
@@ -103,7 +117,7 @@ export function createReceiptStore({ stateDir }) {
   }
 
   /** Remove a receipt created for a write that never touched the source. */
-  function drop(operationId) {
+  function dropLocked(operationId) {
     try {
       rmSync(fileFor(operationId), { force: true })
       return true
@@ -115,19 +129,19 @@ export function createReceiptStore({ stateDir }) {
   /**
    * Expire old terminal records, then report whether a new one fits.
    *
-   * Only time expires records. A full store refuses the new operation; it never
-   * deletes a record it does not understand, because that record may be the
-   * only evidence that some write already happened.
+   * Only time expires committed records. A full store refuses the new
+   * operation; it never deletes an unresolved or unreadable record, because
+   * that record may be the only evidence that some write is in flight.
    */
-  function maintain(now = Date.now()) {
+  function maintainLocked(now = Date.now()) {
     let names = []
     try {
       names = readdirSync(dir).filter((name) => name.endsWith('.json'))
     } catch {
       return { ok: true }
     }
-    // Below the pending cap neither limit can be hit, so an ordinary write does
-    // not pay to parse every receipt. Only a store near a limit is scanned.
+    // Below the pending cap neither limit can be hit (pending ≤ names), so an
+    // ordinary write does not pay to parse every receipt.
     if (names.length < RECEIPT_LIMITS.maxPending) return { ok: true }
 
     let total = 0
@@ -144,25 +158,26 @@ export function createReceiptStore({ stateDir }) {
         }
       }
 
-      if (!record || typeof record !== 'object') {
-        // A corrupt file cannot be interpreted. Age it out by mtime rather than
-        // deleting a record whose meaning we cannot prove.
-        const stat = statSafe(file)
-        if (stat && now - stat.mtimeMs > RECEIPT_LIMITS.terminalMs) {
-          rmSync(file, { force: true })
-          continue
-        }
+      if (!record || typeof record !== 'object' || typeof record.status !== 'string') {
+        // Meaning unknown. Treat it as an unresolved slot: refusing is honest,
+        // deleting a record whose meaning cannot be proven is not.
         total += 1
+        pending += 1
+        continue
+      }
+
+      if (!EXPIRABLE.has(record.status)) {
+        total += 1
+        pending += 1
         continue
       }
 
       const updated = Number(record.updatedAt ?? record.createdAt ?? 0)
-      if (EXPIRABLE.has(record.status) && now - updated > RECEIPT_LIMITS.terminalMs) {
+      if (now - updated > RECEIPT_LIMITS.terminalMs) {
         rmSync(file, { force: true })
         continue
       }
       total += 1
-      if (PENDING.has(record.status)) pending += 1
     }
 
     if (total >= RECEIPT_LIMITS.maxRecords) {
@@ -188,30 +203,56 @@ export function createReceiptStore({ stateDir }) {
     return { ok: true, text, record: body }
   }
 
-  function ensureDir() {
-    mkdirSync(dir, { recursive: true })
+  /**
+   * The lock-free view handed to a transaction holder. Its methods are
+   * synchronous, because the caller already holds `lockPath`; calling
+   * `withTransaction` again from inside would deadlock.
+   */
+  const locked = {
+    read: readLocked,
+    begin: beginLocked,
+    update: updateLocked,
+    drop: dropLocked,
+    maintain: maintainLocked,
+  }
+
+  /**
+   * Run `fn` with the receipt store held. Every writer that must make several
+   * receipt decisions atomically (admission + create, read + update) uses this
+   * instead of the one-shot helpers below.
+   *
+   * @template T
+   * @param {(tx: typeof locked) => T} fn
+   * @param {{ waitMs?: number }} [options]
+   * @returns {Promise<T>}
+   */
+  function withTransaction(fn, options = {}) {
+    return withLock(lockPath, options.waitMs ?? lockWaitMs, () => fn(locked))
   }
 
   return {
-    read,
-    begin: (record) => {
-      try {
-        ensureDir()
-      } catch (error) {
-        return { ok: false, code: 'receipt_capacity', reason: String(error?.code ?? error) }
-      }
-      return begin(record)
-    },
-    update,
-    drop,
+    lockPath,
     fileFor,
-  }
-}
-
-function statSafe(path) {
-  try {
-    return statSync(path)
-  } catch {
-    return null
+    withTransaction,
+    read: (operationId) => {
+      // A store that never wrote has no directory; do not create one or a lock
+      // just to answer "no receipt".
+      if (!existsSync(dir)) return Promise.resolve({ ok: true, record: null })
+      return withTransaction((tx) => tx.read(operationId), { waitMs: lockWaitMs })
+    },
+    begin: (record) =>
+      withTransaction(
+        (tx) => {
+          try {
+            mkdirSync(dir, { recursive: true })
+          } catch (error) {
+            return { ok: false, code: 'receipt_capacity', reason: String(error?.code ?? error) }
+          }
+          return tx.begin(record)
+        },
+        { waitMs: lockWaitMs },
+      ),
+    update: (record) => withTransaction((tx) => tx.update(record), { waitMs: lockWaitMs }),
+    drop: (operationId) => withTransaction((tx) => tx.drop(operationId), { waitMs: lockWaitMs }),
   }
 }

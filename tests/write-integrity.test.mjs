@@ -17,10 +17,12 @@ import { fileURLToPath } from 'node:url'
 import { normalizeConfig } from '../src/config.js'
 import { probeEnvironment } from '../src/env.js'
 import { contentRevision, pathKey } from '../src/write/fslock.js'
+import { RECEIPT_LIMITS, createReceiptStore } from '../src/write/receipts.js'
 import { createStore } from '../src/write/store.js'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const CHILD = join(HERE, 'helpers', 'append-once.mjs')
+const RACE = join(HERE, 'helpers', 'receipt-race.mjs')
 
 function workspace() {
   const root = mkdtempSync(join(tmpdir(), 'wbm-cas-'))
@@ -69,6 +71,53 @@ function runChild(args) {
       }
     })
   })
+}
+
+/** Run one receipt-race worker; the promise resolves with its printed JSON. */
+function runRace(mode, space, suffix) {
+  const args = [mode, space.stateDir, space.cwd, space.home, space.root, suffix]
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [RACE, ...args], { stdio: ['ignore', 'pipe', 'pipe'] })
+    let out = ''
+    let err = ''
+    child.stdout.on('data', (chunk) => {
+      out += chunk
+    })
+    child.stderr.on('data', (chunk) => {
+      err += chunk
+    })
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (code !== 0) return reject(new Error(`race worker ${code}: ${err}`))
+      try {
+        resolve(JSON.parse(out.trim().split('\n').at(-1)))
+      } catch (error) {
+        reject(new Error(`bad race output: ${out}\n${error.message}`))
+      }
+    })
+  })
+}
+
+/** Wait for a barrier file the child writes, failing loudly instead of hanging. */
+async function waitForFile(path, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
+  while (!existsSync(path)) {
+    if (Date.now() >= deadline) throw new Error(`barrier timed out: ${path}`)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
+/** A persisted receipt, for seeding a store that is already near a limit. */
+function receiptRecord(id, status = 'applying') {
+  return {
+    version: 1,
+    id,
+    fingerprint: 'seed',
+    action: 'append',
+    target: 'project-daily',
+    status,
+    createdAt: Date.now(),
+  }
 }
 
 test('two processes with one operationId commit exactly once', async () => {
@@ -464,4 +513,203 @@ test('a partial move is reported, then resumed and made idempotent', async () =>
   assert.equal(again.duplicate, true)
   assert.equal(readdirSync(join(s.memoryDir, 'archive')).length, beforeReplay)
   assert.equal(resumedEvents.length, 1, 'a duplicate is not a new commit')
+})
+
+test('a failed receipt update is not a commit, and does not revive a deleted entry', async () => {
+  const events = []
+  const s = setup({}, { onCommit: (event) => events.push(event) })
+  const file = join(s.memoryDir, 'MEMORY.md')
+  const before = '## A\n- original\n'
+  writeFileSync(file, before, 'utf8')
+  const input = { target: 'project-memory', section: 'A', text: 'review-once', operationId: 'op-update-fail' }
+
+  const realRename = fs.renameSync
+  let injected = 0
+  fs.renameSync = (from, to) => {
+    if (String(to).startsWith(join(s.stateDir, 'receipts'))) {
+      injected += 1
+      throw Object.assign(new Error('deterministic receipt update EACCES'), { code: 'EACCES' })
+    }
+    return realRename(from, to)
+  }
+  syncBuiltinESMExports()
+  let first
+  try {
+    first = await s.store.append(input, s.probe)
+  } finally {
+    fs.renameSync = realRename
+    syncBuiltinESMExports()
+  }
+
+  assert.equal(injected, 1, 'exactly the terminal receipt update failed')
+  assert.equal(first.ok, false, 'a write whose receipt did not land is not reported ok')
+  assert.equal(first.code, 'outcome_unknown')
+  assert.equal(first.committed, true)
+  assert.equal(events.length, 1, 'listeners are told the path changed')
+  assert.equal(events[0].path, file)
+
+  const receipts = createReceiptStore({ stateDir: s.stateDir })
+  const persisted = await receipts.read('op-update-fail')
+  assert.equal(persisted.record?.status, 'applying', 'the terminal status really did not land')
+  assert.match(readFileSync(file, 'utf8'), /review-once/)
+
+  const removed = await s.store.edit(
+    {
+      target: 'project-memory',
+      section: 'A',
+      match: 'review-once',
+      mode: 'remove',
+      expectedRevision: contentRevision(readFileSync(file, 'utf8')),
+    },
+    s.probe,
+  )
+  assert.equal(removed.ok, true)
+  assert.equal(readFileSync(file, 'utf8'), before)
+
+  const replay = await s.store.append(input, s.probe)
+  assert.equal(replay.ok, false)
+  assert.equal(replay.code, 'outcome_unknown')
+  assert.equal(replay.duplicate, undefined, 'an old id must not be replayed into a rewrite')
+  assert.equal(readFileSync(file, 'utf8'), before, 'the deleted entry must not be revived')
+  assert.equal((await receipts.read('op-update-fail')).record?.status, 'outcome_unknown')
+})
+
+test('two processes cannot both take the last unresolved receipt slot', async () => {
+  const s = setup({ write: { lockWaitMs: 15000 } })
+  const receipts = createReceiptStore({ stateDir: s.stateDir })
+  for (let index = 0; index < RECEIPT_LIMITS.maxPending - 1; index += 1) {
+    assert.equal((await receipts.begin(receiptRecord(`seed-${index}`))).ok, true)
+  }
+
+  const [a, b] = await Promise.all([runRace('admit', s, 'a'), runRace('admit', s, 'b')])
+  const dir = join(s.stateDir, 'receipts')
+  const pending = readdirSync(dir)
+    .map((name) => JSON.parse(readFileSync(join(dir, name), 'utf8')))
+    .filter((row) => ['applying', 'partial', 'outcome_unknown'].includes(row.status)).length
+
+  assert.equal(pending, RECEIPT_LIMITS.maxPending, 'the unresolved cap holds across processes')
+  assert.deepEqual(
+    [a.result.code, b.result.code].sort(),
+    ['receipt_capacity', 'write_failed'],
+    JSON.stringify([a.result, b.result]),
+  )
+})
+
+test('a stale sweep cannot delete a receipt created after it scanned', async () => {
+  const s = setup({ write: { lockWaitMs: 15000 } })
+  const receipts = createReceiptStore({ stateDir: s.stateDir })
+  for (let index = 0; index < RECEIPT_LIMITS.maxPending - 1; index += 1) {
+    assert.equal((await receipts.begin(receiptRecord(`kept-${index}`, 'committed'))).ok, true)
+  }
+  assert.equal((await receipts.begin(receiptRecord('old-id', 'committed'))).ok, true)
+  const oldFile = receipts.fileFor('old-id')
+  const stored = JSON.parse(readFileSync(oldFile, 'utf8'))
+  stored.updatedAt = Date.now() - RECEIPT_LIMITS.terminalMs - 60_000
+  writeFileSync(oldFile, JSON.stringify(stored), 'utf8')
+
+  const worker = runRace('sweep', s, 'sweep')
+  await waitForFile(join(s.root, 'sweep-paused'))
+  const input = { target: 'project-daily', date: '2026-09-05', text: 'newly-committed-once', operationId: 'old-id' }
+  const first = await s.store.append(input, s.probe)
+  assert.equal(first.ok, true, JSON.stringify(first))
+  writeFileSync(join(s.root, 'parent-done'), 'done')
+  await worker
+
+  const persisted = await receipts.read('old-id')
+  assert.equal(persisted.record?.status, 'committed', 'the new receipt survived the stale sweep')
+  const replay = await s.store.append(input, s.probe)
+  assert.equal(replay.ok, true)
+  assert.equal(replay.duplicate, true, 'the id is still bound to the committed write')
+  const text = readFileSync(join(s.memoryDir, '2026-09-05.md'), 'utf8')
+  assert.equal(text.split('newly-committed-once').length - 1, 1, 'the entry was written once')
+})
+
+test('an archive receipt update failure stops before more items move, then resumes by hash', async () => {
+  const s = setup()
+  const dates = [dayStamp(-40), dayStamp(-41), dayStamp(-42)]
+  for (const date of dates) writeFileSync(join(s.memoryDir, `${date}.md`), `- ${date}\n`, 'utf8')
+  const plan = await s.store.prune({ beforeDays: 30, dryRun: true }, s.probe)
+  const order = plan.candidates.map((row) => row.date)
+  assert.deepEqual(order, [...dates].sort())
+
+  const realRename = fs.renameSync
+  let updates = 0
+  fs.renameSync = (from, to) => {
+    if (String(to).startsWith(join(s.stateDir, 'receipts'))) {
+      updates += 1
+      if (updates === 2) throw Object.assign(new Error('deterministic receipt update EACCES'), { code: 'EACCES' })
+    }
+    return realRename(from, to)
+  }
+  syncBuiltinESMExports()
+  let partial
+  try {
+    partial = await s.store.prune(
+      { dryRun: false, planId: plan.planId, dates: order, operationId: 'op-archive-update-fail' },
+      s.probe,
+    )
+  } finally {
+    fs.renameSync = realRename
+    syncBuiltinESMExports()
+  }
+
+  assert.equal(partial.ok, false)
+  assert.equal(partial.code, 'partial')
+  assert.equal(partial.receipt, 'outcome_unknown')
+  assert.equal(partial.pruned.length, 2, 'the update that failed stopped the loop')
+  assert.equal(existsSync(join(s.memoryDir, `${order[2]}.md`)), true, 'the third source was never touched')
+
+  const resumed = await s.store.prune(
+    { dryRun: false, planId: plan.planId, dates: order, operationId: 'op-archive-update-fail' },
+    s.probe,
+  )
+  assert.equal(resumed.ok, true, JSON.stringify(resumed))
+  assert.equal(resumed.pruned.length, 3, 'a resume verifies moved items by hash instead of re-enumerating')
+  for (const date of dates) {
+    assert.equal(existsSync(join(s.memoryDir, `${date}.md`)), false)
+    assert.equal(existsSync(join(s.memoryDir, 'archive', `${date}.md`)), true)
+  }
+})
+
+test('a failed final archive receipt update is never reported ok', async () => {
+  const s = setup()
+  const date = dayStamp(-40)
+  writeFileSync(join(s.memoryDir, `${date}.md`), '- 唯一条目\n', 'utf8')
+  const plan = await s.store.prune({ beforeDays: 30, dryRun: true }, s.probe)
+
+  const realRename = fs.renameSync
+  let updates = 0
+  fs.renameSync = (from, to) => {
+    if (String(to).startsWith(join(s.stateDir, 'receipts'))) {
+      updates += 1
+      // The per-item manifest write is first; fail the final status write.
+      if (updates === 2) throw Object.assign(new Error('deterministic final receipt EACCES'), { code: 'EACCES' })
+    }
+    return realRename(from, to)
+  }
+  syncBuiltinESMExports()
+  let result
+  try {
+    result = await s.store.prune(
+      { dryRun: false, planId: plan.planId, dates: [date], operationId: 'op-archive-final-fail' },
+      s.probe,
+    )
+  } finally {
+    fs.renameSync = realRename
+    syncBuiltinESMExports()
+  }
+
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'outcome_unknown')
+  assert.equal(result.committed, true)
+  assert.deepEqual(result.pruned.map((row) => row.date), [date])
+  assert.equal(existsSync(join(s.memoryDir, `${date}.md`)), false)
+  assert.equal(existsSync(join(s.memoryDir, 'archive', `${date}.md`)), true)
+
+  const retry = await s.store.prune(
+    { dryRun: false, planId: plan.planId, dates: [date], operationId: 'op-archive-final-fail' },
+    s.probe,
+  )
+  assert.equal(retry.ok, true, JSON.stringify(retry))
+  assert.deepEqual(retry.pruned.map((row) => row.date), [date])
 })
