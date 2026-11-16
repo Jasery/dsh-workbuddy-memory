@@ -43,11 +43,25 @@ export function resolveCwd(context) {
  * @param {object} deps.cfg
  * @param {(key: string, vars?: Record<string, string|number>) => string} deps.t
  * @param {(probe: object, cwd: string|null) => void} [deps.onProbe]
+ * @returns {{ invalidate: () => void, dispose: () => void }}
  */
 export function registerSections(ctx, deps) {
   const { cfg, t, onProbe } = deps
   const perAssembly = createAssemblyCache()
   const frozen = createFrozenStore()
+  const disposers = []
+
+  /** Drop every section this call registered. */
+  const dispose = () => {
+    while (disposers.length > 0) {
+      const off = disposers.pop()
+      try {
+        off()
+      } catch {
+        // A failed unregister must not leave the remaining sections mounted.
+      }
+    }
+  }
 
   /**
    * Probe + render for one assembly.
@@ -75,25 +89,31 @@ export function registerSections(ctx, deps) {
     return /** @type {{ sections: {name: string, text: string}[] }} */ (perAssembly.get(context, () => build(context)))
   }
 
-  for (const [key, name] of Object.entries(SECTION_NAMES)) {
-    ctx.effect(() =>
-      ctx.systemPrompt.section({
-        name,
-        order: SECTION_ORDER[key],
-        interpolate: false,
-        text: (context) => {
-          try {
-            const state = stateFor(context)
-            const hit = state.sections.find((section) => section.name === name)
-            return hit?.text ?? ''
-          } catch (error) {
-            // Never break a turn because memory could not be read.
-            ctx.logger?.warn?.(`[workbuddy-memory] section ${name} failed: ${error?.message ?? error}`)
-            return ''
-          }
-        },
-      }),
-    )
+  try {
+    for (const [key, name] of Object.entries(SECTION_NAMES)) {
+      const off = ctx.effect(() =>
+        ctx.systemPrompt.section({
+          name,
+          order: SECTION_ORDER[key],
+          interpolate: false,
+          text: (context) => {
+            try {
+              const state = stateFor(context)
+              const hit = state.sections.find((section) => section.name === name)
+              return hit?.text ?? ''
+            } catch (error) {
+              // Never break a turn because memory could not be read.
+              ctx.logger?.warn?.(`[workbuddy-memory] section ${name} failed: ${error?.message ?? error}`)
+              return ''
+            }
+          },
+        }),
+      )
+      if (typeof off === 'function') disposers.push(off)
+    }
+  } catch (error) {
+    dispose()
+    throw error
   }
 
   return {
@@ -101,5 +121,6 @@ export function registerSections(ctx, deps) {
     invalidate() {
       frozen.clear()
     },
+    dispose,
   }
 }

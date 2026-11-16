@@ -29,11 +29,61 @@ const VERSION = (() => {
   }
 })()
 
+/** Replace `target`'s values in place, so every closure keeps one `cfg` object. */
+function deepAssign(target, source) {
+  for (const [key, value] of Object.entries(source)) {
+    const current = target[key]
+    if (value && typeof value === 'object' && !Array.isArray(value) && current && typeof current === 'object' && !Array.isArray(current)) {
+      deepAssign(current, value)
+    } else {
+      target[key] = value
+    }
+  }
+  return target
+}
+
+/**
+ * A context whose `effect()` calls are recorded, so a registration helper that
+ * only returns a boolean can still be unmounted precisely.
+ */
+function effectBag(ctx) {
+  const disposers = []
+  const scoped = new Proxy(ctx, {
+    get(target, property) {
+      if (property === 'effect') {
+        return (fn) => {
+          const off = target.effect(fn)
+          if (typeof off === 'function') disposers.push(off)
+          return off
+        }
+      }
+      const value = Reflect.get(target, property)
+      // Services are returned as objects; helper methods keep the real context
+      // as `this` so a wrapper never changes how the host resolves them.
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  return {
+    ctx: scoped,
+    dispose() {
+      while (disposers.length > 0) {
+        const off = disposers.pop()
+        try {
+          off()
+        } catch {
+          // A failed unregister must not strand the rest.
+        }
+      }
+    },
+  }
+}
+
 /**
  * @param {import('@deepseek-ai/cordis').Context} ctx
  * @param {unknown} config
  */
 export function apply(ctx, config) {
+  const rawConfig = config
   let cfg
   try {
     cfg = normalizeConfig(config)
@@ -64,16 +114,21 @@ export function apply(ctx, config) {
   }
 
   let sections = null
-  try {
-    sections = registerSections(ctx, {
-      cfg,
-      t,
-      onProbe: (_probe, cwd) => recent.note(cwd),
-    })
-  } catch (error) {
-    // A broken injection path must not stop the tools from working.
-    ctx.logger?.warn?.(`[workbuddy-memory] section registration failed: ${error?.message ?? error}`)
+  const mountSections = () => {
+    sections?.dispose?.()
+    sections = null
+    try {
+      sections = registerSections(ctx, {
+        cfg,
+        t,
+        onProbe: (_probe, cwd) => recent.note(cwd),
+      })
+    } catch (error) {
+      // A broken injection path must not stop the tools from working.
+      ctx.logger?.warn?.(`[workbuddy-memory] section registration failed: ${error?.message ?? error}`)
+    }
   }
+  mountSections()
 
   // The panel's project list prefers DSH's durable workspace registry. It is
   // read without declaring a dependency: the service may activate after this
@@ -90,27 +145,118 @@ export function apply(ctx, config) {
   try {
     stateDir = resolveStateDir(cfg.stateDir).path
     store = createStore({ cfg, stateDir })
-    // A write through this plugin must be visible to the next assembly. Without
-    // this, `inject.refresh: 'first-turn'` keeps the snapshot it froze and the
-    // model never sees what it just wrote.
-    registerTools(ctx, { cfg, t, store, onWrite: () => sections?.invalidate?.() })
-    registerWriteGuard(ctx, { cfg, t })
   } catch (error) {
-    ctx.logger?.warn?.(`[workbuddy-memory] tool registration failed: ${error?.message ?? error}`)
+    ctx.logger?.warn?.(`[workbuddy-memory] store creation failed: ${error?.message ?? error}`)
   }
 
-  if (cfg.ui.enabled) {
-    // Optional: headless profiles have no web server, and that must not stop
-    // the plugin from loading.
-    ctx.inject(['webServer'], (scoped) => {
+  let tools = null
+  const mountTools = () => {
+    tools?.dispose?.()
+    tools = null
+    if (!store) return
+    try {
+      tools = registerTools(ctx, { cfg, t, store, onWrite: () => sections?.invalidate?.() })
+    } catch (error) {
+      ctx.logger?.warn?.(`[workbuddy-memory] tool registration failed: ${error?.message ?? error}`)
+    }
+  }
+
+  let guard = null
+  const mountGuard = () => {
+    guard?.dispose?.()
+    guard = null
+    if (typeof ctx.tools?.guard !== 'function' || !cfg.guard?.enabled) return
+
+    const bag = effectBag(ctx)
+    try {
+      const registered = registerWriteGuard(bag.ctx, { cfg, t })
+      if (registered) guard = bag
+      else bag.dispose()
+    } catch (error) {
+      bag.dispose()
+      ctx.logger?.warn?.(`[workbuddy-memory] guard registration failed: ${error?.message ?? error}`)
+    }
+  }
+
+  let routesFiber = null
+  let routesDispose = null
+  const unmountRoutes = () => {
+    if (typeof routesDispose === 'function') {
       try {
-        // The panel writes through the same store the tools use. It is one
-        // instance per plugin, so a panel write and a tool write queue on the
-        // same lock.
-        registerRoutes(scoped, { cfg, recent, stateDir, version: VERSION, store, catalog })
-      } catch (error) {
-        ctx.logger?.warn?.(`[workbuddy-memory] panel routes failed: ${error?.message ?? error}`)
+        routesDispose()
+      } catch {
+        // Fall through to the fiber, which owns the same registrations.
       }
-    })
+    }
+    routesDispose = null
+    try {
+      routesFiber?.dispose?.()
+    } catch {
+      // The plugin is going away anyway; a failed fiber dispose is not fatal.
+    }
+    routesFiber = null
+  }
+  const mountRoutes = () => {
+    unmountRoutes()
+    if (!cfg.ui.enabled) return
+    try {
+      const mounted = ctx.inject(['webServer'], (scoped) => {
+        try {
+          // The panel writes through the same store the tools use. It is one
+          // instance per plugin, so a panel write and a tool write queue on the
+          // same lock.
+          registerRoutes(scoped, { cfg, recent, stateDir, version: VERSION, store, catalog })
+        } catch (error) {
+          ctx.logger?.warn?.(`[workbuddy-memory] panel routes failed: ${error?.message ?? error}`)
+        }
+      })
+      // A real host returns a fiber; the test double returns a plain disposer.
+      if (typeof mounted === 'function') routesDispose = mounted
+      else routesFiber = mounted
+    } catch (error) {
+      ctx.logger?.warn?.(`[workbuddy-memory] panel injection failed: ${error?.message ?? error}`)
+    }
+  }
+
+  mountTools()
+  mountGuard()
+  mountRoutes()
+
+  /**
+   * The host rewrites the references in place, then names the paths it changed.
+   * Re-read the same raw object, deep-update the one `cfg` every closure holds,
+   * and remount only the registrations whose shape depends on the change. A
+   * context without `on` simply has no hot path — it must not pretend to have
+   * one.
+   */
+  const onVolatileUpdate = (paths) => {
+    let next
+    try {
+      next = normalizeConfig(rawConfig)
+    } catch (error) {
+      ctx.logger?.warn?.(`[workbuddy-memory] volatile update failed: ${error?.message ?? error}`)
+      return
+    }
+    deepAssign(cfg, next)
+    sections?.invalidate?.()
+
+    const changed = Array.isArray(paths) ? paths.filter(Array.isArray) : []
+    const all = changed.length === 0
+    const top = new Set(changed.map((path) => path[0]))
+
+    if (all || top.has('inject')) mountSections()
+    if (all || top.has('search') || changed.some((path) => path[0] === 'ui' && path[1] === 'allowWriteActions')) {
+      mountTools()
+    }
+    if (all || top.has('guard')) mountGuard()
+    if (all || top.has('ui')) mountRoutes()
+  }
+
+  if (typeof ctx.on === 'function') {
+    try {
+      ctx.on('loader/volatile-update', onVolatileUpdate)
+    } catch (error) {
+      ctx.logger?.warn?.(`[workbuddy-memory] volatile subscription failed: ${error?.message ?? error}`)
+    }
   }
 }

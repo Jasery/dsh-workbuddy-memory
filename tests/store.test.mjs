@@ -20,6 +20,19 @@ function workspace() {
   return { root, cwd, memoryDir, home }
 }
 
+/**
+ * A `YYYY-MM-DD` stamp `days` away from today on the local calendar.
+ *
+ * Prune fixtures used fixed dates, so "the old file" became "the file from two
+ * months ago" and "yesterday" eventually crossed the 30-day line. Relative
+ * local dates state the intent and stay true on any machine.
+ */
+function dayStamp(days = 0) {
+  const today = new Date()
+  const day = new Date(today.getFullYear(), today.getMonth(), today.getDate() + days)
+  return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`
+}
+
 function setup(overrides = {}) {
   const space = workspace()
   const cfg = normalizeConfig(overrides)
@@ -146,9 +159,9 @@ test('a missing memory directory is reported, not created', async () => {
 
 test('the daily file follows the local calendar day, not UTC', async () => {
   const s = setup()
-  // 00:30 in a UTC+8 zone is still the previous day in UTC; the note a person
-  // writes at half past midnight must land in today's file.
-  const now = new Date('2026-11-10T00:30:00+08:00')
+  // Build a local 00:30 rather than an ISO instant with a fixed offset: the
+  // assertion must mean the same thing under TZ=UTC and TZ=Asia/Shanghai.
+  const now = new Date(2026, 10, 10, 0, 30, 0)
   assert.equal(localDateStamp(now), '2026-11-10')
 
   const result = await s.store.append({ target: 'project-daily', text: '凌晨一条' }, s.probe)
@@ -272,28 +285,34 @@ test('restore puts the snapshot back and backs up what it replaced', async () =>
 test('prune plans by age, then archives old dailies without touching MEMORY', async () => {
   const s = setup()
   const file = join(s.memoryDir, 'MEMORY.md')
+  const old = dayStamp(-45)
+  const recent = dayStamp(-1)
+  const future = dayStamp(7)
   writeFileSync(file, '## 环境\n- Node 22\n', 'utf8')
-  writeFileSync(join(s.memoryDir, '2026-01-02.md'), '- 老的一\n- 老的二\n', 'utf8')
-  writeFileSync(join(s.memoryDir, '2099-01-01.md'), '- 未来的\n', 'utf8')
+  writeFileSync(join(s.memoryDir, `${old}.md`), '- 老的一\n- 老的二\n', 'utf8')
+  writeFileSync(join(s.memoryDir, `${recent}.md`), '- 昨天的\n', 'utf8')
+  writeFileSync(join(s.memoryDir, `${future}.md`), '- 未来的\n', 'utf8')
 
   const plan = await s.store.prune({ beforeDays: 30, dryRun: true }, s.probe)
   assert.equal(plan.ok, true)
   assert.equal(plan.dryRun, true)
-  assert.deepEqual(plan.candidates.map((row) => row.date), ['2026-01-02'])
+  assert.deepEqual(plan.candidates.map((row) => row.date), [old])
   assert.equal(plan.entries, 2)
 
-  const done = await s.store.prune({ beforeDays: 30, dryRun: false, dates: ['2026-01-02'] }, s.probe)
+  const done = await s.store.prune({ beforeDays: 30, dryRun: false, dates: [old] }, s.probe)
   assert.equal(done.ok, true)
-  // MEMORY is untouched; the raw log is moved to archive/, future file stays.
+  // MEMORY is untouched; the raw log is moved to archive/, the recent file and
+  // the future-dated file stay.
   assert.equal(readFileSync(file, 'utf8'), '## 环境\n- Node 22\n')
-  assert.equal(existsSync(join(s.memoryDir, '2026-01-02.md')), false)
-  assert.match(readFileSync(join(s.memoryDir, 'archive', '2026-01-02.md'), 'utf8'), /老的一/)
-  assert.match(readFileSync(join(s.memoryDir, '2099-01-01.md'), 'utf8'), /未来的/)
+  assert.equal(existsSync(join(s.memoryDir, `${old}.md`)), false)
+  assert.match(readFileSync(join(s.memoryDir, 'archive', `${old}.md`), 'utf8'), /老的一/)
+  assert.match(readFileSync(join(s.memoryDir, `${recent}.md`), 'utf8'), /昨天的/)
+  assert.match(readFileSync(join(s.memoryDir, `${future}.md`), 'utf8'), /未来的/)
 })
 
 test('prune with nothing old enough says so instead of moving', async () => {
   const s = setup()
-  writeFileSync(join(s.memoryDir, '2099-01-01.md'), '- 未来的\n', 'utf8')
+  writeFileSync(join(s.memoryDir, `${dayStamp(7)}.md`), '- 未来的\n', 'utf8')
   const result = await s.store.prune({ beforeDays: 30, dryRun: false }, s.probe)
   assert.equal(result.ok, false)
   assert.equal(result.code, 'nothing_to_prune')

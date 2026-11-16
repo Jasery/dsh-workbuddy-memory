@@ -1,40 +1,65 @@
 /** Wiring: what `apply` mounts, and what it survives. */
 
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
 import { apply, inject, name } from '../src/index.js'
+import { Config } from '../src/config.js'
 
 /** Context that records every registration instead of mounting a real host. */
-function fakeCtx({ withWebServer = true, withGuard = true, withSlots = false } = {}) {
-  const record = { sections: [], tools: [], routes: [], injected: [], guards: 0, toolDefs: [], sectionDefs: [] }
+function fakeCtx({ withWebServer = true, withGuard = true, withSlots = false, withEvents = false } = {}) {
+  const record = { sections: [], tools: [], routes: [], injected: [], guards: 0, toolDefs: [], sectionDefs: [], handlers: {} }
+
+  /** Remove one value from a list the way the host disposes a registration. */
+  const remove = (list, value) => {
+    const at = list.indexOf(value)
+    if (at >= 0) list.splice(at, 1)
+  }
 
   const ctx = {
     logger: { warn() {} },
     effect(fn) {
       return fn()
     },
+    ...(withEvents
+      ? {
+          on(event, handler) {
+            record.handlers[event] = handler
+            return () => {
+              if (record.handlers[event] === handler) delete record.handlers[event]
+            }
+          },
+        }
+      : {}),
     systemPrompt: {
       section(definition) {
         record.sections.push(definition.name)
         record.sectionDefs.push(definition)
-        return () => {}
+        return () => {
+          remove(record.sections, definition.name)
+          remove(record.sectionDefs, definition)
+        }
       },
     },
     tools: {
       register(tool) {
         record.tools.push(tool.name)
         record.toolDefs.push(tool)
-        return () => {}
+        return () => {
+          remove(record.tools, tool.name)
+          remove(record.toolDefs, tool)
+        }
       },
       ...(withGuard
         ? {
             guard() {
               record.guards += 1
-              return () => {}
+              return () => {
+                record.guards -= 1
+              }
             },
           }
         : {}),
@@ -43,13 +68,14 @@ function fakeCtx({ withWebServer = true, withGuard = true, withSlots = false } =
       record.injected.push(services.join(','))
       if (services.includes('webServer') && !withWebServer) return
       if (services.includes('configForms') && !withSlots) return
+      const before = record.routes.length
       callback({
         ...ctx,
         webServer: withWebServer
           ? {
               register(route) {
                 record.routes.push(route.path)
-                return () => {}
+                return () => remove(record.routes, route.path)
               },
             }
           : undefined,
@@ -64,11 +90,25 @@ function fakeCtx({ withWebServer = true, withGuard = true, withSlots = false } =
             }
           : undefined,
       })
+      // The fake's callback runs synchronously, so the routes it added can be
+      // removed by the same kind of disposer a real fiber would provide.
+      return () => {
+        record.routes.splice(before)
+      }
     },
   }
 
   return { ctx, record }
 }
+
+/** Raw config through the real schema, the way the loader delivers it. */
+function fromSchema(raw) {
+  const result = Config['~standard'].validate(raw)
+  assert.equal(result.issues, undefined)
+  return result.value
+}
+
+const VOLATILE_WRITE = Symbol.for('cosmokit.volatile.write')
 
 function workspace(config = {}) {
   const root = mkdtempSync(join(tmpdir(), 'wbm-index-'))
@@ -197,4 +237,116 @@ test('a read does not invalidate the frozen snapshot', async () => {
 
   // Reading changes nothing on disk, so the frozen text is still the same object.
   assert.equal(projectSection.text(context), before)
+})
+
+test('values validated by the real schema reach the tools and the probe', async () => {
+  const { home, cwd, config, root } = workspace()
+  const raw = fromSchema({
+    readOnly: true,
+    workbuddyHome: home,
+    stateDir: config.stateDir,
+    search: { enabled: false },
+  })
+  const { ctx, record } = fakeCtx()
+  apply(ctx, raw)
+
+  const exec = { agent: { session: { header: { cwd } } } }
+  assert.equal(record.tools.includes('memory_search'), false)
+
+  const status = record.toolDefs.find((tool) => tool.name === 'memory_status')
+  const state = await status.execute({}, exec)
+  assert.equal(state.readOnly, true)
+  assert.equal(state.home.path, home, 'workbuddyHome was ignored, so the probe fell back')
+  assert.equal(state.config.search.enabled, false)
+
+  const append = record.toolDefs.find((tool) => tool.name === 'memory_append')
+  const refused = await append.execute({ target: 'user-memory', text: 'no' }, exec)
+  assert.equal(refused.ok, false)
+  assert.equal(refused.code, 'read_only')
+  void root
+})
+
+test('a volatile update deep-updates the same config and remounts changed tools', async () => {
+  const { home, cwd, config } = workspace()
+  const raw = fromSchema({ workbuddyHome: home, stateDir: config.stateDir, search: { enabled: false } })
+  const { ctx, record } = fakeCtx({ withEvents: true })
+  apply(ctx, raw)
+
+  assert.equal(record.tools.includes('memory_search'), false)
+  assert.equal(typeof record.handlers['loader/volatile-update'], 'function')
+
+  // The host commits the reference values first, then emits the paths it changed.
+  raw.readOnly[VOLATILE_WRITE](true)
+  raw.search.enabled[VOLATILE_WRITE](true)
+  record.handlers['loader/volatile-update']([['readOnly'], ['search', 'enabled']])
+
+  assert.equal(record.tools.includes('memory_search'), true)
+  assert.equal(record.tools.length, 9)
+  assert.equal(new Set(record.tools).size, record.tools.length, 'a remount accumulated registrations')
+
+  const exec = { agent: { session: { header: { cwd } } } }
+  const append = record.toolDefs.find((tool) => tool.name === 'memory_append')
+  const refused = await append.execute({ target: 'user-memory', text: 'no' }, exec)
+  assert.equal(refused.code, 'read_only', 'the existing tool closure did not see the new flag')
+})
+
+test('guard and panel registrations follow their switches without piling up', async () => {
+  const { home, config } = workspace()
+  const raw = fromSchema({ workbuddyHome: home, stateDir: config.stateDir })
+  const { ctx, record } = fakeCtx({ withEvents: true })
+  apply(ctx, raw)
+
+  assert.equal(record.guards, 1)
+  assert.deepEqual(record.routes, ['/workbuddy-memory'])
+
+  raw.guard.enabled[VOLATILE_WRITE](false)
+  raw.ui.enabled[VOLATILE_WRITE](false)
+  record.handlers['loader/volatile-update']([['guard', 'enabled'], ['ui', 'enabled']])
+  assert.equal(record.guards, 0)
+  assert.deepEqual(record.routes, [])
+
+  raw.guard.enabled[VOLATILE_WRITE](true)
+  raw.ui.enabled[VOLATILE_WRITE](true)
+  record.handlers['loader/volatile-update']([['guard', 'enabled'], ['ui', 'enabled']])
+  assert.equal(record.guards, 1)
+  assert.deepEqual(record.routes, ['/workbuddy-memory'])
+})
+
+test('an inject change remounts the sections with exactly four registrations', () => {
+  const { home, config } = workspace()
+  const raw = fromSchema({ workbuddyHome: home, stateDir: config.stateDir })
+  const { ctx, record } = fakeCtx({ withEvents: true })
+  apply(ctx, raw)
+
+  raw.inject.limits[VOLATILE_WRITE]({ project: 1234, rules: 0, user: 4321, profile: 0 })
+  record.handlers['loader/volatile-update']([['inject', 'limits']])
+
+  assert.equal(record.sections.length, 4)
+  assert.deepEqual(record.sections, [
+    'workbuddy-memory:project',
+    'workbuddy-memory:rules',
+    'workbuddy-memory:user',
+    'workbuddy-memory:profile',
+  ])
+})
+
+test('a host without the volatile event still starts instead of faking a reload', () => {
+  const { home, config } = workspace()
+  const { ctx, record } = fakeCtx()
+  assert.doesNotThrow(() => apply(ctx, fromSchema({ workbuddyHome: home, stateDir: config.stateDir })))
+  assert.equal(record.tools.length, 9)
+  assert.equal(record.sections.length, 4)
+})
+
+test('a purely read-only session creates no state directory', async () => {
+  const { home, cwd, config, root } = workspace()
+  const stateDir = join(root, 'never-created')
+  const { ctx, record } = fakeCtx()
+  apply(ctx, fromSchema({ readOnly: true, workbuddyHome: home, stateDir }))
+
+  const exec = { agent: { session: { header: { cwd } } } }
+  await record.toolDefs.find((tool) => tool.name === 'memory_status').execute({}, exec)
+  await record.toolDefs.find((tool) => tool.name === 'memory_read').execute({ target: 'project-memory' }, exec)
+
+  assert.equal(existsSync(stateDir), false)
 })

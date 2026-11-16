@@ -134,6 +134,52 @@ function pick(value, allowed, fallback) {
   return allowed.includes(value) ? value : fallback
 }
 
+/** The write half of the shared volatile-reference protocol. */
+const VOLATILE_WRITE = Symbol.for('cosmokit.volatile.write')
+
+/**
+ * Replace every volatile reference with the value it currently holds.
+ *
+ * A `.volatile()` field reaches `apply` as a frozen `{ get, [write] }` object,
+ * not as the value it describes. Reading it with `typeof value === 'boolean'`
+ * therefore failed for every key a person can change in the settings form, and
+ * the plugin silently ran on defaults. This walks the config, follows real
+ * references, and returns a plain copy; the references themselves are never
+ * modified, so the host can keep updating them.
+ *
+ * Only an object implementing both halves of the reference protocol is
+ * followed. A user-supplied `{ get() {} }` is data: calling it would execute
+ * arbitrary input and could make an unsupported value look supported.
+ *
+ * @param {unknown} raw
+ * @returns {unknown} a plain, reference-free copy.
+ */
+export function resolveVolatile(raw) {
+  const seen = new WeakSet()
+
+  const visit = (value) => {
+    if (!value || typeof value !== 'object') return value
+
+    if (typeof value.get === 'function' && typeof value[VOLATILE_WRITE] === 'function') {
+      return visit(value.get())
+    }
+
+    if (Array.isArray(value)) return value.map(visit)
+
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null) return value
+    if (seen.has(value)) return value
+
+    seen.add(value)
+    const out = {}
+    for (const [key, entry] of Object.entries(value)) out[key] = visit(entry)
+    seen.delete(value)
+    return out
+  }
+
+  return visit(raw)
+}
+
 /**
  * Resolve the user-memory distillation threshold.
  *
@@ -167,12 +213,13 @@ export function resolveDistillAbove(raw, userLimit) {
  * @returns {object} a complete, clamped config.
  */
 export function normalizeConfig(raw) {
-  const input = raw && typeof raw === 'object' ? raw : {}
-  const inject = input.inject && typeof input.inject === 'object' ? input.inject : {}
-  const write = input.write && typeof input.write === 'object' ? input.write : {}
-  const search = input.search && typeof input.search === 'object' ? input.search : {}
-  const guard = input.guard && typeof input.guard === 'object' ? input.guard : {}
-  const ui = input.ui && typeof input.ui === 'object' ? input.ui : {}
+  const input = resolveVolatile(raw)
+  const base = input && typeof input === 'object' ? input : {}
+  const inject = base.inject && typeof base.inject === 'object' ? base.inject : {}
+  const write = base.write && typeof base.write === 'object' ? base.write : {}
+  const search = base.search && typeof base.search === 'object' ? base.search : {}
+  const guard = base.guard && typeof base.guard === 'object' ? base.guard : {}
+  const ui = base.ui && typeof base.ui === 'object' ? base.ui : {}
   const limits = inject.limits && typeof inject.limits === 'object' ? inject.limits : {}
 
   const resolvedLimits = {
@@ -183,11 +230,11 @@ export function normalizeConfig(raw) {
   }
 
   return {
-    readOnly: bool(input.readOnly, false),
-    workbuddyHome: text(input.workbuddyHome).trim(),
-    dataFolderName: text(input.dataFolderName).trim(),
-    stateDir: text(input.stateDir).trim(),
-    locale: pick(input.locale, ['auto', 'zh', 'en'], 'auto'),
+    readOnly: bool(base.readOnly, false),
+    workbuddyHome: text(base.workbuddyHome).trim(),
+    dataFolderName: text(base.dataFolderName).trim(),
+    stateDir: text(base.stateDir).trim(),
+    locale: pick(base.locale, ['auto', 'zh', 'en'], 'auto'),
 
     inject: {
       enabled: bool(inject.enabled, true),

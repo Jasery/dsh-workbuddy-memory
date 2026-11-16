@@ -14,9 +14,11 @@ import {
   resolveWorkbuddyHome,
   uidFromPersonalDir,
 } from '../src/paths.js'
-import { truncateChars, truncateHead } from '../src/fsx.js'
+import { truncateChars, truncateHead, readTextSafe } from '../src/fsx.js'
 import { redact } from '../src/render.js'
 import { pathKey } from '../src/write/fslock.js'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 
 const HOME = resolve('/home/tester')
 
@@ -110,4 +112,25 @@ test('pathKey folds the differences the platform itself ignores', () => {
     assert.equal(pathKey('/x/MEMORY.md'), pathKey('/x/MEMORY.md'))
     assert.notEqual(pathKey('/x/MEMORY.md'), pathKey('/x/memory.md'))
   }
+})
+
+test('readTextSafe reads at most maxBytes and cuts on a UTF-8 boundary', () => {
+  const root = mkdtempSync(join(tmpdir(), 'wbm-fsx-'))
+  const file = join(root, 'note.md')
+  const text = 'a😀b'
+  writeFileSync(file, text, 'utf8')
+
+  // Three bytes stop one byte inside the four-byte emoji. The old reader first
+  // loaded the whole file and then cut the string, so the "bounded" read was
+  // only bounded after the fact.
+  const partial = readTextSafe(file, { maxBytes: 3 })
+  assert.equal(partial.ok, true)
+  assert.equal(partial.text, 'a')
+  assert.equal(partial.truncated, true)
+  assert.equal(partial.bytes, Buffer.byteLength(text))
+  assert.equal(partial.text.includes('\ufffd'), false)
+
+  const whole = readTextSafe(file, { maxBytes: 99 })
+  assert.equal(whole.text, text)
+  assert.equal(whole.truncated, false)
 })

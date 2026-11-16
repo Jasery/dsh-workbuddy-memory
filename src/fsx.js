@@ -1,6 +1,6 @@
 /** Small filesystem helpers shared by the probe, the snapshot cache and the tools. */
 
-import { accessSync, constants, readFileSync, statSync } from 'node:fs'
+import { accessSync, closeSync, constants, openSync, readFileSync, readSync, statSync } from 'node:fs'
 
 /** `stat` that reports failure instead of throwing. */
 export function statSafe(path) {
@@ -37,18 +37,65 @@ export function readTextSafe(path, options = {}) {
   try {
     const stat = statSync(path)
     if (!stat.isFile()) return { ...empty, error: 'not_a_file' }
-    let text = readFileSync(path, 'utf8')
-    let truncated = false
     const maxBytes = options.maxBytes
-    if (typeof maxBytes === 'number' && maxBytes > 0 && stat.size > maxBytes) {
-      // Slice on a character boundary so the tail is valid UTF-8.
-      text = truncateHead(text, maxBytes)
-      truncated = true
-    }
-    return { ok: true, text, bytes: stat.size, mtimeMs: stat.mtimeMs, truncated }
+    const bounded = typeof maxBytes === 'number' && maxBytes > 0 && stat.size > maxBytes
+
+    // Read at most `maxBytes` from the descriptor. The old path loaded the whole
+    // file and sliced the decoded string, so a 2 MiB "cap" still allocated the
+    // entire file — on a memory file that is exactly the case the cap exists for.
+    let text = bounded ? readHead(path, maxBytes) : readFileSync(path, 'utf8')
+    return { ok: true, text, bytes: stat.size, mtimeMs: stat.mtimeMs, truncated: bounded }
   } catch (error) {
     return { ...empty, error: error?.code ?? String(error) }
   }
+}
+
+/**
+ * Read the first `maxBytes` bytes and drop a trailing incomplete UTF-8 sequence.
+ *
+ * @param {string} path
+ * @param {number} maxBytes
+ * @returns {string}
+ */
+function readHead(path, maxBytes) {
+  const buffer = Buffer.allocUnsafe(maxBytes)
+  const fd = openSync(path, 'r')
+  let total = 0
+  try {
+    while (total < maxBytes) {
+      const read = readSync(fd, buffer, total, maxBytes - total, total)
+      if (read <= 0) break
+      total += read
+    }
+  } finally {
+    closeSync(fd)
+  }
+  return decodeUtf8Prefix(buffer.subarray(0, total))
+}
+
+/**
+ * Decode valid UTF-8 bytes, discarding a character cut in half at the end.
+ *
+ * `Buffer.toString` would turn that half into U+FFFD, which then looks like
+ * content the file never contained.
+ *
+ * @param {Buffer} buffer
+ * @returns {string}
+ */
+function decodeUtf8Prefix(buffer) {
+  let end = buffer.length
+  let lead = end - 1
+  let continuations = 0
+  while (lead >= 0 && (buffer[lead] & 0xc0) === 0x80 && continuations < 3) {
+    continuations += 1
+    lead -= 1
+  }
+  if (lead >= 0) {
+    const first = buffer[lead]
+    const needed = first >= 0xf0 ? 4 : first >= 0xe0 ? 3 : first >= 0xc0 ? 2 : first < 0x80 ? 1 : 0
+    if (needed === 0 || continuations + 1 < needed) end = lead
+  }
+  return buffer.subarray(0, end).toString('utf8')
 }
 
 /**

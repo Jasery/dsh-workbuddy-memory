@@ -107,7 +107,10 @@ function resolveProfile({ cfg, candidates, layout }) {
 
   if (candidates.length === 1) {
     const stat = statSafe(candidates[0])
-    return { path: candidates[0], exists: true, bytes: stat?.size ?? 0, source: 'single', ambiguous: false, uid: uidFromPersonalDir(candidates[0]) }
+    // The uid lives in the owning `user-<uid>-personal` directory, never in
+    // `USER.md`; parsing the file path directly returned an empty string and
+    // made a single profile look like one without an account.
+    return { path: candidates[0], exists: true, bytes: stat?.size ?? 0, source: 'single', ambiguous: false, uid: uidFromPersonalDir(dirname(candidates[0])) }
   }
 
   if (cfg.inject.profileUid) {

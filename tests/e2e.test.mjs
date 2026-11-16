@@ -17,6 +17,13 @@ import { normalizeConfig } from '../src/config.js'
 import { registerRoutes } from '../src/host/routes.js'
 import { createStore } from '../src/write/store.js'
 
+/** A local-calendar stamp `days` from today, so prune fixtures never expire. */
+function dayStamp(days = 0) {
+  const today = new Date()
+  const day = new Date(today.getFullYear(), today.getMonth(), today.getDate() + days)
+  return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`
+}
+
 /** A project with two daily files, one old enough to archive. */
 async function server({ allowWriteActions = true } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'wbm-e2e-'))
@@ -24,13 +31,15 @@ async function server({ allowWriteActions = true } = {}) {
   const proj = join(root, 'proj')
   const memDir = join(proj, '.workbuddy', 'memory')
   const stateDir = join(root, 'state')
+  const oldDate = dayStamp(-45)
+  const newDate = dayStamp(-1)
   mkdirSync(home, { recursive: true })
   mkdirSync(memDir, { recursive: true })
 
   writeFileSync(join(home, 'MEMORY.md'), '# 长期记忆\n\n## 输出规范\n- 用简体中文\n- 报告只出 HTML\n', 'utf8')
   writeFileSync(join(memDir, 'MEMORY.md'), '# 项目记忆\n\n## 环境\n- Node 22\n- Windows\n', 'utf8')
-  writeFileSync(join(memDir, '2026-09-01.md'), '# 2026-09-01\n\n- 旧条目一\n- 旧条目二\n', 'utf8')
-  writeFileSync(join(memDir, '2026-11-09.md'), '# 2026-11-09\n\n- 昨天的条目\n', 'utf8')
+  writeFileSync(join(memDir, `${oldDate}.md`), `# ${oldDate}\n\n- 旧条目一\n- 旧条目二\n`, 'utf8')
+  writeFileSync(join(memDir, `${newDate}.md`), `# ${newDate}\n\n- 昨天的条目\n`, 'utf8')
 
   const cfg = normalizeConfig({ workbuddyHome: home, stateDir, ui: { allowWriteActions } })
   const store = createStore({ cfg, stateDir })
@@ -56,8 +65,10 @@ async function server({ allowWriteActions = true } = {}) {
     base,
     memDir,
     projectMemory: join(memDir, 'MEMORY.md'),
-    dailyOld: join(memDir, '2026-09-01.md'),
-    dailyNew: join(memDir, '2026-11-09.md'),
+    oldDate,
+    newDate,
+    dailyOld: join(memDir, `${oldDate}.md`),
+    dailyNew: join(memDir, `${newDate}.md`),
     close: () => http.close(),
     get: async (path) => {
       const response = await fetch(`${base}${path}`)
@@ -152,13 +163,13 @@ test('the panel write chain: edit, conflict, add, remove, restore, prune', async
     const plan = await s.post({ type: 'prune', dryRun: true, beforeDays: 30 })
     assert.deepEqual(
       plan.body.candidates.map((row) => row.date),
-      ['2026-09-01'],
+      [s.oldDate],
     )
-    const pruned = await s.post({ type: 'prune', dryRun: false, beforeDays: 30, dates: ['2026-09-01'] })
+    const pruned = await s.post({ type: 'prune', dryRun: false, beforeDays: 30, dates: [s.oldDate] })
     assert.equal(pruned.body.ok, true)
     assert.equal(readFileSync(s.projectMemory, 'utf8'), snapshot.body.text)
     assert.equal(existsSync(s.dailyOld), false)
-    assert.match(readFileSync(join(s.memDir, 'archive', '2026-09-01.md'), 'utf8'), /旧条目一/)
+    assert.match(readFileSync(join(s.memDir, 'archive', `${s.oldDate}.md`), 'utf8'), /旧条目一/)
     assert.match(readFileSync(s.dailyNew, 'utf8'), /昨天的条目/)
   } finally {
     s.close()

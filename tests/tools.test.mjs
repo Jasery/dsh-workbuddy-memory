@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { normalizeConfig } from '../src/config.js'
+import { probeEnvironment } from '../src/env.js'
 import { createTranslator } from '../src/locale.js'
 import { appendTool, editTool, pruneTool } from '../src/tools/write.js'
 import { readTool } from '../src/tools/read.js'
@@ -117,7 +118,7 @@ test('memory_read reports a missing file and an unknown target', async () => {
   const unknown = await tools.read.execute({ target: 'memories' }, exec)
   assert.equal(unknown.ok, false)
   assert.equal(unknown.code, 'unknown_target')
-  assert.deepEqual(unknown.targets, ['project-memory', 'project-daily', 'user-memory'])
+  assert.deepEqual(unknown.targets, ['project-memory', 'project-daily', 'user-memory', 'user-profile'])
 
   const noSection = await tools.read.execute({ target: 'project-memory', section: '不存在' }, exec)
   assert.equal(noSection.ok, false)
@@ -514,4 +515,124 @@ test('memory_read refuses an ambiguous section heading', async () => {
   assert.equal(result.ok, false)
   assert.equal(result.code, 'ambiguous_section')
   assert.deepEqual(result.lines, [1, 4])
+})
+
+/** Strip the human-facing truncation note so a page can be compared byte for byte. */
+function pageBody(content) {
+  const at = content.indexOf('\n\n…')
+  return at >= 0 ? content.slice(0, at) : content
+}
+
+/** Whether a string starts or ends in the middle of a surrogate pair. */
+function hasHalfPair(text) {
+  if (!text) return false
+  const first = text.charCodeAt(0)
+  const last = text.charCodeAt(text.length - 1)
+  return (first >= 0xdc00 && first <= 0xdfff) || (last >= 0xd800 && last <= 0xdbff)
+}
+
+test('memory_read pages by UTF-16 offset without splitting an emoji', async () => {
+  const { home, tools, exec } = fixture()
+  const full = `${'😀'.repeat(9)}收尾`
+  writeFileSync(join(home, 'MEMORY.md'), full, 'utf8')
+
+  let offset = 0
+  let assembled = ''
+  let pages = 0
+  while (pages < 30) {
+    const page = await tools.read.execute({ target: 'user-memory', offset, limit: 3 }, exec)
+    assert.equal(page.ok, true)
+    assert.equal(page.offset, offset, 'the tool echoed a different start than requested')
+
+    const raw = pageBody(page.content)
+    assert.equal(hasHalfPair(raw), false, `page ${pages} split a surrogate pair`)
+    assert.equal(raw, full.slice(page.offset, page.nextOffset))
+    assert.equal(page.nextOffset, page.offset + raw.length)
+    assert.equal(page.offset <= page.nextOffset, true)
+
+    assembled += raw
+    pages += 1
+    if (!page.truncated) break
+    assert.ok(page.nextOffset > page.offset, 'a truncated page made no progress')
+    offset = page.nextOffset
+  }
+
+  assert.equal(assembled, full, 'paging lost or duplicated a character')
+  assert.ok(pages > 1)
+})
+
+test('memory_read rejects an offset that is not a real position', async () => {
+  const { tools, exec } = fixture()
+  // The host already refuses strings and non-finite numbers; the tool still has
+  // to reject negative and fractional positions itself.
+  for (const offset of [-1, 1.5, 2.0001]) {
+    const result = await tools.read.execute({ target: 'project-memory', offset }, exec)
+    assert.equal(result.ok, false, `offset ${String(offset)} was accepted`)
+    assert.equal(result.code, 'bad_offset')
+  }
+
+  const full = await tools.read.execute({ target: 'project-memory' }, exec)
+  const beyond = await tools.read.execute({ target: 'project-memory', offset: full.content.length + 1 }, exec)
+  assert.equal(beyond.ok, false)
+  assert.equal(beyond.code, 'bad_offset')
+
+  const end = await tools.read.execute({ target: 'project-memory', offset: full.nextOffset }, exec)
+  assert.equal(end.ok, true)
+  assert.equal(end.content, '')
+  assert.equal(end.truncated, false)
+  assert.equal(end.nextOffset, full.nextOffset)
+})
+
+test('memory_read pages inside a chosen section, not the whole file', async () => {
+  const { home, tools, exec } = fixture()
+  const body = '- ' + 'z'.repeat(40)
+  writeFileSync(join(home, 'MEMORY.md'), `## 大节\n${body}\n## 尾节\n- tail\n`, 'utf8')
+
+  const page = await tools.read.execute({ target: 'user-memory', section: '大节', offset: 4, limit: 10 }, exec)
+  assert.equal(page.ok, true)
+  assert.equal(page.section, '大节')
+  assert.equal(pageBody(page.content), `## 大节\n${body}`.slice(4, 14))
+  assert.equal(page.nextOffset, 14)
+  assert.equal(page.truncated, true)
+})
+
+test('memory_read refuses a 2 MiB target instead of hashing a fragment', async () => {
+  const { home, tools, exec } = fixture()
+  writeFileSync(join(home, 'MEMORY.md'), 'a'.repeat(2 * 1024 * 1024 + 1), 'utf8')
+
+  const result = await tools.read.execute({ target: 'user-memory' }, exec)
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'too_large')
+  assert.equal(result.revision, null)
+  assert.equal(result.writable, false)
+  assert.equal(result.bytes, 2 * 1024 * 1024 + 1)
+})
+
+test('memory_read returns a single user profile with the uid from its directory', async () => {
+  const { home, tools, exec, cfg } = fixture()
+  const personal = join(home, 'user-7f3a-personal')
+  mkdirSync(personal, { recursive: true })
+  writeFileSync(join(personal, 'USER.md'), '# 用户\n- 名字\n', 'utf8')
+
+  const probe = probeEnvironment({ cfg, cwd: exec.agent.session.header.cwd })
+  assert.equal(probe.profile.source, 'single')
+  assert.equal(probe.profile.uid, '7f3a', 'a single profile reported the file name instead of the account')
+
+  const result = await tools.read.execute({ target: 'user-profile' }, exec)
+  assert.equal(result.ok, true)
+  assert.match(result.content, /名字/)
+  assert.equal(result.revision !== null, true)
+})
+
+test('memory_read refuses an ambiguous profile instead of picking one', async () => {
+  const { home, tools, exec } = fixture()
+  for (const name of ['user-a-personal', 'user-b-personal']) {
+    mkdirSync(join(home, name), { recursive: true })
+    writeFileSync(join(home, name, 'USER.md'), `# ${name}\n`, 'utf8')
+  }
+
+  const result = await tools.read.execute({ target: 'user-profile' }, exec)
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'ambiguous_profile')
+  assert.equal(result.revision, undefined)
 })

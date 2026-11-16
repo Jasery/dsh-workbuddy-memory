@@ -109,13 +109,17 @@ function harden(tool) {
  * turning it off removes the tool from the model's catalog instead of leaving a
  * definition that only ever returns a refusal.
  *
+ * The returned controller disposes exactly the registrations it made, so a
+ * volatile change can remount the set without leaving the previous
+ * `memory_read` (or a second one) behind.
+ *
  * @param {import('@deepseek-ai/cordis').Context} ctx
  * @param {object} deps
  * @param {object} deps.cfg
  * @param {(key: string, vars?: Record<string, string|number>) => string} deps.t
  * @param {object} deps.store
  * @param {() => void} [deps.onWrite] - called after a committed write.
- * @returns {{ names: string[] }}
+ * @returns {{ names: string[], dispose: () => void }}
  */
 export function registerTools(ctx, deps) {
   const scoped = { ...deps, store: withWriteNotice(deps.store, deps.onWrite) }
@@ -123,11 +127,33 @@ export function registerTools(ctx, deps) {
   if (scoped.cfg.search.enabled) tools.push(searchTool(scoped))
   tools.push(appendTool(scoped), editTool(scoped), pruneTool(scoped))
   // Section rewrite and rollback are gated by the same switches the panel uses:
-  // both bypass the entry model, so `ui.allowFullTextEdit` decides whether a
+  // both bypass the entry model, so `ui.allowWriteActions` decides whether a
   // whole-body or whole-file replacement is allowed at all.
   if (scoped.cfg.ui.allowWriteActions) {
     tools.push(replaceSectionTool(scoped), listRevisionsTool(scoped), restoreTool(scoped))
   }
-  for (const tool of tools) ctx.tools.register(harden(tool))
-  return { names: tools.map((tool) => tool.name) }
+
+  const disposers = []
+  const dispose = () => {
+    while (disposers.length > 0) {
+      const off = disposers.pop()
+      try {
+        off()
+      } catch {
+        // One failed unregister must not strand the rest of the set.
+      }
+    }
+  }
+
+  try {
+    for (const tool of tools) {
+      const off = ctx.tools.register(harden(tool))
+      if (typeof off === 'function') disposers.push(off)
+    }
+  } catch (error) {
+    dispose()
+    throw error
+  }
+
+  return { names: tools.map((tool) => tool.name), dispose }
 }
