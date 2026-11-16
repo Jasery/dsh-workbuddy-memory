@@ -98,9 +98,9 @@ Task5: README中英、implementation-notes、CHANGELOG、package-lock必要版�
 **Files:** src/client.js, host/routes.js, tools/index.js, tools/write.js, locale/*；tests/client/panel/routes/e2e/index/tools/store；可新增测试助手但不写临时模拟产品页。
 
 **Interfaces:**
-- 复用现有GET /revisions、/revision、POST /action restore。UI新增当前文件“历史版本”入口：选择→差异预览→恢复；绑定projectKey/target/name/currentRevision；异步回包过期丢弃。保留短时undo但undo关联原文件/项目，切换不误写。
-- 草案应用：在源码/章节管理入口粘贴正文和baseRevision，读取原文匹配基线后预览差异，用户点击应用→replace-document或replace-section(expectedRevision=baseRevision,operationId)。base缺失/旧/源truncated拒绝，不自动换新revision；移除“冲突后删revision强盖”，保留重载/保留草案，重新预览才能应用。普通源码手改也经当前显示版本差异确认。
-- 归档UI消费Task2 planId，提交picked dates，显示expired/conflict/partial并重新计划，不用旧集合无声重试；不声称自动完成蒸馏。
+- 复用GET /revisions、/revision、POST /action restore。UI当前文件“历史版本”：选择→差异预览→恢复，状态冻结{projectKey,target,name,currentRevision}。所有异步返回按目标+请求代次丢弃；切项目/文件/关闭（含切到无文件项目）立即作废请求，不只等openFile才递增。undo存原projectKey/target/备份名/该次成功写后的revision，调用固定原目标与版本，不借当前doc.revision；切换文件不可误恢复。
+- 草案状态保存{projectKey,target,section?,baseRevision,原文,草案}；粘贴正文+baseRevision，读取完整原文确认revision===baseRevision后才预览。改目标/正文/基线即作废预览；应用固定expectedRevision=baseRevision和同operationId，不自动换绑最新doc.revision。普通源码手改也锁编辑开始时版本并预览差异确认；移除冲突后删revision强盖，保留重载/保留草案，旧/缺基线或源truncated拒绝。复用lineDiff与现有content路由，不新增管理服务。
+- 归档route补planId透传，首次应用冻结{projectKey,planId,dates,operationId}。plan_conflict/expired/unknown_plan才要求重新预览；partial/outcome_unknown或网络结果未知保持原完整请求，以同ID+同日期集合重试，不只提交failed日期，不先换计划。新选择/重新计划才新ID。成功重放duplicate可用；不声称自动完成蒸馏，不新增route级通知（store.subscribe唯一事件源）。
 - 完成UI承接后一次移除四工具注册/专用defineTool factory与文案：prune,replace_section,list_revisions,restore。保留store方法和routes，无别名空壳；final五个status/read/search/append/edit。只读总闸不影响只读诊断。
 - 工具bulk不注册，因此不用泛化模型批准引擎；UI受信任来源栅栏仍必须接入，store/route CAS仍强制；HTTP客户端伪造approved:true不可绕过版本、来源、目标校验。
 - 模型规则提醒批量整理出草案交UI，不得为绕开工具循环多次edit；少量日常单条纠错正常。headless明示管理需用户，不建议shell绕守卫。
