@@ -70,6 +70,24 @@ test('memory_status reports the stores and warnings', async () => {
   void cwd
 })
 
+test('memory_status surfaces an over-budget core, not just legacy reasons', async () => {
+  // `compatibility` used to be filtered to `legacy:` prefixes, so a core that
+  // lost five entries to the budget looked exactly like a healthy one.
+  const f = fixture()
+  const lastAssembly = () => ({
+    blocks: [{ name: 'workbuddy-memory:project', chars: 1490, state: 'layered:core-over-budget(5)' }],
+    totalChars: 1490,
+    states: { project: 'layered:core-over-budget(5)', directory: 'directory-truncated(3)', rules: 'enabled' },
+    mode: 'layered',
+    measuredAs: 'plugin-contribution',
+  })
+  const result = await statusTool({ cfg: f.cfg, t, lastAssembly }).execute({}, f.exec)
+
+  assert.deepEqual(result.compatibility, ['project:layered:core-over-budget(5)', 'directory:directory-truncated(3)'])
+  assert.equal(result.lastAssembly.blocks[0].state, 'layered:core-over-budget(5)', 'the block state is not flattened to "layered"')
+  assert.equal(result.compatibility.some((line) => /rules/.test(line)), false, 'a normal state is not reported')
+})
+
 test('memory_status explains an empty machine instead of failing', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wbm-empty-'))
   const cfg = normalizeConfig({ workbuddyHome: join(root, 'nohome'), stateDir: join(root, 'state') })

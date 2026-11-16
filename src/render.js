@@ -1,7 +1,23 @@
-import { readTextSafe, truncateChars } from './fsx.js'
+import { readTextSafe, truncateChars, truncateUtf16 } from './fsx.js'
 import { analyzeMemory } from './layers.js'
 
 export const SECTION_ORDER = { project: 200, rules: 210, user: 220, profile: 230 }
+
+/**
+ * States that mean "this source did what it was asked to do".
+ *
+ * Everything else — a legacy fallback, an over-budget core, a truncated topic
+ * list — is something the model or the user needs to know about, because the
+ * block in front of them is not the whole story. `ambiguous` is normal here
+ * because it already gets its own explicit line in the topic directory.
+ */
+const NORMAL_STATES = new Set(['layered', 'full', 'enabled', 'disabled', 'unavailable', 'read-only-entry', 'ambiguous'])
+
+/** Whether a state says the injected text is a subset or a fallback. */
+export const isAbnormalState = (state) => !NORMAL_STATES.has(String(state))
+
+/** Whether a source fell back to whole-file injection, which makes the mode mixed. */
+const isLegacy = (state) => String(state).startsWith('legacy:')
 
 export function renderSections({ cfg, probe, t, readFile }) {
   const sections = []
@@ -35,10 +51,12 @@ export function renderSections({ cfg, probe, t, readFile }) {
     }
     const budget = Math.floor(cfg.inject.coreBudget * 0.375)
     const prefix = `### ${label}\n\n`
-    const core = renderEntries(parsed.coreEntries, `## ${t('coreHeading')}`, Math.max(0, budget - prefix.length))
-    const text = sanitize(`${prefix}${core}`)
+    const core = renderEntries(parsed.coreEntries, `## ${t('coreHeading')}`, Math.max(0, budget - prefix.length), t)
+    const text = sanitize(`${prefix}${core.text}`)
     sections.push({ name: `workbuddy-memory:${key}`, order: SECTION_ORDER[key], text })
-    states[key] = 'layered'
+    // An over-budget core is not a normal state: the model has to know that the
+    // entries it can read are a prefix, not the whole file.
+    states[key] = core.dropped > 0 ? `layered:core-over-budget(${core.dropped})` : 'layered'
     return parsed.topics.map((topic) => topic.heading ?? t('unsectioned'))
   }
 
@@ -54,7 +72,7 @@ export function renderSections({ cfg, probe, t, readFile }) {
       const budget = layered ? Math.floor(cfg.inject.coreBudget * 0.125) : cfg.inject.limits.rules
       const base = `### ${t('section.rules')}\n\n${lines.map((line, index) => `${index + 1}. ${line}`).join('\n')}`
       const hint = layered ? '' : cfg.readOnly ? '' : distillHint({ cfg, probe, t })
-      const text = layered ? fitText(base, budget) : `${truncateChars(base, Math.max(0, budget - hint.length))}${hint}`
+      const text = layered ? fitText(base, budget).text : `${truncateChars(base, Math.max(0, budget - hint.length))}${hint}`
       sections.push({ name: 'workbuddy-memory:rules', order: SECTION_ORDER.rules, text })
       states.rules = 'enabled'
     }
@@ -79,61 +97,163 @@ export function renderSections({ cfg, probe, t, readFile }) {
 
   if (layered) {
     const extra = [...(projectTopics ?? []), ...(userTopics ?? []), ...profileTopics]
-    const warnings = Object.entries(states).filter(([, state]) => state.startsWith?.('legacy:')).map(([key, state]) => `${key}=${state}`)
+    // A compatibility note is a non-normal state, not only a `legacy:` one: an
+    // over-budget core also means the model is reading a subset.
+    const warnings = Object.entries(states).filter(([, state]) => !NORMAL_STATES.has(state)).map(([key, state]) => `${key}=${state}`)
     const entries = []
     if (warnings.length) entries.push(`${t('compatibility')}: ${warnings.join(', ')}`)
     if (cfg.inject.profile && cfg.inject.limits.profile > 0 && probe.profile.ambiguous) entries.push(t('ambiguousProfile'))
-    for (const topic of [...new Set(extra)]) entries.push(`${t('topicDirectory')}: ${topic}`)
-    const tail = entries.length ? fitText(`### ${t('topicDirectory')}\n\n${entries.join('\n')}`, Math.floor(cfg.inject.coreBudget * 0.125)) : ''
-    if (tail) {
-      states.directory = 'enabled'
-      sections.push({ name: 'workbuddy-memory:profile', order: SECTION_ORDER.profile, text: tail })
+    // Sanitize before measuring: redaction only shortens, so the budget still
+    // holds, and a home path must not reach the prompt through a topic heading.
+    for (const topic of [...new Set(extra)]) entries.push(`${t('topicDirectory')}: ${sanitize(topic)}`)
+    const budget = Math.floor(cfg.inject.coreBudget * 0.125)
+    const tail = entries.length ? fitText(`### ${t('topicDirectory')}\n\n${entries.join('\n')}`, budget, { notice: t('directoryMore') }) : { text: '', dropped: 0 }
+    if (tail.text) {
+      // A partial topic list has to say so: an 11-of-40 list read as the whole
+      // list is the same "written but invisible" failure as an over-budget core.
+      states.directory = tail.dropped > 0 ? `directory-truncated(${tail.dropped})` : 'enabled'
+      sections.push({ name: 'workbuddy-memory:profile', order: SECTION_ORDER.profile, text: tail.text })
     }
   }
   sections.sort((left, right) => left.order - right.order)
   sections.states = states
-  sections.mode = layered ? (Object.values(states).some((state) => state.startsWith?.('legacy:')) ? 'mixed' : 'layered') : 'full'
+  sections.mode = layered ? (Object.values(states).some(isLegacy) ? 'mixed' : 'layered') : 'full'
   return sections
 }
 
+/**
+ * Render a whole file under its own limit, in UTF-16 code units.
+ *
+ * Every number here — `prefix.length`, `room`, `note.length`, and the cut
+ * itself — has to be in the same unit, because the limit is declared in code
+ * units and compared against `text.length` afterwards. Counting the body in
+ * code points while measuring the wrapper in code units let an emoji-heavy
+ * legacy file overflow the very limit this function exists to enforce.
+ *
+ * A limit too small to say anything in yields no block at all. The shape that
+ * must never appear is a fragment of the first heading — `### Project memory\n\n## `
+ * reads like a corrupted file rather than like a limit that is too small to
+ * speak in. A cut inside ordinary body text is still allowed: a partial entry
+ * followed by the truncation note is honest, and the caller records the reason
+ * in its state either way.
+ *
+ * @returns {string} the block, or '' when it contributes nothing.
+ */
 function renderFileBlock({ label, raw, limit, sanitize, t }) {
   if (!raw?.trim() || !(limit > 0)) return ''
   const body = raw.trim()
   const prefix = `### ${label}\n\n`
-  if (prefix.length >= limit) return truncateChars(prefix, limit)
+  if (prefix.length >= limit) return ''
   const room = limit - prefix.length
-  let kept = truncateChars(body, room)
+  let kept = truncateUtf16(body, room)
+  if (cutsFirstHeading(body, kept)) return ''
   let note = ''
   if (kept.length < body.length) {
     const candidate = `\n\n_${t('truncated', { limit })}_`
     if (candidate.length <= room) {
       note = candidate
-      kept = truncateChars(body, room - note.length)
+      kept = truncateUtf16(body, room - note.length)
+      if (cutsFirstHeading(body, kept)) return ''
     }
   }
   return `${prefix}${sanitize(kept)}${note}`
 }
 
-function renderEntries(entries, heading, budget) {
-  const lines = [heading]
-  for (const entry of entries) {
-    const item = `- ${entry.text}`
-    const candidate = [...lines, item].join('\n')
-    if (candidate.length > budget) continue
-    lines.push(item)
-  }
-  return lines.join('\n')
+/**
+ * Whether `kept` stops partway through a first line that is a heading.
+ *
+ * That is the one fragment that cannot stand on its own: `## ` with no title is
+ * not a shortened section, it is a broken one.
+ */
+function cutsFirstHeading(body, kept) {
+  if (kept.length >= body.length) return false
+  const first = body.split('\n', 1)[0] ?? ''
+  return /^#{1,6}[ \t]/.test(first) && kept.length < first.length
 }
 
-function fitText(text, budget) {
-  if (text.length <= budget) return text
+/**
+ * Render the always-on core: a heading plus as many complete entries as fit.
+ *
+ * The core is a *prefix* of the file, so the scan stops at the first entry that
+ * does not fit. Skipping it and collecting later, smaller ones would inject a
+ * discontinuous subset, and a model reading it has no way to tell a skipped
+ * entry from a deleted one.
+ *
+ * Room for the overflow notice is reserved before any entry is placed: the
+ * notice and the heading share the same budget as the entries, so adding it can
+ * never push the block over.
+ *
+ * @param {{ text: string }[]} entries
+ * @param {string} heading
+ * @param {number} budget - UTF-16 code units for the whole block body.
+ * @param {(key: string, vars?: Record<string, string|number>) => string} t
+ * @returns {{ text: string, dropped: number, droppedChars: number }}
+ */
+function renderEntries(entries, heading, budget, t) {
+  const lines = [heading]
+  const used = () => lines.join('\n').length
+  const notice = (count) => t('coreOverBudget', { count })
+  // Reserve the notice slot before placing any entry, and reserve the worst
+  // case: a longer count has more digits, and the notice must fit whatever the
+  // final number turns out to be. `notice(dropped)` is therefore never longer
+  // than the reservation, so the block cannot be pushed over by adding it.
+  const reserve = entries.length > 0 ? notice(entries.length).length + 1 : 0
+  let dropped = 0
+  let droppedChars = 0
+  for (let index = 0; index < entries.length; index += 1) {
+    const item = `- ${entries[index].text}`
+    if (used() + 1 + item.length > budget - reserve) {
+      // The core is a file prefix: stop here rather than collecting later,
+      // smaller entries past the gap.
+      for (const rest of entries.slice(index)) {
+        dropped += 1
+        droppedChars += rest.text.length
+      }
+      break
+    }
+    lines.push(item)
+  }
+  if (dropped > 0) {
+    // `coreBudget` bottoms out at 4000, so the heading plus this notice always
+    // fits the reserved slot. The guard keeps the budget a hard cap anyway: the
+    // notice is a courtesy, the cap is the promise, and `states` still carries
+    // the count if the notice cannot be placed.
+    const line = notice(dropped)
+    if (used() + 1 + line.length <= budget) lines.push(line)
+  }
+  return { text: lines.join('\n'), dropped, droppedChars }
+}
+
+/**
+ * Fit whole lines of `text` into `budget` UTF-16 code units.
+ *
+ * Lines are never cut: a half line in a topic list reads as a topic name that
+ * does not exist. With `options.notice`, room for that line is reserved before
+ * any line is placed, so the notice is never the thing that overflows the
+ * budget it has to fit in.
+ *
+ * `dropped`/`droppedChars` report what did not fit so the caller can say so
+ * instead of losing it silently.
+ *
+ * @param {string} text
+ * @param {number} budget
+ * @param {{ notice?: string }} [options]
+ * @returns {{ text: string, dropped: number, droppedChars: number }}
+ */
+function fitText(text, budget, options = {}) {
+  const notice = typeof options.notice === 'string' ? options.notice : ''
+  const all = text.split('\n')
+  if (text.length <= budget) return { text, dropped: 0, droppedChars: 0 }
+  const reserve = notice ? notice.length + 1 : 0
   const kept = []
-  for (const line of text.split('\n')) {
+  for (const line of all) {
     const candidate = [...kept, line].join('\n')
-    if (candidate.length > budget) break
+    if (candidate.length > budget - reserve) break
     kept.push(line)
   }
-  return kept.join('\n')
+  const dropped = all.slice(kept.length)
+  const out = notice && dropped.length > 0 && kept.length > 0 ? [...kept, notice].join('\n') : kept.join('\n')
+  return { text: out, dropped: dropped.length, droppedChars: dropped.reduce((sum, line) => sum + line.length + 1, 0) }
 }
 
 export function distillHint({ cfg, probe, t }) {

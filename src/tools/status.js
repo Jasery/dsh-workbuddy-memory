@@ -4,6 +4,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { probeEnvironment } from '../env.js'
 import { readTextSafe } from '../fsx.js'
 import { resolveCwd } from '../inject.js'
+import { isAbnormalState } from '../render.js'
 
 /** Characters in the user memory file; 0 when absent or unreadable. */
 function userMemoryChars(probe) {
@@ -37,13 +38,22 @@ export function statusTool({ cfg, t, ctx, lastAssembly }) {
   })
 }
 
+/**
+ * Report one line per source whose injected text is not the whole story.
+ *
+ * Filtering on `legacy:` alone hid the other ways a block can be a subset: an
+ * over-budget core and a truncated topic list both leave the model reading a
+ * prefix while every field said the source was fine.
+ */
 export function describeBrief(probe, cfg, lastAssembly, t) {
   const warnings = []
   if (cfg.readOnly) warnings.push(t('status.readOnly'))
   if (!probe.hasAnyMemory) warnings.push(t('noProject'))
   if (probe.profile.ambiguous) warnings.push(t('ambiguousProfile'))
   const mode = lastAssembly?.mode ?? cfg.inject.mode
-  const compatibility = Object.entries(lastAssembly?.states ?? {}).filter(([, state]) => String(state).startsWith('legacy:')).map(([key, state]) => `${key}:${state}`)
+  const compatibility = Object.entries(lastAssembly?.states ?? {})
+    .filter(([, state]) => isAbnormalState(state))
+    .map(([key, state]) => `${key}:${state}`)
   return {
     ok: probe.hasAnyMemory,
     status: probe.status,

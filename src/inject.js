@@ -30,7 +30,15 @@ export function registerSections(ctx, deps) {
     const probe = probeEnvironment({ cfg, cwd, detail: false })
     if (typeof onProbe === 'function') onProbe(probe, cwd)
     const sections = cfg.inject.enabled ? renderSections({ cfg, probe, t, readFile: (path) => fileCache.read(path) }) : []
-    const blocks = sections.map(({ name, text }) => ({ name, chars: text.length, state: (name === 'workbuddy-memory:profile' ? sections.states?.directory : sections.states?.[name.slice('workbuddy-memory:'.length)]) ?? (text ? 'enabled' : 'disabled') }))
+    // The topic directory shares the `profile` section name with the profile
+    // block, so its state is read from `directory` rather than from the name.
+    const blocks = sections.map(({ name, text }) => {
+      const key = name.slice('workbuddy-memory:'.length)
+      const state = name === 'workbuddy-memory:profile' && sections.states?.directory
+        ? sections.states.directory
+        : sections.states?.[key]
+      return { name, chars: text.length, state: state ?? (text ? 'enabled' : 'disabled') }
+    })
     const session = context?.agent?.session
     if (session && typeof session === 'object') {
       assembled.set(session, {

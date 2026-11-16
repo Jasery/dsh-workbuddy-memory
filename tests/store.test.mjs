@@ -262,6 +262,65 @@ test('ordinary append cannot silently turn a legacy document into layered format
   assert.equal(topic.ok, true)
 })
 
+test('edit and replace-section resolve the localized core alias the prompt shows', async () => {
+  // The injected heading is localized (`## 常驻记忆` under a zh locale) while the
+  // file may carry the other spelling. Append already normalized the alias;
+  // edit and replace-section did not, so a model copying the heading it read in
+  // the prompt landed on `no_section`.
+  const s = setup({ locale: 'zh' })
+  const file = join(s.memoryDir, 'MEMORY.md')
+  const before = '# Memory\n\n## Core Memory\n- 第一条\n'
+  writeFileSync(file, before, 'utf8')
+
+  const edited = await s.store.edit(
+    { target: 'project-memory', section: '常驻记忆', match: '第一条', replacement: '改过', expectedRevision: contentRevision(before) },
+    s.probe,
+  )
+  assert.equal(edited.ok, true, JSON.stringify(edited))
+  const afterEdit = readFileSync(file, 'utf8')
+  assert.match(afterEdit, /^- 改过$/m)
+  assert.match(afterEdit, /^## Core Memory$/m, 'the file keeps its own heading spelling')
+
+  const replaced = await s.store.replaceSection(
+    { target: 'project-memory', section: '常驻记忆', body: '- 重写一条\n', expectedRevision: contentRevision(afterEdit) },
+    s.probe,
+  )
+  assert.equal(replaced.ok, true, JSON.stringify(replaced))
+  assert.equal(readFileSync(file, 'utf8'), '# Memory\n\n## Core Memory\n- 重写一条\n')
+})
+
+test('the alias never resolves to a heading the file does not have', async () => {
+  // A legacy file has no core section, so the alias must not invent one: the
+  // caller needs `no_section`, not a silent new section.
+  const s = setup({ locale: 'zh' })
+  const file = join(s.memoryDir, 'MEMORY.md')
+  const before = '## Notes\n- one\n'
+  writeFileSync(file, before, 'utf8')
+
+  const result = await s.store.edit(
+    { target: 'project-memory', section: '常驻记忆', match: 'one', replacement: 'two', expectedRevision: contentRevision(before) },
+    s.probe,
+  )
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'no_section')
+  assert.equal(readFileSync(file, 'utf8'), before)
+})
+
+test('a layering refusal tells the caller what to do next', async () => {
+  // The refusal used to be a bare code: the model knew the write failed but not
+  // that the decision belongs to a person in the panel.
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '# Old\n\n## Notes\n- existing\n', 'utf8')
+
+  const result = await s.store.append({ target: 'project-memory', section: 'Core Memory', text: 'new' }, s.probe)
+  assert.equal(result.code, 'layering_confirmation_required')
+  assert.equal(typeof result.hint, 'string')
+  assert.ok(result.hint.length > 0, 'the refusal carries a hint')
+  assert.match(result.hint, /panel|confirm/i, 'the hint names where the decision happens')
+  assert.doesNotMatch(result.hint, /shell|terminal|command line|write the file yourself/i, 'and does not suggest a bypass')
+})
+
 test('an empty legacy file is bootstrapped by an ordinary first append', async () => {
   const s = setup({ locale: 'zh' })
   const file = join(s.memoryDir, 'MEMORY.md')

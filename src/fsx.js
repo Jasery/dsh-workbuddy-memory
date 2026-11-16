@@ -206,6 +206,33 @@ function utf8Length(codePoint) {
 }
 
 /**
+ * Cut text to at most `maxUnits` UTF-16 code units, never splitting a surrogate
+ * pair.
+ *
+ * This is the unit a JavaScript string's `.length` reports and the unit every
+ * injection limit is declared in, so it is the only unit that can be compared
+ * against a limit directly. `truncateChars` counts code points — one emoji is
+ * one character but two units — which is the right unit for "characters of
+ * text" and the wrong one for "fits in the block".
+ *
+ * A cut that lands between the halves of a surrogate pair backs off one unit:
+ * the low surrogate is dropped rather than kept alone, because a lone surrogate
+ * renders as U+FFFD and poisons everything the model reads after it.
+ *
+ * @param {string} text
+ * @param {number} maxUnits
+ * @returns {string}
+ */
+export function truncateUtf16(text, maxUnits) {
+  if (typeof text !== 'string' || !(maxUnits > 0)) return ''
+  if (text.length <= maxUnits) return text
+  let end = Math.floor(maxUnits)
+  const last = text.charCodeAt(end - 1)
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1
+  return text.slice(0, end)
+}
+
+/**
  * Cut text to at most `maxChars` code points.
  *
  * Limits are stated in characters, not bytes, so a Chinese note is not cut

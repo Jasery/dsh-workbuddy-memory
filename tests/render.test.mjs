@@ -115,9 +115,36 @@ test('legacy wrapper and truncation note stay inside a very small old limit', ()
   assert.ok(project.text.length <= 40, `legacy wrapper is ${project.text.length} chars`)
 })
 
+test('a legacy block never exceeds its own limit, measured in UTF-16 units', () => {
+  // The limit is stated in UTF-16 code units, but the body used to be cut by
+  // code point: an emoji counted as one and took two units, so the finished
+  // block was longer than the limit it claimed to obey.
+  const body = `## Notes\n${Array.from({ length: 2600 }, (_, index) => `- 😀${index}`).join('\n')}\n`
+  for (const limit of [40, 10000]) {
+    const { cfg, probe } = fixture({ project: body, config: { inject: { limits: { project: limit } } } })
+    const project = renderSections({ cfg, probe, t }).find((section) => section.name === 'workbuddy-memory:project')
+    assert.ok(project.text.length <= limit, `limit ${limit}: the block is ${project.text.length} UTF-16 units`)
+    assert.equal(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(project.text), false, 'no half surrogate pair at the cut')
+  }
+})
+
+test('a limit too small for the wrapper contributes no block at all', () => {
+  // Half a heading with no body reads like a truncated memory, not like a
+  // limit that is too small to say anything in.
+  for (const limit of [20, 24]) {
+    const layered = fixture({ project: '## Notes\n- one\n', config: { inject: { mode: 'layered', limits: { project: limit } } } })
+    const sections = renderSections({ cfg: layered.cfg, probe: layered.probe, t })
+    assert.equal(sections.some((section) => section.name === 'workbuddy-memory:project'), false, `limit ${limit} contributes nothing`)
+    assert.match(String(sections.states.project), /^legacy:/, 'the reason is still recorded')
+
+    const full = fixture({ project: '## Notes\n- one\n', config: { inject: { limits: { project: limit } } } })
+    assert.equal(names(renderSections({ cfg: full.cfg, probe: full.probe, t })).includes('workbuddy-memory:project'), false, `full mode at ${limit}`)
+  }
+})
+
 test('truncation never halves a surrogate pair', () => {
   const body = `## 偏好\n- ${'😀'.repeat(80)}\n`
-  const { cfg, probe } = fixture({ project: body, config: { inject: { limits: { project: 20 } } } })
+  const { cfg, probe } = fixture({ project: body, config: { inject: { limits: { project: 40 } } } })
   const project = renderSections({ cfg, probe, t }).find((section) => section.name === 'workbuddy-memory:project')
 
   // Every emoji still has its low surrogate: no lone \uD83D at the cut.
@@ -139,6 +166,61 @@ test('the home prefix is redacted, and can be turned off', () => {
   const plainProbe = probeEnvironment({ cfg: raw, cwd, detail: true })
   const project = renderSections({ cfg: raw, probe: plainProbe, t }).find((section) => section.name === 'workbuddy-memory:project')
   assert.equal(project.text.includes(home), true, 'sanitizePaths: false keeps the real path')
+})
+
+test('a core that does not fit says how many entries were left out, inside the budget', () => {
+  // Written-but-invisible is the symptom this product exists to remove: the
+  // model read seven entries and concluded the core was seven entries long.
+  const entries = Array.from({ length: 12 }, (_, index) => `- entry ${index} ${'核心偏好内容'.repeat(30)}`)
+  const { cfg, probe } = fixture({ project: `# Memory\n\n## 常驻记忆\n${entries.join('\n')}\n`, config: { inject: { mode: 'layered' } } })
+  const sections = renderSections({ cfg, probe, t })
+  const project = sections.find((section) => section.name === 'workbuddy-memory:project')
+  const budget = Math.floor(cfg.inject.coreBudget * 0.375)
+
+  assert.ok(project.text.length <= budget, `the core block is ${project.text.length} units against ${budget}`)
+  assert.match(project.text, /另有 \d+ 条核心条目超出预算/, 'the block says what did not fit')
+  const kept = (project.text.match(/^- entry /gm) ?? []).length
+  const named = Number(/另有 (\d+) 条/.exec(project.text)[1])
+  assert.equal(kept + named, 12, `every entry is either injected (${kept}) or counted (${named})`)
+  assert.match(String(sections.states.project), /core-over-budget/, 'the state names the overflow')
+})
+
+test('a full topic directory says there are more topics, inside the budget', () => {
+  const topics = Array.from({ length: 40 }, (_, index) => `## 主题${index} ${'很长的主题名称'.repeat(4)}\n- t\n`).join('\n')
+  const { cfg, probe } = fixture({ project: `# Memory\n\n## 常驻记忆\n- core\n\n${topics}`, config: { inject: { mode: 'layered' } } })
+  const sections = renderSections({ cfg, probe, t })
+  const directory = sections.find((section) => section.name === 'workbuddy-memory:profile')
+  const budget = Math.floor(cfg.inject.coreBudget * 0.125)
+
+  assert.ok(directory.text.length <= budget, `the directory is ${directory.text.length} units against ${budget}`)
+  assert.match(directory.text, /还有更多主题/, 'the directory says the list is partial')
+  assert.match(String(sections.states.directory), /^directory-truncated\(\d+\)$/, 'the state names the shortfall')
+})
+
+test('the topic directory is sanitized like every other block', () => {
+  const { home, cwd, cfg } = fixture({ config: { inject: { mode: 'layered' } } })
+  writeFileSync(join(cwd, '.workbuddy', 'memory', 'MEMORY.md'), `# Memory\n\n## 常驻记忆\n- core\n\n## ${join(home, 'bin')} 工具链\n- t\n`, 'utf8')
+  const probe = probeEnvironment({ cfg, cwd, detail: true })
+  const directory = renderSections({ cfg, probe, t }).find((section) => section.name === 'workbuddy-memory:profile')
+  assert.ok(directory)
+  assert.equal(directory.text.includes(home), false, 'the home prefix must not survive in a topic heading')
+  assert.match(directory.text, /~/)
+})
+
+test('the overflow notice is English in an English session and stays in budget', () => {
+  // The notice is part of the block, so it is measured like one: two budgets on
+  // either side of a line boundary must both stay inside the cap, and the
+  // wording has to follow the locale instead of leaking the other language.
+  const en = createTranslator('en')
+  const entries = Array.from({ length: 30 }, (_, index) => `- ${'long preference text '.repeat(6)}${index}`)
+  for (const coreBudget of [4000, 4200]) {
+    const { cfg, probe } = fixture({ project: `# Memory\n\n## Core Memory\n${entries.join('\n')}\n`, config: { inject: { mode: 'layered', coreBudget } } })
+    const project = renderSections({ cfg, probe, t: en }).find((section) => section.name === 'workbuddy-memory:project')
+    const budget = Math.floor(coreBudget * 0.375)
+    assert.ok(project.text.length <= budget, `coreBudget ${coreBudget}: ${project.text.length} > ${budget}`)
+    assert.match(project.text, /more core entries did not fit/, 'the notice is present and in English')
+    assert.doesNotMatch(project.text, /另有/, 'no Chinese leaks into an English block')
+  }
 })
 
 test('redact only touches the home prefix and both separators', () => {
@@ -286,8 +368,12 @@ test('layered mode injects complete core entries within the per-source budget an
   const sections = renderSections({ cfg, probe, t })
   const project = sections.find((item) => item.name === 'workbuddy-memory:project')
   assert.ok(project.text.length <= 1500)
-  assert.doesNotMatch(project.text, /😀{2,}$/u, 'oversized entry is omitted whole')
-  assert.match(project.text, /short core/)
+  assert.doesNotMatch(project.text, /😀/u, 'an oversized first entry is not half-injected')
+  // The core is a file prefix, so the scan stops at the first entry that does
+  // not fit: a skipped entry would make the injected set a discontinuous subset
+  // and the model would read "the first one was deleted".
+  assert.doesNotMatch(project.text, /short core/, 'a later entry is not pulled in past the gap')
+  assert.match(project.text, /另有 2 条核心条目超出预算/, 'and the block says two entries stayed out')
   const user = sections.find((item) => item.name === 'workbuddy-memory:user')
   const rules = sections.find((item) => item.name === 'workbuddy-memory:rules')
   const directory = sections.find((item) => item.name === 'workbuddy-memory:profile')

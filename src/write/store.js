@@ -44,6 +44,15 @@ export const TARGETS = ['project-memory', 'project-daily', 'user-memory']
 /** Actions the panel may ask for. Anything not here is refused before it runs. */
 export const ACTIONS = ['add', 'edit', 'remove', 'replace-section', 'replace-document', 'remove-section', 'prune', 'restore']
 
+/**
+ * The spellings that name the always-on core section, in either language.
+ *
+ * A file written under one locale may be edited under the other, and the
+ * injected prompt always shows the active locale's heading, so both spellings
+ * have to reach the same section.
+ */
+const CORE_ALIAS = /^(常驻记忆|core memory)$/i
+
 /** The ledger is append-only and read per write; rotate it at this size. */
 const LEDGER_ROTATE_BYTES = 2 * 1024 * 1024
 
@@ -115,6 +124,50 @@ function holdsMemoryContent(text) {
       const body = line.trim()
       return body !== '' && !/^#{1,6}(\s|$)/.test(body)
     })
+}
+
+/**
+ * Normalize a caller's core-section name to the heading the file actually uses.
+ *
+ * The injected prompt shows the core heading localized (`## 常驻记忆` in a zh
+ * locale, `## Core Memory` in an en one), while the file keeps whatever spelling
+ * it was written with. A model that copies the heading it just read must land on
+ * the real section, not on `no_section`.
+ *
+ * Only a layered file has a core to point at, so anything else keeps the
+ * caller's spelling: the alias must never invent a section, and `no_section` is
+ * the answer the caller needs there. `fallback` covers the empty-document case,
+ * where there is no heading to resolve and the caller is about to create one.
+ *
+ * @param {string} text - the document as it stands.
+ * @param {string} section - the section name the caller passed.
+ * @param {string} fallback - the core heading for this locale.
+ * @returns {string} the name to resolve against `text`.
+ */
+function resolveCoreAlias(text, section, fallback) {
+  if (!CORE_ALIAS.test(section)) return section
+  if (!String(text ?? '').trim()) return fallback
+  const parsed = analyzeMemory(text)
+  return parsed.mode === 'layered' && parsed.coreHeading ? parsed.coreHeading : section
+}
+
+/**
+ * The core heading for the configured locale.
+ *
+ * The same string the injected prompt shows, so a caller that copies the heading
+ * it read in the prompt names the section this file will get on a first write.
+ *
+ * @param {object} cfg - normalized config.
+ * @returns {string}
+ */
+function coreHeadingFor(cfg) {
+  return resolveLanguage(cfg.locale) === 'zh' ? '常驻记忆' : 'Core Memory'
+}
+
+/** The empty-document template, so the first write creates the same shape in both languages. */
+function initialTemplate(cfg) {
+  const language = resolveLanguage(cfg.locale)
+  return language === 'zh' ? '# 记忆\n\n## 常驻记忆\n\n' : '# Memory\n\n## Core Memory\n\n'
 }
 
 export function resolveTarget(target, probe, date) {
@@ -382,7 +435,14 @@ export function createStore({ cfg, stateDir, onCommit }) {
         analyzeMemory(afterText).mode === 'layered' &&
         holdsMemoryContent(current.text)
       if (current.exists && capturesLegacyContent) {
-        return fail('layering_confirmation_required', { path, revision: before })
+        return fail('layering_confirmation_required', {
+          path,
+          revision: before,
+          hint:
+            'this file holds existing entries and the write would move them under the always-on core section. ' +
+            'The split is the user\'s decision: ask them to confirm the core/topic split in the memory panel, ' +
+            'which then migrates the file, or to save it from the panel\'s full-text editor.',
+        })
       }
       const afterRevision = contentRevision(afterText)
       const extra = pickExtra(output)
@@ -571,7 +631,8 @@ export function createStore({ cfg, stateDir, onCommit }) {
         expectedRevision: input.expectedRevision ? String(input.expectedRevision) : null,
       },
       transform: (current) => {
-        const result = editEntryAt(current, input.section, input.line, {
+        const section = resolveCoreAlias(current, String(input.section ?? ''), coreHeadingFor(cfg))
+        const result = editEntryAt(current, section, input.line, {
           replacement: input.replacement,
           mode: input.mode ?? 'replace',
         })
@@ -615,7 +676,8 @@ export function createStore({ cfg, stateDir, onCommit }) {
         expectedRevision: input.expectedRevision ? String(input.expectedRevision) : null,
       },
       transform: (current) => {
-        const result = replaceSectionBody(current, String(input.section ?? ''), String(input.body ?? ''))
+        const section = resolveCoreAlias(current, String(input.section ?? ''), coreHeadingFor(cfg))
+        const result = replaceSectionBody(current, section, String(input.body ?? ''))
         if (!result.ok) return { text: current, replaced: 0, reason: result.reason, issues: result.issues }
         return { text: result.text, replaced: 1, entries: result.entries }
       },
@@ -680,7 +742,8 @@ export function createStore({ cfg, stateDir, onCommit }) {
         expectedRevision: input.expectedRevision ? String(input.expectedRevision) : null,
       },
       transform: (current) => {
-        const result = removeSection(current, String(input.section ?? ''))
+        const section = resolveCoreAlias(current, String(input.section ?? ''), coreHeadingFor(cfg))
+        const result = removeSection(current, section)
         if (!result.ok) return { text: current, replaced: 0, reason: result.reason }
         return { text: result.text, replaced: result.removed, removed: result.removed }
       },
@@ -1299,14 +1362,10 @@ export function createStore({ cfg, stateDir, onCommit }) {
         expectedRevision: input.expectedRevision ? String(input.expectedRevision) : null,
       },
       transform: (current) => {
-        let section = input.section ? String(input.section).trim() : DEFAULT_SECTION
-        const language = resolveLanguage(cfg.locale)
-        const coreHeading = language === 'zh' ? '常驻记忆' : 'Core Memory'
-        const initial = current || (language === 'zh' ? '# 记忆\n\n## 常驻记忆\n\n' : '# Memory\n\n## Core Memory\n\n')
-        if (/^(常驻记忆|core memory)$/i.test(section)) {
-          const parsed = analyzeMemory(current)
-          if (!current || parsed.mode === 'layered') section = parsed.coreHeading ?? coreHeading
-        }
+        const requested = input.section ? String(input.section).trim() : DEFAULT_SECTION
+        const coreHeading = coreHeadingFor(cfg)
+        const initial = current || initialTemplate(cfg)
+        const section = resolveCoreAlias(current, requested, coreHeading)
         const result = appendToSection(initial, section, text)
         if (!result.ok) return { text: current, replaced: 0, reason: result.reason, hits: result.lines ?? [] }
         return { text: result.text, replaced: 1, created: !current || result.created, section }
@@ -1497,7 +1556,8 @@ export function createStore({ cfg, stateDir, onCommit }) {
         expectedRevision: input.expectedRevision ? String(input.expectedRevision) : null,
       },
       transform: (current) => {
-        const result = editEntry(current, input.section, input.match, {
+        const section = resolveCoreAlias(current, String(input.section ?? ''), coreHeadingFor(cfg))
+        const result = editEntry(current, section, input.match, {
           replacement: input.replacement,
           mode: input.mode ?? 'replace',
         })
