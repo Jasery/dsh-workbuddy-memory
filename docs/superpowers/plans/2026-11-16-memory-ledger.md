@@ -1,6 +1,7 @@
 # 实施协调记录 · 2026-11-16
 
-- Baseline: 59133e2, feature/memory-optimizations; user explicitly authorized implementation with CodeBuddy workers and lead acceptance.
+- Baseline: 59133e2, feature/memory-optimizations; user initially authorized CodeBuddy implementation; latest direct instruction switches all remaining work to lead-launched native subagents, lead acceptance unchanged.
+- Ruling: 按用户最新指令，后续实现和返修均用内置subagent，可多轮send_message接续，不再CodeBuddy；已完成提交正常验收不重做 — 避免后端等待失败/重复工作 — 代价是执行路线变更，不改变产品范围。
 - Ruling: 用户“好…开工”承接已交付设计与推荐五工具目标，按推荐标题与4000可配置预算执行；不再重复要求整份计划批准 — 都是仓库内可逆实现 — 若理解偏差则可回退，不涉及发布。
 - Ruling: 代码实现使用 CodeBuddy，因该backend无follow-up，审查修复使用新的CodeBuddy窄任务 — 遵守用户指定工具 — 成本是新上下文但避免子代理交互不可达。
 - Ruling: 所有写任务串行，独立审查可与无重叠准备工作并行 — 共享仓库避免覆盖 — 验收不能依赖实现者自报。
@@ -12,7 +13,16 @@
 - Task1 review-config-read: Spec/Quality REQUEST_CHANGES; 2 Important (tool ignores capped actual read; helper unbounded when stat races),1 Minor (low-surrogate requested cursor silently moves). No Critical; lifecycle source directions pass. Report task-1-review-report.md.
 - Task1 fix round1/5: CodeBuddy fix-read-races committed d01d544; report §7 RED49pass/5fail→GREEN54focused/262full. Lead fresh5 race/cursor tests passed; diffcheck passed. Independent rereview-read-races:原2Important与Minor均ADDRESSED；新增Important：无maxBytes初长度快照read可能漏已追加尾部，在CAS本次重读中假成功（20→50B），不能放行。
 - Task1 fix round2/5: CodeBuddy fix-unbounded-snapshot committed d71bff4，RED42pass/1fail→GREEN97focused/263full。lead fresh2 external-CAS/current-revision测试通过。rereview-snapshot-fix ADDRESSED，独立2/2通过，未见fix新增breakage，Task1 gate放行。日档append caller changed检查交Task2。
-- Task 2: ready to dispatch after plan commit; Task3..5 wait on preceding gate.
+- Task 1 accepted at d71bff4; plan/ledger committed35d55ea. Team task-1 completed. Push35d55ea succeeded with per-call `git -c http.proxy=http://127.0.0.1:7890 -c lfs.locksverify=false push origin feature/memory-optimizations`; job pwsh-f02f6addfb9443bd collected exit0, upstream0/0. Earlier jobs pwsh-ada9ef72a1dd4cec and pwsh-c8c0df7634c34f35 collected exit1: LFS locks verification TLS timeout even process proxy. Verified no tracked LFS/no.gitattributes; only this push skipped inapplicable lock-server verification, no hook/global config mutation.
+- Task 2 BASE35d55ea: CodeBuddy implement-write-chain external57438808-45fe-4e05-b94c-2ac1a6bf7ec4 backend failed at final reply, but committedbc8147c+task-2-report.md already written; do NOT repeat implementation. Worker109focused/284full passed (tools/e2eprune过渡明确plan_required，Task4需恢复成功集成)。lead fresh21receipts/write-integrity passed. Independentreview-write-chain overtask-2-review.diff running. Task3..5 wait on gate.
+- Task2 lead deterministic repro: stale24h partial/outcome_unknown receipts are expired/deleted byread; applying retained. EXPIRABLE/PENDING违背未决保留/容量。reviewer进一步3focused probes确认：回执更新EACCES仍ok，合法删除回原文后旧ID重试复活已删条目；99pending双进程并发进入达101；旧过期清理能删另进程新committed回执导致同ID重复写。等待收束报告后窄修复，不开下游。
+- Ruling: 回执applying重启恢复只在完整当前hash匹配after时可认定已提交；即使匹配before也不能证明从未执行（可能执行后合法回滚），保守outcome_unknown，不盲目重做 — 防止ABA复活旧意图 — 代价是确实未开始的中断写需用户核实后用新ID重试。
+- Ruling: 关键回执read/expiry/容量admission/update需全局共享维护锁，允许operation→receipt-global→archive→sorted-file顺序并在稀疏记忆写中串行短事务 — 防跨ID清理和容量竞争 — 代价是无关文件同时写吞吐受限，但优先简单可靠不另建数据库。
+- Task2 fix round1/5: CodeBuddy fix-receipt-reliability external e02c3d23-2425-4238-a124-d8b4923bdd40 backend error at finalreply but committed265982b and appended task-2-report.md§round1. Worker116focused/291full, lead fresh7fix regressions allpassed. Native rereview-write-receipts running scoped bc8147c..265982b. No rerun of implementation.
+- Task2 review-write-chain final REQUEST_CHANGES 0Critical/3Important/0Minor. Report task-2-review-report.md:未决expiry/全局admission+stalesweep/忽略update失败。Reviewer3focused探针夹具逐一核验清理，脚本保留有finally清理。
+- Task2 fixround2 nativefix-receipt-schema committed8a4a0c6：RED28/2fail→GREEN30focused/293full；lead fresh4schema/expiry tests通过。rereview-write-receipts唯一I1 ADDRESSED，未见fix新breakage，Task2 gate放行。task-2 completed。
+- Task3 BASE8a4a0c6：native implement-layered-memory dispatched，brief task-3-brief.md；lead owns task-3。Task4/5仍wait前序验收。
+- User scope change: 本轮取消CI，Task5改中英文档/本地回归与验收，不新增.github/workflows或远端Node/OS矩阵；不以未运行CI算交付缺陷。内置子代理路线已写计划/brief/board，禁止再派CodeBuddy。
 - Ruling: Task2区分普通append与破坏改写的backupKeep:0语义；前者尊重显式关闭备份，后者需可恢复点才执行；prune apply要求operationId — 避免为安全修复额外禁止低影响追加并保证partial有恢复身份 — 代价是直接调用归档apply不带ID将明确拒绝。
 - Ruling: Task2预审收敛归档partial恢复契约：首次apply持久化准确源/目标与进度；重试先查回执，不依赖过期内存plan；操作锁→归档锁→排序文件锁 — 防重启或部分失败重复移动 — 代价是一个有界恢复状态文件而非无状态rename。
 - Ruling: 回执终态24h/2000条、未决100条、单条1MiB、ID200字符、归档1000文件上限，容量满先拒绝不动源；通知锁外且partial已移动项也发 — 保持资源有界与状态可见 — 代价是超大管理任务需用户分批，非无限自动化。

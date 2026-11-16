@@ -21,7 +21,7 @@
 - 普通edit/remove强制CAS；append可选CAS；批量管理只在可信UI以预览基线执行。单一路径、共享文件锁、备份防碰撞、持久有界回执与操作指纹；lossless JSON。
 - 无额外LLM调用；主模型生成草案，由用户复制正文和来源baseRevision到面板预览后保存；旧基线/截断源拒绝，不能删revision强盖。
 - 暂不升级package版本或改变DSH下限。最低宿主版本/实际模型费用未测不能写通过；不得以代码字符数等同token或费用。
-- CodeBuddy实现任务串行，不并行写同仓库；每任务先失败测试再修、相关测试后全套一次、限定文件提交；报告写`.workbuddy/tmp/implementation-20261116/task-N-report.md`（忽略目录）。不能派生子代理，不能push，不能install到profile。
+- 用户后续明确调整：剩余实现和返修由lead直接启动内置subagent，不再调用CodeBuddy；写任务仍串行，不并行写同仓库。每任务先失败测试再修、相关测试后全套一次、限定文件提交；报告写`.workbuddy/tmp/implementation-20261116/task-N-report.md`（忽略目录）。实现者不能派生子代理、push、install到profile。已完成CodeBuddy产物保留按同标准验收。
 
 ## Review Focus
 
@@ -29,7 +29,7 @@
 2. 同ID两个进程排队／旧CAS／回执失败／备份同毫秒——Task2在同一目标和全局操作号范围验证，不靠顺序重试。
 3. 旧文件普通写入暗中生成核心标题、超限emoji和目录、无效首写创建垃圾——Task3以真实临时文件测试拒绝和无副作用。
 4. UI文件/项目切换后的异步预览、选错备份与过期baseRevision——Task4绑定目标身份与版本，按钮状态和路由端都验证。
-5. UTC与未来日期、Node20最小支持、pack漏敏感文件、无UI回退——Task5固定时钟与CI矩阵；缺远端执行证据明确未知。
+5. UTC与未来日期、版本支持、pack漏敏感文件、无UI回退——Task5固定时钟与本地回归；用户取消CI矩阵，未运行的远端平台明确未知。
 
 ## File Structure & ownership
 
@@ -37,7 +37,7 @@ Task1: config.js/index.js/runtime-config.js(可新增)；fsx.js/tools/read.js/en
 Task2: write/store.js/fslock.js/receipts.js(新增)/archive.js(可新增)；store测试；定义后续onCommit和归档plan接口。
 Task3: layers.js(新增)/render.js/cache.js/inject.js/tools/status.js；store初始化与过渡检查、index通知接线；locale；测试。
 Task4: client.js/host/routes.js/tools/index.js/tools/write.js；新增client-management.js仅在现有导出方式可无依赖加载时；UI/route/tool测试与locale。
-Task5: .github/workflows/ci.yml；README中英、implementation-notes、CHANGELOG、package-lock必要版本一致（不升版本）；场景回归；审查脚本改为修后验证（不是删除暴露缺口的证据）。
+Task5: README中英、implementation-notes、CHANGELOG、package-lock必要版本一致（不升版本）；本地场景回归；审查脚本改为修后验证（不是删除暴露缺口的证据）。用户取消本轮CI，不新增.github/workflows或远端矩阵。
 
 ### Task 1: 配置真实生效与安全读取
 
@@ -49,12 +49,12 @@ Task5: .github/workflows/ci.yml；README中英、implementation-notes、CHANGELO
 - `readTextSafe(path,{maxBytes})`保留现有形状，真正有界读取；截断标识可靠。`readTool`新增`offset`按所选原文UTF16偏移、返回`offset/nextOffset/truncated`；代理对边界对齐；limit默认20000，上限200000。
 - 2MiB以上目标读取拒绝`too_large, revision:null, writable:false`，不发片段hash。只读`user-profile`目标不进入store.TARGETS写枚举，歧义拒绝；保留默认read参数兼容。
 
-- [ ] RED: schema.validate({readOnly:true, workbuddyHome:fixture,search:{enabled:false},inject:{limits:{user:3000}}})→apply实际工具拒写、路径不回退、搜索未注册；更新refs触发事件后权限/注册变；目录纯读无创建。
-- [ ] RED: UTF16码元分页含emoji拼接无损、section分页、offset不合法拒绝、2MiB+无伪revision、single profile uid正确。现有日期用本地构造或固定now，归档old/new相对日期，不给整个CI改TZ掩盖。
-- [ ] Run focused RED with exact failed output in report.
-- [ ] Implement above;注册时获取disposer并安全清理，当前ctx缺可选事件API测试仍可降级启动，不能假装热更新。
-- [ ] Run focused GREEN and full `node --test` once；UTC日期测试单跑通过；`git diff --check`。
-- [ ] Commit only owned paths `fix(config): 修复配置引用及读取边界`，report包括接口和测试，不push。
+- [x] RED: schema.validate({readOnly:true, workbuddyHome:fixture,search:{enabled:false},inject:{limits:{user:3000}}})→apply实际工具拒写、路径不回退、搜索未注册；更新refs触发事件后权限/注册变；目录纯读无创建。
+- [x] RED: UTF16码元分页含emoji拼接无损、section分页、offset不合法拒绝、2MiB+无伪revision、single profile uid正确。现有日期用本地构造或固定now，归档old/new相对日期，不给整个CI改TZ掩盖。
+- [x] Run focused RED with exact failed output in report.
+- [x] Implement above;注册时获取disposer并安全清理，当前ctx缺可选事件API测试仍可降级启动，不能假装热更新。
+- [x] Run focused GREEN and full `node --test` once；UTC日期测试单跑通过；`git diff --check`。
+- [x] Commit only owned paths `fix(config): 修复配置引用及读取边界`，report包括接口和测试，不push。
 
 ### Task 2: 写入正确性、回执与归档计划
 
@@ -68,11 +68,11 @@ Task5: .github/workflows/ci.yml；README中英、implementation-notes、CHANGELO
 - operationId绑定全局{canonical path(s),operation/mode,semantic request hash含原expectedRevision}，最长200字符；在operation锁→file锁里重查，same request committed duplicate回原结果；换目标/内容operation_mismatch。关键回执不受operationLog:false影响；终态24小时/最多2000条，未决最多100条，单回执最多1MiB、归档最多1000文件。达到上限先返回receipt_capacity且不动源，不淘汰未知记录；回执创建失败先拒绝。去重只在保留窗口内有效，未决不盲目重做。写前applying保存before/after hash，重启用当前hash判定提交或outcome_unknown；不许诺外部编辑原子CAS。读/纯预览不创建回执目录。
 - 备份名时间＋UUID/独占创建，不覆盖；已有原文的edit/remove/section/document/restore破坏改写在backupKeep:0时backup_required；普通append仍遵从显式backupKeep:0（包括已有文件追加），新文件首次append无需原文备份。备份启用但失败拒绝；prune按原文移动/确定目标恢复，不伪称普通备份。共享stateDir路径/动作锁不按会话分裂。prune apply必须有非空合法operationId（缺失operation_required），纯预览不要求。
 
-- [ ] RED: 同ID排队（独立store/独立进程）只一次提交；同ID换目标拒绝；restore replay duplicate；无CAS改写revision_required；同CAS一成一冲突；不同IDappend都落；operationLog:false仍去重、receipt失败无源变动。
-- [ ] RED: 同毫秒备份不覆盖；backupKeep0破坏写拒绝；prune缺plan拒绝、预览后文件变更拒绝、新文件不移动、持日期锁等待/拒绝、partial报告可见、重复apply幂等。
-- [ ] Run focused RED；implement集中store/小模块，避免再造不同UI写链。
-- [ ] Run focused GREEN；full suite允许旧prune callers因新接口暂红但必须报告并更新store/tools测试接口夹具，不能去掉安全检查让旧测试绿。Task4更新UI消费。
-- [ ] Commit `fix(store): 补齐版本门禁回执和归档计划`；report清楚下游接口与未决覆盖，不能说全套过若未过。
+- [x] RED: 同ID排队（独立store/独立进程）只一次提交；同ID换目标拒绝；restore replay duplicate；无CAS改写revision_required；同CAS一成一冲突；不同IDappend都落；operationLog:false仍去重、receipt失败无源变动。
+- [x] RED: 同毫秒备份不覆盖；backupKeep0破坏写拒绝；prune缺plan拒绝、预览后文件变更拒绝、新文件不移动、持日期锁等待/拒绝、partial报告可见、重复apply幂等。
+- [x] Run focused RED；implement集中store/小模块，避免再造不同UI写链。
+- [x] Run focused GREEN；full suite允许旧prune callers因新接口暂红但必须报告并更新store/tools测试接口夹具，不能去掉安全检查让旧测试绿。Task4更新UI消费。
+- [x] Commit `fix(store): 补齐版本门禁回执和归档计划`；report清楚下游接口与未决覆盖，不能说全套过若未过。
 
 ### Task 3: 默认分层、快照作用域与惰性首写
 
@@ -111,25 +111,25 @@ Task5: .github/workflows/ci.yml；README中英、implementation-notes、CHANGELO
 - [ ] Implement并run node --check src/client.js；focused GREEN＋full suite。
 - [ ] Commit `feat(ui): 承接记忆管理并精简模型工具`；report真实UI证据限制，不能把模拟测试说成浏览器验收。
 
-### Task 5: CI、使用说明与最终功能回归
+### Task 5: 使用说明与本地功能回归（CI 已由用户取消）
 
-**Files:** .github/workflows/ci.yml(new), README.md, README.zh.md, docs/implementation-notes.md, CHANGELOG.md(若有则读后改), tests相关；docs/2026-11-16-优化复审验证.mjs改为correct-behavior检查或明示历史不适用，不能继续让问题存在才通过。
+**Files:** README.md, README.zh.md, docs/implementation-notes.md, CHANGELOG.md(若有则读后改), tests相关；docs/2026-11-16-优化复审验证.mjs改为correct-behavior检查或明示历史不适用，不能继续让问题存在才通过。不得新增.github/workflows或其他CI文件。
 
 **Interfaces:**
-- CI Node20/24×ubuntu/windows；npm ci；coverage只Node24Ubuntu一次替代普通test；UTC及Asia/Shanghai日期场景与未来固定时间不依赖wall clock；permissions contents:read；不build/发布/Release/tag；package/lock根版本一致、npm pack --dry-run --json验证产物。
+- 仅本地验收：现有Node全套测试和一次coverage；UTC/Asia-Shanghai与未来固定时间场景不依赖wall clock；package/lock根版本一致、npm pack --dry-run --json验证产物。无CI/远端矩阵，不安装额外Node版本来宣称跨平台通过；Linux/Node20未跑如实写未验证。不build/发布/Release/tag。
 - README中英：无需WorkBuddy、原目录复用、读不创建首写创建、默认分层/全文回退、legacy待确认、五工具＋UI管理、无UI管理边界、backupKeep0约束、回执有界期限、外部非协作竞争窗口、当前验证宿主范围。
 - 配置37旧键+2新键清单→读取位置/生效时机/权限；不为了全量审计删有用旧键。新工具集合/模型文案长度用实际registerTools重新测，数字不当token。
 - O02日志保留具体冲突名与不覆盖别人的定义；说明不支持双引擎接管同文件，不加前缀。
 - 场景夹具至少覆盖核心可见/长尾可查/旧文件过渡/非相关文本稳定/不同项目隔离/管理恢复一条路径；无实际LLM费用实验不可给节省承诺。
 
 - [ ] Run focused cross-TZ tests RED/GREEN if newly修复；补pack/version检查，语义测试不镜像函数实现。
-- [ ] 完成README/维护文档和CI，所有事实来自最终代码；不更新发布版本。
-- [ ] Run full `node --test`、coverage、schema raw length、npm pack dry-run、git diff --check，报告实际平台结果，Linux/Node20远端未跑则未知。
-- [ ] Commit `ci(memory): 加入跨平台检查与分层工具文档`；report逐项对应O01-O11和新增精简覆盖/残余问题。
+- [ ] 完成README/维护文档，所有事实来自最终代码；不更新发布版本，不做CI。
+- [ ] Run full `node --test`、coverage、schema raw length、npm pack dry-run、git diff --check，报告实际本地平台结果，Linux/Node20未跑则未知。
+- [ ] Commit `docs(memory): 补齐分层工具说明与本地回归`；report逐项对应O01-O11，O08明确按用户要求本轮取消，不算未完成缺陷。
 
 ## Controller acceptance & reporting
 
-- 每任务BASE记录、CodeBuddy实现、主代理读diff和报告、独立任务审查（spec+quality）；有缺陷新派CodeBuddy窄修，不把实现者自评当验收。
+- 每任务BASE记录、内置subagent实现、主代理读diff和报告、独立任务审查（spec+quality）；有缺陷用内置subagent窄修，不把实现者自评当验收；不再调用CodeBuddy。
 - 全任务结束读final-review流程，做全分支审查与一次UI/UX审查；真实浏览器/当前profile验证需要能安全只读/隔离，不偷偷替换当前服务。未安装则最终明确代码已验收、live UI未覆盖。
 - 主代理新鲜跑全套、UTC、coverage、pack、语法、场景回归，按矩阵标出通过与未验证。最终交付`docs/YYYY-MM-DD-记忆插件优化完成报告.html`自包含HTML；附已实现/实测/残余边界与提交记录，present一次。
 - 每任务提交到功能分支；主代理最终push（代理http://127.0.0.1:7890）；不merge、不publish、不tag。
