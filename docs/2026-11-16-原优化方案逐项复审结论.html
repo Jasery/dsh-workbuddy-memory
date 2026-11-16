@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>原优化方案逐项复审与执行结论 · 2026-11-16</title>
+<style>
+:root{color-scheme:light dark;--bg:#f3f6fa;--paper:#fff;--tx:#19283c;--muted:#52657b;--line:#d4dfea;--accent:#08796d;--soft:#eaf7f3;--warn:#8b5100;--warnbg:#fff3db;--code:#edf2f7}@media(prefers-color-scheme:dark){:root{--bg:#0e1520;--paper:#152132;--tx:#e4edf7;--muted:#b0bfd2;--line:#34475e;--accent:#6cddc9;--soft:#153832;--warn:#ffd18b;--warnbg:#382c1c;--code:#1d2c40}}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.8 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}.wrap{max-width:1120px;margin:auto;padding:32px 22px 70px}header{padding-bottom:22px;border-bottom:2px solid var(--line)}h1{font-size:29px;line-height:1.45;margin:8px 0 14px}h2{font-size:23px;margin:0 0 15px}h3{font-size:18px;margin:24px 0 8px}p{max-width:76ch;margin:10px 0}a{color:var(--accent);text-underline-offset:3px}section{padding:25px;background:var(--paper);border:1px solid var(--line);border-radius:10px;margin:21px 0}.meta,.evidence{font-size:13px;color:var(--muted)}.note{background:var(--soft);padding:15px 18px;border-left:4px solid var(--accent);border-radius:6px;margin:15px 0}.warning{background:var(--warnbg);border-color:var(--warn)}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;font-size:14px;margin:14px 0}th,td{padding:10px 12px;border:1px solid var(--line);text-align:left;vertical-align:top}th{background:var(--code)}code{font:0.9em ui-monospace,Consolas,monospace;background:var(--code);padding:2px 4px;border-radius:3px}pre{padding:14px;background:var(--code);white-space:pre-wrap;overflow:auto;line-height:1.6}nav{display:flex;gap:8px;flex-wrap:wrap;margin:20px 0}nav a{border:1px solid var(--line);border-radius:5px;padding:4px 9px;text-decoration:none;font-size:14px}ul,ol{padding-left:24px}li{margin:6px 0}details{border:1px solid var(--line);padding:12px 15px;border-radius:7px;margin:12px 0}summary{cursor:pointer;font-weight:600}footer{font-size:13px;color:var(--muted);margin-top:26px}@media(max-width:650px){.wrap{padding:16px 12px 40px}section{padding:18px 14px}h1{font-size:24px}table{min-width:650px}}@media print{body{background:#fff;color:#111}section{break-inside:avoid;border-color:#aaa}nav{display:none}th,code,pre{background:#eee}.note{background:#eee}a{color:#155780}}
+</style></head>
+<body><div class="wrap">
+<header><div class="meta">2026-11-16 · 工程复审结论 · 基线 2cb52ca / 产品代码仍为 0.1.4 · 不代表已实施</div>
+<h1>原 11 项优化，哪些做、哪些不做、怎么做</h1>
+<p>目标仍是轻量、可控、可恢复的通用记忆插件。此次不以“竞品有这个功能”作为理由，而以真实缺口、已有能力与实现成本逐项决定。</p>
+<p class="meta">复审对象：<a href="2026-11-13-dsh-workbuddy-memory-优化方案.html">原优化方案 v1.3</a>。产品方向依据：<a href="2026-11-16-通用记忆插件-分层设计.html">已讨论的默认分层设计</a>。本稿明确工程建议，尚未获得用户的实施批准；不修改产品、不发版。</p></header>
+<nav aria-label="章节导航"><a href="#plain">一分钟读懂</a><a href="#decision">取舍总表</a><a href="#evidence">验证结果</a><a href="#o01">O-01</a><a href="#o02">O-02</a><a href="#o03">O-03</a><a href="#o04">O-04</a><a href="#o05">O-05</a><a href="#o06">O-06</a><a href="#o07">O-07</a><a href="#o08">O-08</a><a href="#o09">O-09</a><a href="#o10">O-10</a><a href="#o11">O-11</a><a href="#order">顺序与边界</a></nav>
+<section id="plain"><h2>一分钟读懂</h2>
+<p>插件像一本共用记事本。原方案想把它的按钮、裁剪和安全保护补齐，这个方向对；但有些问题原本已经测过，有些修法只补了外壳，有些功能加完也解决不了真正的问题。</p>
+<div class="note"><strong>这轮不再把所有项目都说成“保留、以后评估”。</strong>配置、写链、读取、会话快照、诊断、测试和 CI 要做；工具前缀、静默预设名单、多目录自动发现、独立重整命令与固定七天冷却，本轮明确不做。需要的整理能力并入已有读写与真实确认流程。</div>
+<p>最先修的不是多加一个功能，而是让已有开关真的生效、相同写请求不会重复、备份不会撞名、归档不会越过预览。随后再接默认分层，减少长期携带的无关内容。</p>
+</section>
+<section id="decision"><h2>逐项决定</h2><div class="scroll"><table><thead><tr><th>编号</th><th>本轮决定</th><th>做什么</th><th>明确不做什么</th></tr></thead><tbody>
+<tr><td><a href="#o01">O-01</a></td><td>改后做</td><td>核心优先、完整条目、有界目录与补读；修读取分页、截断标识和 revision。</td><td>不把尾截当“最新可见”保证；不加 head/tail 开关；结构行不免费超预算。</td></tr>
+<tr><td><a href="#o02">O-02</a></td><td>做风险说明与冲突诊断</td><td>说明同层重名失败、双写与双注入；异常日志指出冲突工具与插件。</td><td>本轮不加可选工具前缀，不承诺两个记忆引擎安全共存。</td></tr>
+<tr><td><a href="#o03">O-03</a></td><td>改后做，优先</td><td>实际入口完整分类；CAS、备份、锁内去重、绑定预览集合与真实批准。</td><td>不把模型回传 token 当人类批准，不给每次普通追加增加确认往返。</td></tr>
+<tr><td><a href="#o04">O-04</a></td><td>做，优先于功能开发</td><td>修 volatile 包装值与更新；核对 37 个键及权限矩阵；修零预算与单候选 uid。</td><td>不凭“Host 搜不到读取点”删键，不再增加静默名单等开关。</td></tr>
+<tr><td><a href="#o05">O-05</a></td><td>拆分后做快照隔离</td><td>会话快照、有效 cwd、写后通知与装配诊断隔离。</td><td>不把全局项目总览改成会话表；本轮不做静默预设名单。</td></tr>
+<tr><td><a href="#o06">O-06</a></td><td>做文本稳定、度量与有界缓存</td><td>去实时数字、共享受限文件快照、实际装配统计、按路由测成本。</td><td>本轮不新增并默认按轮冻结，不做全文迁 context 或历史投影。</td></tr>
+<tr><td><a href="#o07">O-07</a></td><td>补缺口后做，和修复同步</td><td>保留已有 CAS／幂等／并发测试，补真正失效的排队重放等边界。</td><td>不以测试名字判断价值，不重复已覆盖的功能，不把并发一律测成一成一败。</td></tr>
+<tr><td><a href="#o08">O-08</a></td><td>做，先修环境依赖</td><td>锁定依赖安装、跨平台测试、一次覆盖率、版本及包清单检查。</td><td>不跑不存在的 build、不创建 Release draft、不自动发布、不塞市场 PR 门禁。</td></tr>
+<tr><td><a href="#o09">O-09</a></td><td>原新增工具不做；整理目标并入 O-03</td><td>主模型预览，用户确认，project/user 共用一次提交与恢复链。</td><td>不加新重整工具、七天硬冷却、正文时间戳、project-only 限制。</td></tr>
+<tr><td><a href="#o10">O-10</a></td><td>原自动候选方案不做</td><td>保留现有显式路径，补 .codebuddy 配置说明。</td><td>不扫描猜目录、不因新目录出现就切真源、不双写。</td></tr>
+<tr><td><a href="#o11">O-11</a></td><td>做</td><td>中英定位、默认行为、兼容状态、成本和宿主契约清单。</td><td>不新增未验证竞品结论，不宣传零成本或外部编辑绝对安全。</td></tr>
+</tbody></table></div></section>
+<section id="evidence"><h2>审查实际做了什么</h2>
+<p>读取原方案全部条目并追踪真实注入、配置、工具、面板与存储入口；两名独立审查者分别检查写入链与工程配置。以下关键缺口均由主审使用临时目录独立再现，未接触真实记忆。</p>
+<div class="scroll"><table><thead><tr><th>验证</th><th>实际结果</th><th>能证明什么／不能证明什么</th></tr></thead><tbody>
+<tr><td>现有全套测试与覆盖率</td><td>Node 24.14.0 / Windows：239 通过、0 失败。行 87.17%，分支 77.87%，函数 71.83%。</td><td>给出当前基线；不代表未覆盖的配置解析、队列重试等一定正确。catalog 函数覆盖仅 7.69%，整档替换 167–185 行未覆盖。</td></tr>
+<tr><td><a href="2026-11-16-优化复审验证.mjs">隔离验证脚本</a></td><td>19 项当前行为断言：17 项问题／限制，另 2 项验证现有 CAS 与显式目录选择正常。</td><td>问题断言证明缺口确实存在，不是产品修复测试；修复后需相应改成正确行为回归。不能把 19 项都叫作新问题。</td></tr>
+<tr><td>UTC 日期测试</td><td>只将子进程 TZ 设为 UTC，现有指定测试 0 通过、1 失败。</td><td>说明 CI 不能照搬到 UTC 环境就声称可用；这不是产品日期函数已被证明错误。</td></tr>
+<tr><td>npm pack --dry-run</td><td>包清单 28 个条目；src、locale、README 在包内，docs 不在包内；未生成或发布包。</td><td>仓库报告与验证脚本不会混入用户安装包；包无 build 脚本。</td></tr>
+<tr><td>当前运行宿主 Inspect＋安装源</td><td>DSH 0.2.2-rc.3：同层工具重名拒绝；volatile 为引用且有更新事件；complete 系统段遮蔽其他段；in-history 能力由路由决定。</td><td>不是旧最低版本及所有提供方兼容认证；未安装第二个记忆插件做同装实测，未发生额外模型费用实验。</td></tr>
+</tbody></table></div>
+<p>本稿的“确认”指证据和工程建议已收敛；不把未运行的费用对照或最低版本测试写成已通过。</p></section>
+<section id="o01"><h2>O-01 · 改后做：把裁剪改成可靠的选择与补读</h2>
+<h3>原判断哪里不对</h3><p>已有章节的追加发生在章节末尾，而非文件末尾。实测新条目处于全文偏移 37，文件 864 字，尾部 120 字没有它。尾截不能保证新内容可见；“最新”也不等于“必须遵守”。</p>
+<p>预算单位也没闭合：配置 20，含 emoji 的真实注入为 75 个 UTF-16 码元；现有 truncateChars 按码点截、其余代码常用 string.length，再加标题和说明超出。工具全文分支 slice 还会留下半个代理对。超过 2 MiB 的工具读取会按截过的片段算 revision，未暴露该字节截断，后续 CAS 将对不上完整文件。</p>
+<h3>具体怎么做</h3><ol>
+<li>分层路径按已明确核心选择，先预留规则、标题、告警与目录，再保留完整条目；所有实际输出算入同一预算单位。沿用 JS string.length 作为明确的 UTF-16 码元单位，不能叫 token 或汉字数。</li>
+<li>全文／待划分兼容路径保留从头开始的确定性读取，但至少按完整条目或完整文本行裁剪，标明仍有后文；不新增注入裁剪方向开关。普通读取默认顺序不突然翻转。</li>
+<li>给 memory_read 增加可选 offset（相对所选全文或章节的码元偏移）与 nextOffset，保持默认调用兼容；Unicode 边界对齐。全文与章节都返回明确 truncated、实际区间；给目录保留 sectionsOnly。</li>
+<li>revision 必须对应完整原文。超出安全读取上限时返回 too_large、revision:null、writable:false，不能把半份原文的 hash 当成整份。保守拒绝整档改写；读取片段也不能冒充完整编辑依据。</li>
+<li>规则使用完整精简模板，低于最小模板预算则明确拒绝该配置或不注入并告警，不用静默裁剪让安全提示消失。零预算直接关闭块。</li>
+</ol><p><strong>不做：</strong>head/tail 额外设置、按最近写入自动提权、HTML 注释全部免费保留。</p>
+<p><strong>验收：</strong>前部章节新增、长条目、emoji、0 预算、目录溢出、分页拼接、超字节上限均有断言；配置额度等于实际贡献硬上限，读取不能返回伪完整 revision。</p>
+<p class="evidence">证据：<a href="../src/markdown.js#L264-L302">章节追加</a>、<a href="../src/fsx.js#L34-L48">字节裁剪</a>、<a href="../src/fsx.js#L100-L112">码点计数</a>、<a href="../src/render.js#L139-L147">输出包装</a>、<a href="../src/tools/read.js#L49-L103">读取与 revision</a>。验证脚本 O01 系列。</p></section>
+<section id="o02"><h2>O-02 · 做共存说明和冲突诊断，本轮不做前缀</h2>
+<p>原方案把覆盖、报错、错参并列为当前宿主后果，实际当前同一层重名明确抛错，带作用域注册才允许遮蔽。前缀只绕过命名，不能解决同文件双写、双注入和用户真源分裂；还要修改工具描述、规则、守卫提示、面板、测试，收益不足以列为首批 P0。</p>
+<p><strong>做法：</strong>默认保留现有工具名；README 明确同一 profile 不组合两套接管同一记忆的引擎，列出风险；注册失败日志必须标出具体冲突名，不能笼统“工具注册失败”。宿主已有错误即保留原因，不吞掉成成功状态。</p>
+<p><strong>明确不做：</strong>compat.toolPrefix、多名字别名、为共存拆成第二套写链、未经同装测试的兼容承诺。将来若用户明确需要同装，先隔离 profile/存储职责并实测，再立独立兼容任务；不是现在挂个开关。</p>
+<p><strong>验收：</strong>模拟同层 memory_read 重名，给出清楚失败且不替换别人的工具；默认工具名保持；文档不声称前缀能实现安全共存。</p>
+<p class="evidence">证据：<a href="../src/tools/index.js#L120-L132">工具注册</a>、<a href="../src/index.js#L90-L100">异常处理</a>；Host tools.register Inspect 与当前宿主 dsh-tools/lib/index.js:385。</p></section>
+<section id="o03"><h2>O-03 · 改后做：先补真实写链，再做准确的批准绑定</h2>
+<h3>先纠正范围与安全承诺</h3><p>模型没有 replaceDocument／removeSection 独立工具，但能 memory_edit(remove)、memory_replace_section（甚至清空）、memory_restore 和 prune。原动作覆盖漏了这些。面板单条删除也并非每次弹确认。裸 write/edit/apply_patch 已有守卫，但不拦任意 shell，这一层是防误操作，不是执行环境安全边界。</p>
+<div class="scroll"><table><thead><tr><th>类别</th><th>最小要求</th><th>确认策略建议</th></tr></thead><tbody>
+<tr><td>普通追加</td><td>共享文件锁、同请求去重、备份与写后通知；expectedRevision 仍可选，因为追加可合并当前内容。</td><td>不增加固定确认回合。</td></tr>
+<tr><td>修改／移除一个明确条目</td><td>强制 expectedRevision；只匹配一个完整条目；备份、幂等。面板已有明确删除点击，模型仍按任务授权执行。</td><td>不新增每条弹窗或第二次模型 token 回传；不把 CAS 宣传成用户授权。</td></tr>
+<tr><td>整节替换／整节删除／整档替换／恢复</td><td>强制 CAS、展示具体差异或准确影响、保留回滚点；模型侧整节替换和恢复也算批量操作。</td><td>进入可预览的批准计划；旧文件划分必须真人确认，批量破坏操作建议复用同一真实批准状态。没有可用批准通道就拒绝批量应用，普通读写仍可用。</td></tr>
+<tr><td>归档日期文件</td><td>计划绑定准确日期集合与每个源文件 revision；归档与写日记共用锁；部分完成可见。</td><td>预览后真人选定并应用；不能仅凭 dryRun:false 或模型回传 token 认定用户同意。</td></tr>
+</tbody></table></div>
+<p>上表的批量真人批准策略是本次复审建议，不是用户已经批准的新增权限规则。已明确同意的旧文件划分确认不能被普通工具创建核心标题所绕过。</p>
+<h3>必须先修的实测缺口</h3><ol>
+<li><strong>CAS 在 store 强制。</strong>除 restore 外目前都允许省略。对 edit／editAt／remove／replaceSection／removeSection／replaceDocument 强制版本，校验发生在锁内。面板冲突后不能删除 revision 强盖，应重读、比较、重新批准。</li>
+<li><strong>去重移到同一锁内、CAS 之前。</strong>两个相同 operationId 排队实测写入两份。回执绑定规范化目标＋动作／mode＋请求正文指纹，同 ID 不同内容报 operation_mismatch，不误报 duplicate；restore 和 prune 也返回一致重放结果。</li>
+<li><strong>确认回执与可选日志分开。</strong>现有 operationLog 可关闭、末 500 条、有吞错，不能当关键批准账本。关键计划在 stateDir 保存有界状态：pending／approved／applying／committed，绑定来源项目、版本、影响与新内容 hash。模型能拿到 planId 不等于能把状态改成 approved；由受信任用户动作批准。计划过期或配置／路径／正文变化重新预览。</li>
+<li><strong>不要许诺跨崩溃绝对一次。</strong>写前记录 applying，写后核对新 revision 并保存回执；失败或崩溃恢复时先比对旧／新版本，不自动重做未知副作用。到期回执清理、日志关闭的保证范围要写清；无幂等键不能承诺重试自动去重。</li>
+<li><strong>备份名加唯一后缀并防覆盖。</strong>实测同毫秒两次写只留一份，初始版本丢失。名称使用时间＋随机 ID；批量修改要求有效快照，backupKeep:0 下拒绝这类操作并说明需启用备份，不静默违反可恢复承诺。</li>
+<li><strong>归档真正串行化。</strong>项目归档锁后按固定顺序取已选日期文件锁，持锁验证集合与 revision，再移动已批准集合；新增文件不顺手归档。发生部分错误返回 partial 及已移动／失败清单，不再 ok:true 模糊带过。原始归档可人工移回，但现 memory_restore 不支持日记，不能宣称已有一键归档恢复。</li>
+</ol>
+<p>保持一个 store 写路径；入口只提供来源与展示，不各自重写门禁。现有面板 connection 信任栅栏继续使用。批准 UI 的具体承载需要按最终产品设计确认，不能用这份工程复审擅自批准“用户复制 revision”交互。</p>
+<p><strong>不做：</strong>额外模型整档写工具、每次追加二次确认、机器判断“已充分蒸馏”、全面封锁 shell、非合作外部编辑的原子 CAS 承诺。外部写恰在检查与 rename 间仍有窗口，备份不保证保存其竞争版本。</p>
+<p><strong>验收：</strong>所有真实入口参数化测 CAS；同 ID 排队只落一份、跨目标同 ID 拒绝、restore／prune 重放一致；源集合／正文变动不能套旧计划；备份同毫秒不覆盖；持日期写锁时归档等待或拒绝；部分失败明确报告；关闭日志不能关闭关键批准回执。</p>
+<p class="evidence">证据：<a href="../src/tools/write.js#L48-L225">模型工具</a>、<a href="../src/write/store.js#L358-L399">去重和备份</a>、<a href="../src/write/store.js#L585-L648">共用写链</a>、<a href="../src/write/store.js#L243-L301">归档</a>、<a href="../src/client.js#L3144-L3147">冲突覆盖</a>。验证脚本 O03 系列。</p></section>
+<section id="o04"><h2>O-04 · 做，先修“配置值读错”，再谈删键</h2>
+<p>schema 实有 37 个叶键，均能找到 Host 或 Client 读取点。没有证据支持本轮按“死开关”删除一批键。现有 conflictPolicy 已删除且有测试，保持即可。</p>
+<div class="note warning"><strong>实测高优先级缺陷：</strong>Config 的标准解析返回 volatile 引用对象，现 normalizer 只认原始类型。输入 readOnly:true、search.enabled:false、user limit:3000，经 schema 后再归一化变为 false、true、8000，workbuddyHome 也回退空值。不能靠目前直接传原始对象的测试证明运行时配置有效。</div>
+<h3>具体怎么做</h3><ol>
+<li>归一化前正确解包 volatile 引用，对原始对象保留兼容；不能改写引用本身。增加“真实 schema.validate → apply → 工具／注入”的集成测试。</li>
+<li>保持稳定 cfg 对象供现有 closures 使用；监听当前宿主 loader/volatile-update，重读有效值、原地更新归一化配置并使相关快照失效。普通键仍按宿主重载生命周期，不手写 profile 配置文件。</li>
+<li>对于改变注册集合的 ui.enabled、search.enabled、guard.enabled，重建该插件拥有的子作用域并 dispose 旧注册；Client 入口也必须随配置实际增删，不能只更新 flags。目标最低版本无对应事件时应有明确重载策略并实测，不能降级成“保存成功但不生效”。</li>
+<li>明确权限：readOnly 优先拒绝所有插件写；write.enabled 是写能力总闸；ui.allowWriteActions 只控制面板写，不再隐藏只读备份查询；工具批量能力按写权限与批准状态控制。收紧跨界耦合需要迁移说明，不能悄悄放宽已有显式禁止。</li>
+<li>0 预算真正不贡献内容（含画像歧义分支）；保留显式 ensureLayout:false，但新默认为首写创建，所有合法性检查先于 mkdir。</li>
+<li>只修 env.js 单候选分支的 uidFromPersonalDir(dirname(path))；多候选精确 uid 选择已正确，不改成别的匹配规则。</li>
+</ol>
+<p><strong>不做：</strong>按键数硬砍配置、把 readOnly 与 write.enabled 当同义直接删一个、未知旧键导致启动崩溃、把旧全文预算静默解释成新分层预算。</p>
+<p><strong>验收：</strong>真实包装值启动与热更新均生效；关闭搜索／UI／守卫后注册数正确且无重复；readOnly=true 时工具与面板均拒写；37 键都有读取点与生效时机；0 预算、uid 单/多候选、无效首写不建目录。</p>
+<p class="evidence">证据：<a href="../src/config.js#L119-L135">原始值判定</a>、<a href="../src/index.js#L36-L45">一次归一化</a>、<a href="../src/env.js#L108-L125">uid 两分支</a>、<a href="../src/tools/index.js#L128-L130">跨界工具开关</a>；当前 loader/lib/index.js:526–553。验证脚本 O04 系列。</p></section>
+<section id="o05"><h2>O-05 · 修会话快照，不把所有状态都会话化</h2>
+<p>全局 recent/catalog 是“所有工作区总览”，有合理用途，不能因为是单例就判串台。项目面板也已经能按 sessionId 解析项目并有测试。真正的缺口是 first-turn 按 cwd 冻结：新会话会拿旧会话的快照；面板写还只清 catalog，没通知注入失效。</p>
+<p><strong>做法：</strong>每个实际会话对象保存有效 cwd、配置代次、冻结快照和最后装配信息；优先 WeakMap，不为持久会话 ID 永久留无界 Map。拿不到会话标识就退回每次装配缓存，不共享 '(no-session)' 假键。同会话切换 cwd 重新选项目；当前 workingDirectory.get(session) 可用时读它，旧版明确回退 header.cwd，不猜 process.cwd。</p>
+<p>写后通知从 store 的成功提交统一发出，带变更路径与结果；工具／面板都接同一路径。首版保留 on-change 语义；现有 first-turn 作为兼容模式改为真正会话范围，仍保留已约定的写后显式刷新，文档不叫它绝对整会话冻结。</p>
+<p><strong>不做：</strong>会话版项目总览、把锁／备份／幂等账本按会话拆开、silentPresets 黑名单。当前宿主 complete prompt 只保留完整段，“minimal 仍注入本插件四段”不是当前事实；工具 schema 是另一条独立通道，不能混为一谈。</p>
+<p><strong>验收：</strong>同 cwd 两个新会话各自初次取值；不同 cwd 交替；会话 cwd 改变；工具和面板写后相同策略；无会话不串台；插件卸载清理注册与缓存。</p>
+<p class="evidence">证据：<a href="../src/inject.js#L67-L103">按 cwd 冻结</a>、<a href="../src/index.js#L47-L110">总览与写通知</a>、<a href="../src/host/catalog.js#L110-L144">总览来源</a>、<a href="../tests/panel.test.mjs#L391-L405">会话面板已有测试</a>。验证脚本 O05。</p></section>
+<section id="o06"><h2>O-06 · 做稳定、透明和少读盘；本轮不默认按轮冻结</h2>
+<p>按步装配的事实成立，全文 cache 工厂也确实尚未接入。实时字符数造成抖动、status 把估计当注入量都是真问题：关闭注入时实测 status 仍说用户 injected=25。但“写一次整段重算”取决于当前提供方能力：in-history 路由可以追加系统更新保留前缀，同时累积版本；不能一刀切算账。</p>
+<h3>具体怎么做</h3><ol>
+<li>分层常驻只含核心、受限标题目录、固定规则；同主题正文新增但核心/标题不变时，本插件的常驻文本逐字不变。</li>
+<li>去掉动态 chars、时间和命中次数；保留稳定的“有未注入内容”等必要状态。不是“规则永远不能出现任何数字”，固定编号和固定预算说明不是实时抖动。</li>
+<li>使用一处有界文件快照缓存：统一安全字节上限、规范路径与 stat 指纹（至少 mtime/ctime/size），容量与总缓存字节有限；读取内容与压力统计复用同一快照。自有写后定向失效，不能无界缓存整文件或失去原 maxBytes 限制。</li>
+<li>记录本插件各块在当前会话最后一次装配的真实码元数、截断、有效模式与来源版本；没有实际装配返回 null。区分“本插件提供的块”与宿主最终接纳的完整 system，complete 覆盖后不可把 provider 文本称为实际模型输入；无法观察最终采用则明确标注口径。</li>
+<li>成本对照记录主模型输入／输出、cacheRead／cacheWrite、工具回显和延迟；不可得写未知，不用字符直接换算费用。包括 in-history 历史累计与整理成本。</li>
+</ol>
+<p><strong>本轮不做：</strong>新增 turn-start 并设默认、按 cwd 清轮缓存、全文迁 context、自研历史投影。若日后真实工作负载显示核心在同轮频繁变化且收益足够，另做会话／轮级冻结验证；当前先减少无关正文变化，比增加新模式更直接。</p>
+<p><strong>验收：</strong>内容不变时命中缓存且无全文重读；本插件写后更新、外部 stat 变化可见；长尾正文变化不改常驻；禁用时明确 0／未装配 null；缓存达到容量会驱逐；不宣称零 token 成本。</p>
+<p class="evidence">证据：<a href="../src/cache.js#L15-L54">未接入的文件缓存</a>、<a href="../src/render.js#L115-L147">动态提示与读取</a>、<a href="../src/tools/status.js#L86">推断 injected</a>；当前宿主 system-prompt README:154–156、agent-loop README:160–166。</p></section>
+<section id="o07"><h2>O-07 · 做，补真实缺口，不重造已有测试</h2>
+<p>已有版本冲突、顺序幂等、两个并发追加、锁超时、活进程锁、备份失败和恢复测试。原文“都没有”不成立。239 项通过与新复现缺口并不冲突，因为这些边界没被测到。</p>
+<p><strong>要补的具体矩阵：</strong>独立 store 与独立进程共享 stateDir；同 ID 排队只提交一次；不同 ID 同 revision 一成一冲突；不同 ID 无 CAS 的追加都保留；restore/prune replay；同 ID 换目标拒绝；同毫秒备份；归档预览漂移与写锁；同 cwd 两会话、两 cwd 交替装配与写入；真实 schema→apply；配置变更重建注册；所有高影响入口的 CAS/批准/拒绝不落盘。</p>
+<p>并发预期必须写对：只有同一个旧 revision 的竞争才要求一成功一冲突；正常无 CAS 的独立追加应全部落盘。现有同基线两独立 store 已验证正确，不能以这条测试名冒充新发现。</p>
+<p><strong>不做：</strong>为了文件名像事故就复制测试、仅卡总行覆盖率、把确认 token 没实现当现有缺陷。测试应验证行为和拒绝边界；新增模式必须补自己的分支，不用大文件 UI 低覆盖掩盖存储缺口。</p>
+<p><strong>验收：</strong>本轮发现缺口的最小重现先失败、修复后正确通过；现有 239 保留；覆盖报告作为辅助，关键存储与配置分支逐条验收。</p>
+<p class="evidence">已有：<a href="../tests/store.test.mjs#L56-L124">CAS、顺序幂等与并发</a>、<a href="../tests/store.test.mjs#L255-L269">恢复</a>、<a href="../tests/store.test.mjs#L315-L375">锁与备份失败</a>、<a href="../tests/e2e.test.mjs#L201-L228">HTTP 重试</a>。</p></section>
+<section id="o08"><h2>O-08 · 做，先让测试与 CI 环境无关</h2>
+<p>本机全绿，但 UTC 子进程中固定 +08:00 的测试硬期待当地日期，实测失败；E2E 又把 2026-11-09 当永远的新日记，2026-12-10 后也会超 30 天。直接新增 CI 会先得到红灯，而非工程保障。</p>
+<ol>
+<li>日期测试用本地构造或明确时区子进程，日记年龄夹具改固定 now/相对日期；不能靠把所有 CI 强改上海时区掩盖依赖。</li>
+<li>PR／push 运行 npm ci；若仍支持 Node &gt;=20，测试 Node20、24 × Ubuntu、Windows。先确认 Node20 支持目标 coverage 命令，coverage 放 Node24/Ubuntu 一次，该 job 不再重复 npm test。</li>
+<li>检查 package/lock 根版本一致、npm pack --dry-run 包清单；当前源文件直接分发，无 build 脚本，不照搬竞品构建。tag 事件只核对版本，不创建 tag。</li>
+<li>workflow 最小 contents:read，不要发布凭据。只检查和上传必要验证产物，不创建 Release draft——draft 仍是创建 Release。</li>
+</ol>
+<p><strong>不做：</strong>自动 npm publish、tag、Release/draft；awesome 市场 PR 的等待状态不作为本插件每次 CI 的门禁。</p>
+<p><strong>验收：</strong>UTC/Asia-Shanghai 与固定未来日期场景稳定；矩阵测试通过；包不含临时记忆、用户凭据和开发夹具；无写发布权限，无不存在的 build 命令。</p>
+<p class="evidence">证据：<a href="../tests/store.test.mjs#L147-L156">UTC 失败测试</a>、<a href="../tests/e2e.test.mjs#L32-L33">固定日期</a>、<a href="../tests/e2e.test.mjs#L151-L161">依赖当前时间的归档断言</a>、<a href="../package.json#L55-L69">包清单与脚本</a>。</p></section>
+<section id="o09"><h2>O-09 · 不新增重整系统，整理能力复用 O-03</h2>
+<p>整本资料超过常驻预算，在分层模式下可以是正常情况；不能据此强迫精简。原方案背景是用户记忆超限，动作却只比较项目预算并禁止用户重整，这个判据自相矛盾。</p>
+<p><strong>保留的能力：</strong>当前主模型应用户要求读取完整基线，给出核心／按需划分或整理差异；project-memory 与 user-memory 都支持；用户确认后一次提交、一次备份。核心超额只提示需要检查，不自动删除。旧文件确认前继续兼容注入，普通工具不得悄悄创建核心标题让旧内容失去常驻。</p>
+<p><strong>明确不做：</strong>wbm_reorganize 新工具、七天硬冷却、正文 HTML 时间戳、project-only。七天限制会拦住用户合理修正，却挡不住其他普通修改工具；时间戳不是可靠权限状态。若需记录上次应用，写插件元数据，不影响共享正文和注入稳定性。</p>
+<p>不新增一套压缩算法，不用“字符减少了”证明保留了事实，不允许为整理捏造结论。旧文件预览的交付/UI 与具体预算仍须按设计稿确认；不会以用户已认可方向当作 UI 细节已批准。</p>
+<p><strong>验收：</strong>核心与按需内容都能在源文件找到；无确认不重排；重复确认幂等；跨版本草案拒绝；两种 scope 均可；任何移除都在差异中明确展示。</p>
+<p class="evidence">证据：<a href="../src/tools/write.js#L84-L119">已有整节整理能力</a>、<a href="../src/render.js#L115-L128">现有用户压力提示</a>、<a href="2026-11-13-dsh-workbuddy-memory-优化方案.html#p2">原 O-09 的项目预算与用户排除</a>。</p></section>
+<section id="o10"><h2>O-10 · 不做自动目录发现，已有配置够当前需求</h2>
+<p>设置 dataFolderName='.codebuddy' 已能选择 .codebuddy/memory，workbuddyHome 和环境变量也能明确用户目录。实测路径正确。因此不是完全不支持 CodeBuddy，只是不支持不同工作区自动猜不同目录。</p>
+<p><strong>做法：</strong>继续单一显式路径规则，把现有配置举例写清。首次合法写入可建所选目录，纯读不建。没有目录时不擅自退到另一个候选位置。</p>
+<p><strong>不做：</strong>inject.readFolderCandidates、新目录优先级、自动扫描所有 buddy 目录、同步或双写。以后若真有按项目混用需求，应先做显式的工作区路径覆盖，再考虑发现建议；本轮不增加这份成本。</p>
+<p><strong>验收：</strong>自定义路径读、写、搜索、守卫、备份都指同一处；同时存在两种目录不自动切换；状态显示已采用路径与来源。</p>
+<p class="evidence">证据：<a href="../src/paths.js#L40-L74">已有显式目录</a>、<a href="../src/paths.js#L93-L108">统一布局</a>。验证脚本 O10。</p></section>
+<section id="o11"><h2>O-11 · 做面向用户的定位与面向维护的契约说明</h2>
+<p><strong>用户文档：</strong>明确不要求安装 WorkBuddy、默认沿用其兼容目录、首写创建、默认分层、旧文件待确认兼容、全文回退、哪些算常驻、如何查询、如何恢复。共存说明讲风险与责任，不做没有实测的绝对竞品比较。</p>
+<p><strong>维护文档：</strong>集中列出 volatile 引用与更新、当前有效 cwd、section complete 过滤、工具重名与作用域、connection 栅栏、lossless JSON、注册与卸载、缓存容量、非合作外部编辑的竞争窗口、支持版本测试范围。标明观察到的版本，升级必须复核。</p>
+<p><strong>不做：</strong>新一轮大对比报告、声称“自动同步”“零成本”“都有备份就绝对安全”。文件同源不代表另一个客户端一定及时刷新，也不代表两个写者遵守同一锁。</p>
+<p><strong>验收：</strong>中英默认值和实现一致；包内 README 对 docs 给出明确仓库链接；无发布包清单漏链；复审结论与专题设计只保留一个清楚优先级，旧材料显著注明被修订。</p></section>
+<section id="order"><h2>真正的实施顺序与本次边界</h2>
+<div class="scroll"><table><thead><tr><th>顺序</th><th>包含</th><th>出口</th></tr></thead><tbody>
+<tr><td>先把已发现的正确性问题修住</td><td>O-04 包装值与生效、O-03 CAS／去重／备份，O-07 相应回归；O-08 日期夹具与基本 CI。</td><td>开关真正生效；排队不重复写；备份不撞名；跨时区测试稳定。不是先搭完分层再补安全。</td></tr>
+<tr><td>接默认分层与查询闭环</td><td>O-01＋已确认分层方向、O-05 快照作用域、O-06 稳定文本和统计、合法首写。</td><td>核心可见；长尾可查；路径与会话隔离；硬预算和兼容状态可解释。</td></tr>
+<tr><td>完成旧文件真实确认与维护体验</td><td>O-03 批量计划／归档、O-09 整理复用、O-11 文档；O-02 风险说明随文档。</td><td>批准绑定真实差异和基线；不移未预览文件；能恢复且不冒充绝对事务。</td></tr>
+<tr><td>按实际模型路线评估效果和总成本</td><td>同批固定任务全文／分层对照，包含工具往返与历史累计。</td><td>底线遵守不退步、经验能找回、费用与延迟数据可解释；未测项明确未知。</td></tr>
+</tbody></table></div>
+<p>本轮工程建议已明确；具体核心命名、4000 起始预算和草案 UI 仍是专题稿提案，不能借这次技术审查当作用户已批准。批准设计后才进入实施计划。</p>
+<p><strong>未执行：</strong>产品修复、profile 配置修改、额外模型费用试验、最低版本与全部操作系统验证、同装运行试验、发布／打 tag／Release。隔离脚本只验证当前行为；本次新增和修订仅为仓库文档及可重跑证据。</p>
+<pre>node --test --experimental-test-coverage --test-coverage-include="src/**/*.js"
+node docs/2026-11-16-优化复审验证.mjs
+# UTC 指定日期测试目前预期失败；需在修复夹具后加入正式 CI。</pre>
+</section><footer>自包含 HTML，无外部资源。原文保留作问题背景，本稿为逐项复审后的工程建议；设计、实施与发布批准分别处理。2026-11-16。</footer>
+</div></body></html>
