@@ -2,16 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>原优化方案逐项复审与执行结论 · 2026-11-16</title>
+<title>原优化方案逐项复审与工具精简结论 · 2026-11-16</title>
 <style>
 :root{color-scheme:light dark;--bg:#f3f6fa;--paper:#fff;--tx:#19283c;--muted:#52657b;--line:#d4dfea;--accent:#08796d;--soft:#eaf7f3;--warn:#8b5100;--warnbg:#fff3db;--code:#edf2f7}@media(prefers-color-scheme:dark){:root{--bg:#0e1520;--paper:#152132;--tx:#e4edf7;--muted:#b0bfd2;--line:#34475e;--accent:#6cddc9;--soft:#153832;--warn:#ffd18b;--warnbg:#382c1c;--code:#1d2c40}}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.8 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}.wrap{max-width:1120px;margin:auto;padding:32px 22px 70px}header{padding-bottom:22px;border-bottom:2px solid var(--line)}h1{font-size:29px;line-height:1.45;margin:8px 0 14px}h2{font-size:23px;margin:0 0 15px}h3{font-size:18px;margin:24px 0 8px}p{max-width:76ch;margin:10px 0}a{color:var(--accent);text-underline-offset:3px}section{padding:25px;background:var(--paper);border:1px solid var(--line);border-radius:10px;margin:21px 0}.meta,.evidence{font-size:13px;color:var(--muted)}.note{background:var(--soft);padding:15px 18px;border-left:4px solid var(--accent);border-radius:6px;margin:15px 0}.warning{background:var(--warnbg);border-color:var(--warn)}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;font-size:14px;margin:14px 0}th,td{padding:10px 12px;border:1px solid var(--line);text-align:left;vertical-align:top}th{background:var(--code)}code{font:0.9em ui-monospace,Consolas,monospace;background:var(--code);padding:2px 4px;border-radius:3px}pre{padding:14px;background:var(--code);white-space:pre-wrap;overflow:auto;line-height:1.6}nav{display:flex;gap:8px;flex-wrap:wrap;margin:20px 0}nav a{border:1px solid var(--line);border-radius:5px;padding:4px 9px;text-decoration:none;font-size:14px}ul,ol{padding-left:24px}li{margin:6px 0}details{border:1px solid var(--line);padding:12px 15px;border-radius:7px;margin:12px 0}summary{cursor:pointer;font-weight:600}footer{font-size:13px;color:var(--muted);margin-top:26px}@media(max-width:650px){.wrap{padding:16px 12px 40px}section{padding:18px 14px}h1{font-size:24px}table{min-width:650px}}@media print{body{background:#fff;color:#111}section{break-inside:avoid;border-color:#aaa}nav{display:none}th,code,pre{background:#eee}.note{background:#eee}a{color:#155780}}
 </style></head>
 <body><div class="wrap">
 <header><div class="meta">2026-11-16 · 工程复审结论 · 基线 2cb52ca / 产品代码仍为 0.1.4 · 不代表已实施</div>
 <h1>原 11 项优化，哪些做、哪些不做、怎么做</h1>
+<div class="note"><strong>新增工具精简评估：</strong><a href="#tools">九个工具逐项取舍与移除前置条件</a>已纳入本稿。建议模型基础工具由九个收敛为五个；UI 管理能力保留或先补齐，不把删模型入口等同于删功能。本轮仍只更新设计文档。</div>
 <p>目标仍是轻量、可控、可恢复的通用记忆插件。此次不以“竞品有这个功能”作为理由，而以真实缺口、已有能力与实现成本逐项决定。</p>
 <p class="meta">复审对象：<a href="2026-11-13-dsh-workbuddy-memory-优化方案.html">原优化方案 v1.3</a>。产品方向依据：<a href="2026-11-16-通用记忆插件-分层设计.html">已讨论的默认分层设计</a>。本稿明确工程建议，尚未获得用户的实施批准；不修改产品、不发版。</p></header>
-<nav aria-label="章节导航"><a href="#plain">一分钟读懂</a><a href="#decision">取舍总表</a><a href="#evidence">验证结果</a><a href="#o01">O-01</a><a href="#o02">O-02</a><a href="#o03">O-03</a><a href="#o04">O-04</a><a href="#o05">O-05</a><a href="#o06">O-06</a><a href="#o07">O-07</a><a href="#o08">O-08</a><a href="#o09">O-09</a><a href="#o10">O-10</a><a href="#o11">O-11</a><a href="#order">顺序与边界</a></nav>
+<nav aria-label="章节导航"><a href="#plain">一分钟读懂</a><a href="#decision">取舍总表</a><a href="#evidence">验证结果</a><a href="#o01">O-01</a><a href="#o02">O-02</a><a href="#o03">O-03</a><a href="#o04">O-04</a><a href="#o05">O-05</a><a href="#o06">O-06</a><a href="#o07">O-07</a><a href="#o08">O-08</a><a href="#o09">O-09</a><a href="#o10">O-10</a><a href="#o11">O-11</a><a href="#tools">9 个工具逐项精简</a><a href="#order">顺序与边界</a></nav>
 <section id="plain"><h2>一分钟读懂</h2>
 <p>插件像一本共用记事本。原方案想把它的按钮、裁剪和安全保护补齐，这个方向对；但有些问题原本已经测过，有些修法只补了外壳，有些功能加完也解决不了真正的问题。</p>
 <div class="note"><strong>这轮不再把所有项目都说成“保留、以后评估”。</strong>配置、写链、读取、会话快照、诊断、测试和 CI 要做；工具前缀、静默预设名单、多目录自动发现、独立重整命令与固定七天冷却，本轮明确不做。需要的整理能力并入已有读写与真实确认流程。</div>
@@ -148,11 +149,67 @@
 <p><strong>维护文档：</strong>集中列出 volatile 引用与更新、当前有效 cwd、section complete 过滤、工具重名与作用域、connection 栅栏、lossless JSON、注册与卸载、缓存容量、非合作外部编辑的竞争窗口、支持版本测试范围。标明观察到的版本，升级必须复核。</p>
 <p><strong>不做：</strong>新一轮大对比报告、声称“自动同步”“零成本”“都有备份就绝对安全”。文件同源不代表另一个客户端一定及时刷新，也不代表两个写者遵守同一锁。</p>
 <p><strong>验收：</strong>中英默认值和实现一致；包内 README 对 docs 给出明确仓库链接；无发布包清单漏链；复审结论与专题设计只保留一个清楚优先级，旧材料显著注明被修订。</p></section>
+<section id="tools"><h2>新增优化 · 9 个模型工具逐项精简</h2>
+<p class="meta">2026-11-16 补充。用户明确提出：memory_prune 不需要给模型，UI 已能手动归档；其余工具都要一并评估。当前仍是 9 个注册工具，本节给出设计建议，没有修改产品。移除其余入口与补 UI 的具体实施尚待确认。</p>
+<div class="note"><strong>推荐目标：默认 9 个减为 5 个。</strong>保留 memory_status、memory_read、memory_search、memory_append、memory_edit；归档、整节整理、备份列表与历史恢复交给用户管理入口。减少的是模型可调用入口，不删除文件存储、备份或 UI 管理能力，也不把功能藏到一个巨大的 memory_manage 工具里。</div>
+<h3>1. 为什么这样划分</h3>
+<p>模型日常必须能找回经验、追加新结论、修正过期条目，也需要解释“为什么读不到／写不了”。归档旧文件、整体整理和历史回滚则是低频管理动作；已有 UI 或已确认的整理预览方向可以承接，更适合由用户查看影响后决定。归档由 UI 承接是用户已经提出的要求，其余归属是本次评估建议。</p>
+<div class="scroll"><table><thead><tr><th>当前工具</th><th>决定</th><th>理由及替代</th><th>实现边界／验收</th></tr></thead><tbody>
+<tr><td>memory_status</td><td>保留，缩小默认回显</td><td>模型排障需要路径来源、有效模式、可写状态、截断原因；无面板时尤其有用。其声明仅约 256 字符，是最小的工具；与 read 合并只为减一个名字，不值得引入全局诊断分支。</td><td>默认只回与当前会话相关的摘要；详细配置与长目录留 UI 或显式排障扩展，不每次回显全部配置、日期文件。保留只读，不新加“高级工具模式”。</td></tr>
+<tr><td>memory_read</td><td>保留</td><td>有界全文／章节读取、目录和完整 revision，是渐进式披露与安全编辑的必要入口。</td><td>延续 O-01 的分页、截断与完整版本修正；不合并搜索、恢复、归档分支；只读画像目标可复用这个工具，不另起画像工具。</td></tr>
+<tr><td>memory_search</td><td>保留</td><td>主题不明确时搜索项目、用户和日期笔记；已有清楚的 scope 与限制。移除会迫使整文件读取，破坏分层收益。</td><td>结果有界、来源清楚、命中和文件截断分别说明；关闭搜索沿用现有显式设置，不新增工具数量预设。</td></tr>
+<tr><td>memory_append</td><td>保留</td><td>低影响的日常记忆写入；也可继续记录日期笔记。与更新的参数及权限不同，保留独立入口更容易用对。</td><td>首写创建、幂等与写锁按 O-03/O-04 修正；不夹带归档、整档覆盖或自动分类系统。</td></tr>
+<tr><td>memory_edit</td><td>保留 replace／remove 单条模式</td><td>纠正失效事实、替换一条和明确删除一条是日常维护。把 remove 也收回 UI 会迫使用户为每条错误介入。</td><td>强制 revision、完整单条、歧义拒绝、备份和重放校验；不偷偷扩成批量操作、不允许多条替换文本伪装为一条。继续防止通过普通编辑暗中迁移旧文件。</td></tr>
+<tr><td>memory_prune</td><td>从模型目录移除</td><td>用户已可在 UI 预览、选择日期、手动归档。保留两个执行入口没有必要；日期笔记本来就不常驻，归档也不应成为每轮模型任务。</td><td>删除模型注册与专用工具包装，保留 store.prune、UI dialog、POST action。规则不再让模型按年龄调用归档；UI 仍须修计划绑定、写锁、重试与 partial 报告，不能因移除工具就视为存储问题已修好。</td></tr>
+<tr><td>memory_replace_section</td><td>从模型目录移除；整理经 UI 应用</td><td>一次替换整节确实比多次 edit 高效，但影响面大。默认分层后，长尾资料大不等于必须反复压缩；用户要求的整节整理可由主模型生成完整草案，经 UI 差异预览后一次提交。</td><td>保留 store.replaceSection 与面板章节编辑。已有章节编辑并不等于已有版本绑定草案批准，须按整理设计补齐后再视为替代完成。不让模型为绕过已删除的工具拆成大量 edit；显式少量逐条纠错仍可。无批准通道就停在草案，不恢复模型批量入口。</td></tr>
+<tr><td>memory_list_revisions</td><td>与 restore 一起移至 UI</td><td>备份浏览是低频管理。若恢复只在 UI，模型不再需要枚举备份文件名；只撤 restore 仍留 list 不是完整精简。</td><td>当前有 GET /revisions 与 /revision，但 Client 没有完整历史浏览器。先补一个文件内“历史版本”入口＋选择列表与差异预览，再与 restore 配对撤注册；不删除备份存储或后端查询。</td></tr>
+<tr><td>memory_restore</td><td>从模型目录移除；用户批准 UI 恢复</td><td>回退可能覆盖后来新增结论，适合由用户看差异后执行。现有 UI 只有最近写入的短时撤销，不能当作任意历史恢复替代。</td><td>与版本列表 UI 同批落地：选择备份→读取完整当前版本与历史版本→预览→强制当前 revision＋幂等键→保存前备份当前文件。保留即时撤销与 store.restore；恢复不能跨目标、不能因切换文件继续用上一文件的备份／revision。</td></tr>
+</tbody></table></div>
+<h3>2. 两条可行路线与本稿选择</h3>
+<p><strong>保守路线是 8 个：</strong>现在只撤 prune，其余保留。独立审查也建议这一尺度，因为 headless 仍可整节整理和历史回滚，且不用新补 UI。它是合理的短期落地次序，不能为了宣称少四个而提前撤掉没有替代的能力。</p>
+<p><strong>本稿建议的产品目标是 5 个：</strong>明确把低频管理交给用户 UI，完成下文前置条件后再撤整节替换及版本工具。它需要新增轻量历史入口，也失去无 UI 环境的模型批量整理／回滚便利。选择它的理由是减少长期管理 schema 和模型误用面，同时与“主模型给草案、用户确认整理”一致；不是各审查者已经一致认定“删得越多越好”，也不是用户已同意这三项额外移除。</p>
+<h3>3. 为什么不强行合成 4 个或 1 个</h3>
+<p><strong>不合并 status/read：</strong>当前 status 的声明只有 256 字符，read 已有 target、section、sectionsOnly、limit 等读取参数。为了少一个名字加入“诊断视图＋可省略 target＋另一种回包”，会增加用法分支，且未必节省同等声明体积。先压缩默认状态回显更直接，避免读取正文时顺带回显整套配置。</p>
+<p><strong>不合并 read/search：</strong>读取一个已知目标与跨文件匹配有不同参数和限额；目录能指明章节时直接 read，信息不足时 search。合并成 query 模式会引入互斥参数，收益只在名字数量上。</p>
+<p><strong>不合并 append/edit：</strong>追加允许无旧版本合并，编辑必须持已读版本且定位唯一条目。保留独立 schema 能让模型更清楚授权边界，不需要让一个 memory_write 的 action 字段承载各种可选参数。</p>
+<p><strong>不新增模式：</strong>不做“基础／高级工具集”开关，不借工具懒加载继续保留全部管理入口，不保留会常驻占位的旧工具别名。内部仍复用探测、校验、lossless 与 store；外部职责清楚不等于复制内部实现。</p>
+<h3>4. 测量到的收益与没有测量的东西</h3>
+<p>使用真实 registerTools 定义，仅序列化 name、description、parameters（不执行工具）得到下表。当前声明全为 ASCII，因此本次 UTF-16 长度与 UTF-8 字节数恰好相同。原始声明长度不是 token，不含宿主 SDK 包装、实际工具协议和将来文案调整，也不是账单预测。</p>
+<div class="scroll"><table><thead><tr><th>方案</th><th>模型工具数</th><th>当前原始声明字符</th><th>权衡</th></tr></thead><tbody>
+<tr><td>当前默认</td><td>9</td><td>6610</td><td>包含低频管理入口。</td></tr>
+<tr><td>只撤 prune</td><td>8</td><td>5836</td><td>最小变更，减少归档执行入口，其他管理复杂度仍在。</td></tr>
+<tr><td>推荐基础集合</td><td>5</td><td>3627</td><td>声明原文减少 2983 字符，约 45.1%；需补历史恢复 UI 与草案应用，不能裸删功能。</td></tr>
+<tr><td>保留整节替换、合并 status 到 read</td><td>名义 5</td><td>至少 4396，另加合并参数</td><td>保留自动批量便利，却需模型批准流程；不是更省的同一个“五工具”。</td></tr>
+<tr><td>仅 read/search/append/edit</td><td>4</td><td>3371，未计合并诊断成本</td><td>最多再省 256 原始字符，却损失直接排障入口；不推荐为了数字更小而采用。</td></tr>
+</tbody></table></div>
+<p>每次模型工具请求与结果也消耗上下文。整节替换一次完成的任务若硬拆成多次 edit，可能抵消声明节省；因此推荐把批量整理改成“一次草案＋用户确认的一次提交”，并明确禁止为工具精简而自动循环逐条压缩。日常只改一两条时仍正常使用 edit。真实 token 和任务延迟按 O-06 同一路由对照验证，不宣称节省 45.1% 费用。</p>
+<h3>5. 实施顺序：按能力承接分批，不增加永久兼容开关</h3>
+<ol>
+<li>先撤 memory_prune 的模型注册和专用包装，同时改中英规则、工具说明、测试清单；UI 与 store 原样保留职责，安全缺口按 O-03 修。</li>
+<li>补轻量的历史版本选择／差异预览／强制版本恢复，保留现有短时撤销。确认这些真实可用后，在同一批次撤 memory_list_revisions 与 memory_restore，不给用户留下只能撤销 10 秒的恢复退化。</li>
+<li>旧文件／整节整理的草案预览与一次提交可用后，撤 memory_replace_section；原 UI 章节编辑继续可用。补未批准不写、旧基线拒绝、操作重试只提交一次的测试。</li>
+<li>最终默认基础集合固定为五个；search.enabled=false 时可沿用原设置少注册 search，但不新增一个精简等级开关。状态默认只返回简短必要信息。迁移说明列出撤掉的工具与 UI 去向，删除常驻规则中的旧名称；不留返回“请去 UI”的工具空壳。</li>
+</ol>
+<p>无面板场景仍能日常读、搜、追加、单条编辑和排障，但不再通过模型归档、整节整理或回滚历史。管理操作需用户使用带面板的 profile，或通过受信任本地编辑方式完成；不提示模型绕用 shell／write 编辑记忆，不因缺 UI 自动重开管理工具。这是通用插件的明确能力边界，不是悄悄丢掉 headless 支持。</p>
+<h3>6. 对原复审结论的更新</h3>
+<p>本节是 O-03、O-04、O-07、O-09、O-11 的补充：不再为了给模型保留批量管理而新增通用模型审批工具。O-03 的 CAS、锁、备份、计划集合绑定、幂等与可信批准仍在共享 store 和用户管理入口落实；删工具不会修复 UI 仍在调用的漏洞。O-04 不再用面板开关决定备份工具是否注册，因为这两个模型工具将配对撤去；O-07 把模型包装测试替换为“注册集合确实缩减＋UI端到端仍可用”，store 回归保留；O-09 的主模型草案仍可在会话中给出，应用交给 UI；O-11 必须同步中英写入规则与恢复说明。</p>
+<p>本稿前面以当前 9 工具为基础分析的“模型可调用整节替换／恢复／归档”仍是现状证据；在精简落地后应更新为历史基线，不能继续以那些旧入口规划新产品。</p>
+<h3>7. 验收条件</h3>
+<ul>
+<li>默认注册集合只含五个基础名字；四个撤掉的管理工具不再出现在 schema、工具说明、常驻规则或旧别名中。旧调用明确失败，不假装执行成功。</li>
+<li>UI 归档仍能预览、选择、应用；当前 store 的计划漂移、锁与 partial 问题仍有回归；没有为了去工具而删 action 或 store 方法。</li>
+<li>任意保留备份能由用户在 UI 选择、预览并恢复；不止当前会话的 10 秒撤销。恢复前备份和目标绑定正确，读不到完整快照时拒绝应用。</li>
+<li>模型仍能在默认分层下直接读核心／按需搜资料、追加和精确修改／删除一条；用户要求批量整理时生成草案，不自动拆成多次破坏性编辑。</li>
+<li>同目标草案的基线变动、目标切换、重复确认与回放均按 O-03 拒绝或幂等处理；headless 报出管理入口不可用，不引导绕守卫写入。</li>
+<li>重新测实际工具声明和同批任务的 token／往返，单独报告 UI 管理的交互成本；不能以工具少四个替代总成本验收。</li>
+</ul>
+<p class="evidence">证据：<a href="../src/tools/index.js#L120-L132">九个工具注册</a>、<a href="../src/tools/write.js#L84-L119">整节替换的历史成本理由</a>、<a href="../src/tools/status.js#L64-L105">状态完整回显</a>、<a href="../src/host/routes.js#L598-L627">已有历史查询后端</a>、<a href="../src/client.js#L2000-L2014">只记录最近备份的短时撤销</a>、<a href="../src/client.js#L2077-L2126">面板章节与恢复动作</a>、<a href="../src/client.js#L3170-L3272">归档面板</a>。</p>
+</section>
 <section id="order"><h2>真正的实施顺序与本次边界</h2>
 <div class="scroll"><table><thead><tr><th>顺序</th><th>包含</th><th>出口</th></tr></thead><tbody>
 <tr><td>先把已发现的正确性问题修住</td><td>O-04 包装值与生效、O-03 CAS／去重／备份，O-07 相应回归；O-08 日期夹具与基本 CI。</td><td>开关真正生效；排队不重复写；备份不撞名；跨时区测试稳定。不是先搭完分层再补安全。</td></tr>
 <tr><td>接默认分层与查询闭环</td><td>O-01＋已确认分层方向、O-05 快照作用域、O-06 稳定文本和统计、合法首写。</td><td>核心可见；长尾可查；路径与会话隔离；硬预算和兼容状态可解释。</td></tr>
-<tr><td>完成旧文件真实确认与维护体验</td><td>O-03 批量计划／归档、O-09 整理复用、O-11 文档；O-02 风险说明随文档。</td><td>批准绑定真实差异和基线；不移未预览文件；能恢复且不冒充绝对事务。</td></tr>
+<tr><td>完成用户管理能力与工具精简</td><td>O-03 批量计划／UI归档、O-09 整理复用、历史版本入口、O-11 文档；O-02 风险说明随文档。</td><td>先补真实版本选择和草案应用，再按工具精简建议撤对应模型入口；批准绑定真实差异和基线，不移未预览文件，能恢复且不冒充绝对事务。</td></tr>
 <tr><td>按实际模型路线评估效果和总成本</td><td>同批固定任务全文／分层对照，包含工具往返与历史累计。</td><td>底线遵守不退步、经验能找回、费用与延迟数据可解释；未测项明确未知。</td></tr>
 </tbody></table></div>
 <p>本轮工程建议已明确；具体核心命名、4000 起始预算和草案 UI 仍是专题稿提案，不能借这次技术审查当作用户已批准。批准设计后才进入实施计划。</p>
