@@ -10,6 +10,7 @@ import { ageInDays, probeEnvironment } from '../src/env.js'
 import { contentRevision } from '../src/write/fslock.js'
 import { createStore, localDateStamp } from '../src/write/store.js'
 import { listRevisionsTool, replaceSectionTool, restoreTool } from '../src/tools/write.js'
+import { analyzeMemory } from '../src/layers.js'
 
 function workspace() {
   const root = mkdtempSync(join(tmpdir(), 'wbm-'))
@@ -259,6 +260,62 @@ test('ordinary append cannot silently turn a legacy document into layered format
   assert.equal(readFileSync(file, 'utf8'), before)
   const topic = await s.store.append({ target: 'project-memory', section: 'Notes', text: 'topic update' }, s.probe)
   assert.equal(topic.ok, true)
+})
+
+test('an empty legacy file is bootstrapped by an ordinary first append', async () => {
+  const s = setup({ locale: 'zh' })
+  const file = join(s.memoryDir, 'MEMORY.md')
+  // An empty file is a legacy document by analysis, but it holds nothing whose
+  // ownership a person could confirm, so the layering guard must not fire: the
+  // first append is how the template gets written at all.
+  writeFileSync(file, '', 'utf8')
+
+  const result = await s.store.append({ target: 'project-memory', section: '常驻记忆', text: '第一条' }, s.probe)
+  assert.equal(result.ok, true)
+  const text = readFileSync(file, 'utf8')
+  assert.ok(text.startsWith('# 记忆\n\n## 常驻记忆\n'), text)
+  assert.ok(text.includes('- 第一条'), text)
+  assert.equal((text.match(/^## 常驻记忆$/gm) ?? []).length, 1)
+  assert.equal(analyzeMemory(text).mode, 'layered')
+})
+
+test('a legacy file holding only a title is bootstrapped too', async () => {
+  const s = setup({ locale: 'zh' })
+  const file = join(s.memoryDir, 'MEMORY.md')
+  writeFileSync(file, '# 标题\n', 'utf8')
+
+  const result = await s.store.append({ target: 'project-memory', section: '常驻记忆', text: '第一条' }, s.probe)
+  assert.equal(result.ok, true)
+  const text = readFileSync(file, 'utf8')
+  assert.ok(text.startsWith('# 标题\n\n## 常驻记忆\n'), text)
+  assert.ok(text.includes('- 第一条'), text)
+  assert.equal(analyzeMemory(text).mode, 'layered')
+})
+
+test('a legacy file with entries still needs confirmation before becoming layered', async () => {
+  const s = setup({ locale: 'zh' })
+  const file = join(s.memoryDir, 'MEMORY.md')
+  const before = '## 偏好\n- 用中文\n'
+  writeFileSync(file, before, 'utf8')
+
+  const result = await s.store.append({ target: 'project-memory', section: '常驻记忆', text: '第一条' }, s.probe)
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'layering_confirmation_required')
+  assert.equal(readFileSync(file, 'utf8'), before)
+})
+
+test('appending to an existing legacy section keeps the file legacy', async () => {
+  const s = setup({ locale: 'zh' })
+  const file = join(s.memoryDir, 'MEMORY.md')
+  const before = '# 旧\n\n## 偏好\n- 用中文\n'
+  writeFileSync(file, before, 'utf8')
+
+  const result = await s.store.append({ target: 'project-memory', section: '偏好', text: '第二条' }, s.probe)
+  assert.equal(result.ok, true)
+  const text = readFileSync(file, 'utf8')
+  assert.equal(text, `${before}- 第二条\n`)
+  assert.equal(analyzeMemory(text).mode, 'legacy')
+  assert.doesNotMatch(text, /^## 常驻记忆$/m)
 })
 
 test('trusted replaceDocument is the explicit legacy-to-layered migration path', async () => {

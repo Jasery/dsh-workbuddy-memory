@@ -95,6 +95,28 @@ function isDateStamp(value) {
   return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
 }
 
+/**
+ * Does a legacy document hold memory text, or only structure?
+ *
+ * The legacy→layered guard protects content a person already wrote: deciding
+ * which of those entries belong in the always-on core is their call, not a
+ * side effect of an ordinary append. A blank file, a file of whitespace, or one
+ * that carries nothing but heading lines has no such content — there is no
+ * ownership to confirm, and refusing the write would leave the store
+ * permanently empty, because the first ordinary append is how it gets filled.
+ *
+ * @param {string} text - the document as it stands.
+ * @returns {boolean} true when something other than a heading or blank line is there.
+ */
+function holdsMemoryContent(text) {
+  return String(text ?? '')
+    .split(/\r?\n/)
+    .some((line) => {
+      const body = line.trim()
+      return body !== '' && !/^#{1,6}(\s|$)/.test(body)
+    })
+}
+
 export function resolveTarget(target, probe, date) {
   switch (target) {
     case 'project-memory':
@@ -351,7 +373,15 @@ export function createStore({ cfg, stateDir, onCommit }) {
       }
 
       const afterText = String(output.text ?? '')
-      if (current.exists && !['replace-document', 'restore'].includes(action) && analyzeMemory(current.text).mode === 'legacy' && analyzeMemory(afterText).mode === 'layered') {
+      // Only a write that would *recast* existing content as layered needs a
+      // person's confirmation. An empty or title-only legacy file holds nothing
+      // to recast, so an ordinary append is allowed to bootstrap it.
+      const capturesLegacyContent =
+        !['replace-document', 'restore'].includes(action) &&
+        analyzeMemory(current.text).mode === 'legacy' &&
+        analyzeMemory(afterText).mode === 'layered' &&
+        holdsMemoryContent(current.text)
+      if (current.exists && capturesLegacyContent) {
         return fail('layering_confirmation_required', { path, revision: before })
       }
       const afterRevision = contentRevision(afterText)
