@@ -1,7 +1,7 @@
 /** Receipt store limits: bounded, non-overwriting, and unmistakable. */
 
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -21,7 +21,10 @@ function record(id, patch = {}) {
     action: 'append',
     target: 'project-memory',
     path: '/tmp/MEMORY.md',
+    before: 'before-revision',
+    after: 'after-revision',
     status: 'applying',
+    result: { ok: true, revision: 'after-revision', path: '/tmp/MEMORY.md' },
     createdAt: Date.now(),
     ...patch,
   }
@@ -75,6 +78,54 @@ test('a corrupt receipt is refused, not overwritten', async () => {
   assert.equal(begun.reason, 'duplicate_id')
 })
 
+test('parseable receipts with invalid or incomplete schemas are retained and refused', async () => {
+  const { stateDir } = fresh()
+  const store = createReceiptStore({ stateDir })
+  mkdirSync(join(stateDir, 'receipts'), { recursive: true })
+  const old = Date.now() - RECEIPT_LIMITS.terminalMs - 60_000
+  const cases = [
+    ['op-missing-fingerprint', { fingerprint: undefined }],
+    ['op-illegal-status', { status: 'finished' }],
+    ['op-missing-result', { status: 'committed', result: undefined, updatedAt: old }],
+    ['op-missing-terminal-time', { status: 'committed', updatedAt: undefined }],
+  ]
+
+  for (const [id, patch] of cases) {
+    const malformed = { ...record(id), updatedAt: old, ...patch }
+    for (const [key, value] of Object.entries(malformed)) {
+      if (value === undefined) delete malformed[key]
+    }
+    writeFileSync(store.fileFor(id), JSON.stringify(malformed), 'utf8')
+
+    const read = await store.read(id)
+    assert.equal(read.ok, false, `${id} must be treated as unknown evidence`)
+    assert.equal(read.code, 'receipt_capacity')
+    assert.equal(existsSync(store.fileFor(id)), true, `${id} must not be removed`)
+    const replay = await store.begin(record(id, { fingerprint: 'replacement' }))
+    assert.equal(replay.ok, false, `${id} cannot be reused`)
+    assert.equal(existsSync(store.fileFor(id)), true)
+  }
+})
+
+test('a parseable invalid terminal receipt is not expired during capacity maintenance', async () => {
+  const { stateDir } = fresh()
+  const store = createReceiptStore({ stateDir })
+  for (let index = 0; index < RECEIPT_LIMITS.maxPending - 1; index += 1) {
+    assert.equal((await store.begin(record(`op-fill-invalid-${index}`))).ok, true)
+  }
+  const id = 'op-old-invalid-terminal'
+  const old = Date.now() - RECEIPT_LIMITS.terminalMs - 60_000
+  const malformed = { ...record(id, { status: 'committed' }), updatedAt: old }
+  delete malformed.result
+  writeFileSync(store.fileFor(id), JSON.stringify(malformed), 'utf8')
+
+  const refused = await store.begin(record('op-invalid-capacity-overflow'))
+  assert.equal(refused.ok, false)
+  assert.equal(refused.code, 'receipt_capacity')
+  assert.equal(refused.reason, 'pending')
+  assert.equal(existsSync(store.fileFor(id)), true, 'schema-invalid evidence must occupy a pending slot')
+})
+
 test('a terminal receipt older than the retention window is expired', async () => {
   const { stateDir } = fresh()
   const store = createReceiptStore({ stateDir })
@@ -100,7 +151,8 @@ test('an old unresolved receipt is retained and still counts against the pending
     ['op-old-unknown', 'outcome_unknown'],
   ]
   for (const [id, status] of unresolved) {
-    assert.equal((await store.begin(record(id, { status }))).ok, true)
+    const extra = status === 'partial' ? { manifest: [], result: { ok: false, code: 'partial' } } : {}
+    assert.equal((await store.begin(record(id, { status, ...extra }))).ok, true)
     age(store.fileFor(id))
     const read = await store.read(id)
     assert.equal(read.ok, true)

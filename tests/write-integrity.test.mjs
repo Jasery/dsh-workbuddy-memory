@@ -115,7 +115,11 @@ function receiptRecord(id, status = 'applying') {
     fingerprint: 'seed',
     action: 'append',
     target: 'project-daily',
+    path: `/tmp/${id}.md`,
+    before: 'before-revision',
+    after: 'after-revision',
     status,
+    result: { ok: true, revision: 'after-revision', path: `/tmp/${id}.md` },
     createdAt: Date.now(),
   }
 }

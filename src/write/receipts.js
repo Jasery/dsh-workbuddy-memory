@@ -44,6 +44,34 @@ export const RECEIPT_LIMITS = Object.freeze({
 
 /** Only a proven terminal record may age out. */
 const EXPIRABLE = new Set(['committed'])
+const STATUSES = new Set(['applying', 'partial', 'outcome_unknown', 'committed'])
+
+function isTimestamp(value) {
+  return Number.isSafeInteger(value) && value > 0 && value <= 8.64e15
+}
+
+function isResult(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value) && typeof value.ok === 'boolean')
+}
+
+/** Accept the distinct durable shapes used by ordinary writes and archive recovery. */
+function isValidReceipt(record) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return false
+  if (record.version !== 1) return false
+  for (const key of ['id', 'fingerprint', 'action', 'target']) {
+    if (typeof record[key] !== 'string' || record[key].trim() === '') return false
+  }
+  if (!STATUSES.has(record.status) || !isTimestamp(record.createdAt) || !isTimestamp(record.updatedAt)) return false
+
+  const hasManifest = Array.isArray(record.manifest)
+  if (record.status === 'committed') return isResult(record.result)
+  if (record.status === 'partial') return hasManifest && isResult(record.result)
+  if (record.status === 'outcome_unknown') return isResult(record.result)
+  if (record.action === 'prune') return hasManifest
+  return typeof record.path === 'string' && record.path.trim() !== '' &&
+    typeof record.before === 'string' && record.before !== '' &&
+    typeof record.after === 'string' && record.after !== '' && isResult(record.result)
+}
 
 /**
  * @param {{ stateDir: string, lockWaitMs?: number }} deps
@@ -72,7 +100,7 @@ export function createReceiptStore({ stateDir, lockWaitMs = 3000 }) {
     if (loaded.truncated) return { ok: false, code: 'receipt_capacity', reason: 'record_too_large' }
     try {
       const record = JSON.parse(loaded.text)
-      if (!record || record.id !== String(operationId)) {
+      if (!isValidReceipt(record) || record.id !== String(operationId)) {
         return { ok: false, code: 'receipt_capacity', reason: 'corrupt' }
       }
       const updated = Number(record.updatedAt ?? record.createdAt ?? 0)
@@ -158,7 +186,7 @@ export function createReceiptStore({ stateDir, lockWaitMs = 3000 }) {
         }
       }
 
-      if (!record || typeof record !== 'object' || typeof record.status !== 'string') {
+      if (!isValidReceipt(record)) {
         // Meaning unknown. Treat it as an unresolved slot: refusing is honest,
         // deleting a record whose meaning cannot be proven is not.
         total += 1
@@ -191,6 +219,7 @@ export function createReceiptStore({ stateDir, lockWaitMs = 3000 }) {
 
   function serialize(record) {
     const body = { ...record, updatedAt: Date.now() }
+    if (!isValidReceipt(body)) return { ok: false, code: 'receipt_capacity', reason: 'corrupt' }
     let text
     try {
       text = JSON.stringify(body)
