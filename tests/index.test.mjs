@@ -126,7 +126,13 @@ test('the plugin declares only the two services it cannot live without', () => {
   assert.equal(name, 'dsh-workbuddy-memory')
 })
 
-test('apply mounts four sections, nine tools, one guard and the panel routes', () => {
+/** The five tools this build ships to the model, in registration order. */
+const FIVE = ['memory_status', 'memory_read', 'memory_search', 'memory_append', 'memory_edit']
+
+/** The management tools the panel took over; none of them may be registered. */
+const RETIRED = ['memory_prune', 'memory_replace_section', 'memory_list_revisions', 'memory_restore']
+
+test('apply mounts four sections, the five model tools, one guard and the panel routes', () => {
   const { home, root, config } = workspace()
   const { ctx, record } = fakeCtx()
   apply(ctx, config)
@@ -137,12 +143,28 @@ test('apply mounts four sections, nine tools, one guard and the panel routes', (
     'workbuddy-memory:user',
     'workbuddy-memory:profile',
   ])
-  assert.deepEqual(record.tools, ['memory_status', 'memory_read', 'memory_search', 'memory_append', 'memory_edit', 'memory_prune', 'memory_replace_section', 'memory_list_revisions', 'memory_restore'])
+  assert.deepEqual(record.tools, FIVE)
   assert.equal(record.guards, 1)
   assert.deepEqual(record.routes, ['/workbuddy-memory'])
   assert.deepEqual(record.injected, ['webServer'])
   void home
   void root
+})
+
+test('the retired management tools are not in the catalog under any name', () => {
+  // Bulk tidy-up moved to the panel: a section rewrite, a backup restore and an
+  // archive all need a person looking at a preview. Leaving the definitions
+  // registered — even as stubs that only refuse — would advertise an ability the
+  // model does not have.
+  const { config } = workspace()
+  const { ctx, record } = fakeCtx()
+  apply(ctx, config)
+
+  for (const name of RETIRED) {
+    assert.equal(record.tools.includes(name), false, `${name} is still registered`)
+    assert.equal(record.toolDefs.some((tool) => tool.name === name), false, `${name} is still in the schema`)
+  }
+  assert.equal(record.tools.length, 5)
 })
 
 test('search.enabled: false leaves memory_search out of the catalog', () => {
@@ -153,14 +175,14 @@ test('search.enabled: false leaves memory_search out of the catalog', () => {
   // A definition that only ever returns a refusal is worse than an absent one:
   // the model should not see a tool it cannot use.
   assert.equal(record.tools.includes('memory_search'), false)
-  assert.equal(record.tools.includes('memory_prune'), true)
-  assert.equal(record.tools.length, 8)
+  assert.equal(record.tools.includes('memory_append'), true)
+  assert.equal(record.tools.length, 4)
 })
 
 test('an invalid config degrades to defaults instead of throwing', () => {
   const { ctx, record } = fakeCtx()
   assert.doesNotThrow(() => apply(ctx, 'not-an-object'))
-  assert.equal(record.tools.length, 9)
+  assert.equal(record.tools.length, 5)
   assert.equal(record.sections.length, 4)
 })
 
@@ -169,8 +191,20 @@ test('a headless host still gets tools, it just has no panel', () => {
   const { ctx, record } = fakeCtx({ withWebServer: false })
   apply(ctx, config)
 
-  assert.equal(record.tools.length, 9)
+  // No UI does not bring the management tools back: the answer to "this host has
+  // no panel" is to say so, not to hand the model a write path nobody previewed.
+  assert.equal(record.tools.length, 5)
+  assert.deepEqual(record.tools, FIVE)
   assert.deepEqual(record.routes, [])
+})
+
+test('ui.enabled: false keeps exactly the five model tools', () => {
+  const { config } = workspace()
+  const { ctx, record } = fakeCtx()
+  apply(ctx, { ...config, ui: { enabled: false } })
+
+  assert.deepEqual(record.routes, [])
+  assert.deepEqual(record.tools, FIVE)
 })
 
 test('a host without tools.guard does not lose the rest', () => {
@@ -179,7 +213,7 @@ test('a host without tools.guard does not lose the rest', () => {
   apply(ctx, config)
 
   assert.equal(record.guards, 0)
-  assert.equal(record.tools.length, 9)
+  assert.equal(record.tools.length, 5)
 })
 
 test('ui.enabled: false leaves the routes unregistered', () => {
@@ -288,7 +322,7 @@ test('a volatile update deep-updates the same config and remounts changed tools'
   record.handlers['loader/volatile-update']([['readOnly'], ['search', 'enabled']])
 
   assert.equal(record.tools.includes('memory_search'), true)
-  assert.equal(record.tools.length, 9)
+  assert.equal(record.tools.length, 5)
   assert.equal(new Set(record.tools).size, record.tools.length, 'a remount accumulated registrations')
 
   const exec = { agent: { session: { header: { cwd } } } }
@@ -341,7 +375,7 @@ test('a host without the volatile event still starts instead of faking a reload'
   const { home, config } = workspace()
   const { ctx, record } = fakeCtx()
   assert.doesNotThrow(() => apply(ctx, fromSchema({ workbuddyHome: home, stateDir: config.stateDir })))
-  assert.equal(record.tools.length, 9)
+  assert.equal(record.tools.length, 5)
   assert.equal(record.sections.length, 4)
 })
 

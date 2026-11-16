@@ -2,7 +2,7 @@
 
 import { statusTool } from './status.js'
 import { readTool } from './read.js'
-import { appendTool, editTool, listRevisionsTool, pruneTool, replaceSectionTool, restoreTool } from './write.js'
+import { appendTool, editTool } from './write.js'
 import { searchTool } from './search.js'
 
 /**
@@ -71,6 +71,16 @@ function harden(tool) {
 /**
  * Register every tool this build ships.
  *
+ * The set is deliberately five: `status`, `read`, `search`, `append`, `edit`.
+ * Bulk management — rewriting a whole section, restoring a backup, archiving old
+ * daily logs — lives in the panel, where a person sees a preview and a diff
+ * before the write. Registering those as tools as well meant the model could
+ * perform the same destructive edits with nothing in front of it but its own
+ * reasoning, and the version fence cannot ask "did you mean this?".
+ *
+ * There are no alias stubs for the retired names either: a definition that only
+ * ever refuses still advertises an ability the model does not have.
+ *
  * `search.enabled` is read at registration time as well as inside the tool, so
  * turning it off removes the tool from the model's catalog instead of leaving a
  * definition that only ever returns a refusal.
@@ -90,13 +100,7 @@ export function registerTools(ctx, deps) {
   const scoped = { ...deps, ctx }
   const tools = [statusTool(scoped), readTool(scoped)]
   if (scoped.cfg.search.enabled) tools.push(searchTool(scoped))
-  tools.push(appendTool(scoped), editTool(scoped), pruneTool(scoped))
-  // Section rewrite and rollback are gated by the same switches the panel uses:
-  // both bypass the entry model, so `ui.allowWriteActions` decides whether a
-  // whole-body or whole-file replacement is allowed at all.
-  if (scoped.cfg.ui.allowWriteActions) {
-    tools.push(replaceSectionTool(scoped), listRevisionsTool(scoped), restoreTool(scoped))
-  }
+  tools.push(appendTool(scoped), editTool(scoped))
 
   const disposers = []
   const dispose = () => {

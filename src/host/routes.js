@@ -533,6 +533,10 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
               beforeDays: Number(input.beforeDays ?? 30),
               dates: Array.isArray(input.dates) ? input.dates : undefined,
               dryRun: input.dryRun !== false,
+              // The plan is what makes an apply safe: it binds the archive to
+              // the exact set a person previewed, so a file created after the
+              // preview is not swept up by a fresh enumeration.
+              planId: typeof input.planId === 'string' && input.planId.length > 0 ? input.planId : undefined,
               operationId,
             },
             probe,

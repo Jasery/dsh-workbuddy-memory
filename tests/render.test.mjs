@@ -9,7 +9,8 @@ import test from 'node:test'
 import { normalizeConfig, resolveDistillAbove } from '../src/config.js'
 import { probeEnvironment } from '../src/env.js'
 import { createTranslator } from '../src/locale.js'
-import { distillHint, redact, renderSections, SECTION_ORDER } from '../src/render.js'
+import { distillHint, isAbnormalState, redact, renderSections, SECTION_ORDER } from '../src/render.js'
+import { describeBrief } from '../src/tools/status.js'
 
 const t = createTranslator('zh')
 
@@ -140,6 +141,35 @@ test('a limit too small for the wrapper contributes no block at all', () => {
     const full = fixture({ project: '## Notes\n- one\n', config: { inject: { limits: { project: limit } } } })
     assert.equal(names(renderSections({ cfg: full.cfg, probe: full.probe, t })).includes('workbuddy-memory:project'), false, `full mode at ${limit}`)
   }
+})
+
+test('a full-mode block that vanished records an abnormal state, not "full"', () => {
+  // `renderFileBlock` returns '' when the limit cannot fit the label, so the
+  // block is dropped. Recording `full` for it claimed the whole file was
+  // injected while the model saw nothing — and `compatibility` stayed silent
+  // because `full` is a normal state.
+  for (const limit of [20, 24]) {
+    const { cfg, probe } = fixture({ project: '## Notes\n- one\n', config: { inject: { limits: { project: limit } } } })
+    const sections = renderSections({ cfg, probe, t })
+    assert.equal(sections.some((section) => section.name === 'workbuddy-memory:project'), false)
+    assert.match(String(sections.states.project), /^full:too-small$/, `limit ${limit}: the state says why the block is missing`)
+    assert.equal(isAbnormalState(sections.states.project), true, 'a dropped block is not a normal state')
+  }
+})
+
+test('the too-small state reaches status.compatibility', () => {
+  // The state exists to be reported. `describeBrief` filters on
+  // `isAbnormalState`, so the shape chosen above decides whether a person ever
+  // hears about the block that disappeared.
+  const { cfg, probe } = fixture({ project: '## Notes\n- one\n', config: { inject: { limits: { project: 20 } } } })
+  const sections = renderSections({ cfg, probe, t })
+  const compatibility = Object.entries(sections.states)
+    .filter(([, state]) => isAbnormalState(state))
+    .map(([key, state]) => `${key}:${state}`)
+  assert.ok(compatibility.includes('project:full:too-small'), compatibility.join(', '))
+
+  const brief = describeBrief(probe, cfg, { mode: sections.mode, states: sections.states }, t)
+  assert.ok(brief.compatibility.includes('project:full:too-small'), JSON.stringify(brief.compatibility))
 })
 
 test('truncation never halves a surrogate pair', () => {

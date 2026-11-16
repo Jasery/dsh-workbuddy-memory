@@ -106,6 +106,38 @@ window.__ModuleLoader__.load({
       'doc.entryText': '条目内容',
       'doc.clickToEdit': '点击编辑',
       'doc.archiveOld': '归档旧日期',
+      'doc.history': '历史版本',
+      'doc.draft': '粘贴草案',
+
+      // version history
+      'history.title': '历史版本',
+      'history.subtitle': '{target} 的备份，最新的在前。选一个预览差异再决定是否恢复。',
+      'history.loading': '读取备份列表…',
+      'history.empty': '这个文件还没有备份：每次写入前才会留一份。',
+      'history.diffTitle': '与磁盘当前内容的差异（+ 是恢复后会回来的行）',
+      'history.stats': '+{added} / -{removed} 行',
+      'history.restore': '恢复这个版本',
+      'history.base': '恢复会以当前 revision {revision} 为基线，先备份再写。',
+      'history.noBase': '当前文件读不到完整 revision（太大或不可读），不能在这里恢复。',
+      'history.stale': '文件在你看差异之后又被改过了，请重新选版本。',
+      'history.restored': '已恢复到这个版本',
+
+      // draft apply
+      'draft.title': '粘贴草案',
+      'draft.subtitle': '把模型给出的完整正文和它的来源 revision 贴进来。面板会读一遍磁盘原文，只有 revision 对得上才预览差异。',
+      'draft.body': '草案正文（整份文件）',
+      'draft.bodyPlaceholder': '把完整的新正文粘贴到这里（草案）…',
+      'draft.base': '来源 revision',
+      'draft.baseHint': '模型生成草案时读到的 revision。和磁盘不一致时不会预览，也不会写入。',
+      'draft.preview': '预览差异',
+      'draft.apply': '应用草案',
+      'draft.needBase': '请先填入草案的来源 revision：没有基线就无法确认磁盘原文没变。',
+      'draft.noDiff': '正文和磁盘内容一致，没有需要写入的改动。',
+      'draft.staleBase': '磁盘上的 revision 是 {disk}，草案的基线是 {base}，两者不一致。请重新取一份原文和 revision，或让模型重新生成草案。',
+      'draft.truncated': '这个文件超过面板读取上限，读不到完整原文，不能用草案整份覆盖。',
+      'draft.applied': '草案已应用',
+      'draft.diffTitle': '与磁盘当前内容的差异（+ 是草案新增的行）',
+      'draft.stats': '+{added} / -{removed} 行',
 
       // feedback
       'flash.saved': '已保存，下一轮对话生效',
@@ -114,13 +146,11 @@ window.__ModuleLoader__.load({
       'flash.sectionSaved': '小节已保存',
       'flash.sectionRemoved': '小节已删除',
       'flash.documentSaved': '整份文件已保存',
-      'flash.overwritten': '已覆盖写入',
       'flash.undo': '撤销',
 
       // dialogs
       'dialog.conflictTitle': '文件已被改动',
       'dialog.conflictBody': '你看到的是 {mine}，磁盘上是 {disk}。草稿没有丢，选一个：',
-      'dialog.overwrite': '覆盖磁盘',
       'dialog.sourceTitle': '源码模式',
       'dialog.sourceBody': '整份文件编辑会绕过条目模型，只保留结构校验。确定继续？',
       'dialog.pruneTitle': '归档旧日期文件',
@@ -193,6 +223,14 @@ window.__ModuleLoader__.load({
       'code.action_failed': '动作执行失败。',
       'code.untrusted': '宿主拒绝了这个请求（跨站或未登录）。',
       'code.cross_origin': '跨站请求被拒绝。',
+      'code.plan_required': '归档需要先出计划：重新预览一次再归档。',
+      'code.plan_conflict': '这份归档计划已经失效（过期或文件集合变了），请重新出计划。',
+      'code.partial': '部分文件没有归档完成，可以用同一份计划重试。',
+      'code.outcome_unknown': '上一次写入的结果没能确认。用同一个操作 ID 重试是安全的；换 ID 可能重复执行。',
+      'code.operation_mismatch': '这个操作 ID 已经用在另一个请求上，不会重放。',
+      'code.operation_required': '缺少操作 ID，无法安全地重试归档。',
+      'code.no_revision': '这个备份已经不在列表里了，刷新后重选。',
+      'code.archive_capacity': '这次归档的文件太多，分批处理。',
 
       // settings card, second block
       'settings.loadingConfig': '读取配置…',
@@ -312,7 +350,6 @@ window.__ModuleLoader__.load({
       'editor.viewDiskDiff': '查看磁盘差异',
       'editor.reloadDiscard': '重新加载（丢弃草稿）',
       'editor.keepDraft': '保留草稿继续编辑',
-      'editor.overwriteBackup': '覆盖磁盘（先备份）',
       'editor.limitWarning': '已用 {chars} 字，超过注入限额 {limit}，下一轮注入会截断。',
       'editor.overLimitChip': '超注入限额',
 
@@ -338,6 +375,10 @@ window.__ModuleLoader__.load({
       'prune.archived': '已归档 {n} 个日期文件',
       'prune.running': '执行中…',
       'prune.action': '归档 {n} 个文件',
+      'prune.partial': '没有全部完成：{done} 个已归档，{left} 个结果未确定。用同一份计划重试，已归档的不会重复移动。',
+      'prune.retry': '重试（同一计划）',
+      'prune.stalePlan': '这份计划已经失效（过期或文件集合变了），请重新出计划再归档。',
+      'prune.planGone': '这份计划不在了，请重新出计划。',
 
       // misc
       'misc.undo': '已撤销',
@@ -408,6 +449,36 @@ window.__ModuleLoader__.load({
       'doc.entryText': 'Entry text',
       'doc.clickToEdit': 'Click to edit',
       'doc.archiveOld': 'Archive old dailies',
+      'doc.history': 'Version history',
+      'doc.draft': 'Paste a draft',
+
+      'history.title': 'Version history',
+      'history.subtitle': 'Backups of {target}, newest first. Pick one to preview the diff before deciding to restore.',
+      'history.loading': 'Reading the backup list…',
+      'history.empty': 'This file has no backups yet: one is taken before each write.',
+      'history.diffTitle': 'Diff against the file on disk (+ lines come back on restore)',
+      'history.stats': '+{added} / -{removed} lines',
+      'history.restore': 'Restore this version',
+      'history.base': 'The restore uses the current revision {revision} as its base and backs up first.',
+      'history.noBase': 'The current file has no usable revision (too large or unreadable), so it cannot be restored here.',
+      'history.stale': 'The file changed after you opened the diff; pick a version again.',
+      'history.restored': 'Restored to that version',
+
+      'draft.title': 'Paste a draft',
+      'draft.subtitle': 'Paste the complete new body and the revision it was written against. The panel reads the file back first: a diff is only built when the revision matches.',
+      'draft.body': 'Draft body (whole file)',
+      'draft.bodyPlaceholder': 'Paste the complete new body here…',
+      'draft.base': 'Source revision',
+      'draft.baseHint': 'The revision the draft was produced from. When it does not match the disk, nothing is previewed and nothing is written.',
+      'draft.preview': 'Preview the diff',
+      'draft.apply': 'Apply the draft',
+      'draft.needBase': 'Fill in the revision the draft came from first: without a base there is no way to know the file has not changed.',
+      'draft.noDiff': 'The body matches the file on disk; there is nothing to write.',
+      'draft.staleBase': 'The file on disk is {disk} but the draft was written against {base}. Read the file again for a fresh revision, or have the draft regenerated.',
+      'draft.truncated': 'This file is past the panel read limit, so its full text is unavailable and a whole-file draft cannot be applied.',
+      'draft.applied': 'Draft applied',
+      'draft.diffTitle': 'Diff against the file on disk (+ lines come from the draft)',
+      'draft.stats': '+{added} / -{removed} lines',
 
       'flash.saved': 'Saved; applies from the next turn',
       'flash.added': 'Added',
@@ -415,12 +486,10 @@ window.__ModuleLoader__.load({
       'flash.sectionSaved': 'Section saved',
       'flash.sectionRemoved': 'Section deleted',
       'flash.documentSaved': 'File saved',
-      'flash.overwritten': 'Overwritten',
       'flash.undo': 'Undo',
 
       'dialog.conflictTitle': 'The file changed underneath you',
       'dialog.conflictBody': 'You saw {mine}, the disk has {disk}. Your draft is not lost — pick one:',
-      'dialog.overwrite': 'Overwrite the file',
       'dialog.sourceTitle': 'Source mode',
       'dialog.sourceBody': 'Editing the whole file bypasses the entry model and keeps only structural checks. Continue?',
       'dialog.pruneTitle': 'Archive old daily notes',
@@ -491,6 +560,14 @@ window.__ModuleLoader__.load({
       'code.action_failed': 'The action failed.',
       'code.untrusted': 'The host refused this request (cross-site or not signed in).',
       'code.cross_origin': 'A cross-site request was refused.',
+      'code.plan_required': 'Archiving needs a plan first: preview it again, then archive.',
+      'code.plan_conflict': 'This archive plan is no longer valid (expired, or the file set changed). Recompute the plan.',
+      'code.partial': 'Some files were not archived; retry with the same plan.',
+      'code.outcome_unknown': 'The outcome of the previous write could not be confirmed. Retrying with the same operation id is safe; a new id may run it twice.',
+      'code.operation_mismatch': 'That operation id already belongs to a different request, so it was not replayed.',
+      'code.operation_required': 'An operation id is required to retry an archive safely.',
+      'code.no_revision': 'That backup is no longer in the list; refresh and pick again.',
+      'code.archive_capacity': 'Too many files for one archive run; do it in batches.',
 
       'settings.loadingConfig': "Loading configuration…",
       'settings.guardSection': "Block bare writes",
@@ -599,7 +676,6 @@ window.__ModuleLoader__.load({
       'editor.viewDiskDiff': "View the on-disk diff",
       'editor.reloadDiscard': "Reload (discard the draft)",
       'editor.keepDraft': "Keep the draft and keep editing",
-      'editor.overwriteBackup': "Overwrite the file (back up first)",
       'editor.limitWarning': "Using {chars} characters against a {limit}-character limit; the next turn truncates it.",
       'editor.overLimitChip': "Over the injection limit",
       'source.title': "Enter source mode?",
@@ -621,6 +697,10 @@ window.__ModuleLoader__.load({
       'prune.archived': "Archived {n} dated files",
       'prune.running': "Running…",
       'prune.action': "Archive {n} files",
+      'prune.partial': "Not everything finished: {done} archived, {left} with an unresolved outcome. Retry with the same plan — what already moved will not move twice.",
+      'prune.retry': "Retry (same plan)",
+      'prune.stalePlan': "This plan is no longer valid (expired, or the file set changed). Recompute the plan before archiving.",
+      'prune.planGone': "That plan is gone; recompute the plan.",
       'misc.undo': "Undone",
       'misc.confirmDeleteSectionBody': "Delete \"{section}\" and every entry in it? Every write is backed up first.",
       'misc.panelTitleWithName': "{name} · Memory",
@@ -1451,6 +1531,14 @@ window.__ModuleLoader__.load({
       action_failed: 'code.action_failed',
       untrusted: 'code.untrusted',
       cross_origin: 'code.cross_origin',
+      plan_required: 'code.plan_required',
+      plan_conflict: 'code.plan_conflict',
+      partial: 'code.partial',
+      outcome_unknown: 'code.outcome_unknown',
+      operation_mismatch: 'code.operation_mismatch',
+      operation_required: 'code.operation_required',
+      no_revision: 'code.no_revision',
+      archive_capacity: 'code.archive_capacity',
     }
 
     function describeCode(code) {
@@ -1700,6 +1788,20 @@ window.__ModuleLoader__.load({
       return h(IconBase, { size }, h('path', { d: 'M5 12.5l4.5 4.5L19 6.5' }))
     }
 
+    function HistoryIcon({ size = 14 } = {}) {
+      return h(
+        IconBase,
+        { size },
+        h('path', { d: 'M4 12a8 8 0 1 0 2.4-5.7' }),
+        h('path', { d: 'M4 4.5V9h4.5' }),
+        h('path', { d: 'M12 8.5V12l2.6 1.6' }),
+      )
+    }
+
+    function DraftIcon({ size = 14 } = {}) {
+      return h(IconBase, { size }, h('path', { d: 'M6 3.5h8l4 4v13H6Z' }), h('path', { d: 'M14 3.5V8h4M9 12h6M9 16h4' }))
+    }
+
     // ── current project resolution ──────────────────────────────────────────
 
     /**
@@ -1741,6 +1843,25 @@ window.__ModuleLoader__.load({
       } catch {
         // Private mode: the confirmation simply repeats next time.
       }
+    }
+
+    /** A diff block, or a line saying the diff was too large to build. */
+    function diffBlock(diff, title) {
+      if (!diff) return null
+      return h(
+        'div',
+        null,
+        h('div', { style: { fontSize: '12px', fontWeight: 600, margin: '4px 0 6px' } }, title),
+        diff.truncated
+          ? h('div', { className: 'wbm-note', style: { padding: 0 } }, t('editor.tooLargeStatsOnly'))
+          : h(
+              'div',
+              { className: 'wbm-diff' },
+              diff.rows.slice(0, 240).map((row, index) =>
+                h('div', { key: index, className: row.type }, `${row.type === 'add' ? '+' : row.type === 'del' ? '-' : ' '} ${row.text}`),
+              ),
+            ),
+      )
     }
 
     // ── the shared workspace ────────────────────────────────────────────────
@@ -1785,10 +1906,19 @@ window.__ModuleLoader__.load({
       const [undo, setUndo] = React.useState(null)
       const [stale, setStale] = React.useState(false)
       const [railOpen, setRailOpen] = React.useState(false)
+      // Both management surfaces keep their own frozen target: a list or a diff
+      // is about one file, and it must not be reused for another one that
+      // happens to be open when the response arrives.
+      const [history, setHistory] = React.useState(null)
+      const [draft, setDraft] = React.useState(null)
 
       const noticeTimer = React.useRef(null)
       const contentSeq = React.useRef(0)
       const searchRef = React.useRef(null)
+      // Request generation for the two async management surfaces. Anything that
+      // changes which file is on screen — including closing it — bumps this, so a
+      // late response is dropped instead of being applied to the new file.
+      const manageSeq = React.useRef(0)
 
       const flash = React.useCallback((text) => {
         setNotice(text)
@@ -1870,6 +2000,7 @@ window.__ModuleLoader__.load({
         setNewSection(null)
         setSectionEdit(null)
         setSourceEdit(null)
+        dropManagement()
       }, [mode, effectiveKey])
 
       React.useEffect(() => {
@@ -1905,6 +2036,22 @@ window.__ModuleLoader__.load({
         setStale(Boolean(live && doc.revision && live !== doc.revision))
       }, [state, doc, selected, projectDetail, user])
 
+      /**
+       * Invalidate every in-flight management request.
+       *
+       * Called whenever the surface stops pointing at one file — a different
+       * file, a different project, or no file at all. Waiting for `openFile` to
+       * bump the counter is not enough: `selectProject` for a project with no
+       * memory clears `selected` without opening anything, and a response that
+       * lands after that would render a backup list for a file nobody is
+       * looking at.
+       */
+      function dropManagement() {
+        manageSeq.current += 1
+        setHistory(null)
+        setDraft(null)
+      }
+
       async function openFile(target, date, key = effectiveKey) {
         if (!target) return
         const seq = contentSeq.current + 1
@@ -1920,6 +2067,7 @@ window.__ModuleLoader__.load({
         setSourceEdit(null)
         setQuery('')
         setRailOpen(false)
+        dropManagement()
         try {
           const params = new URLSearchParams({ target })
           if (date) params.set('date', date)
@@ -1954,6 +2102,15 @@ window.__ModuleLoader__.load({
         })
       }
 
+      /**
+       * Open source mode with the revision it started from.
+       *
+       * A whole-file edit is the one place a person can delete a section by
+       * accident, so the editor records the revision it opened with and the
+       * original text. Saving then shows the diff against that original and
+       * submits that revision — not whatever the document says by then, which a
+       * background refresh may have moved.
+       */
       function openSource() {
         if (!canSource) return
         if (doc?.truncated) {
@@ -1968,7 +2125,20 @@ window.__ModuleLoader__.load({
           setConfirmSource(true)
           return
         }
-        setSourceEdit({ text: doc?.text ?? '' })
+        beginSource()
+      }
+
+      /** Start source mode from the document currently on screen. */
+      function beginSource() {
+        const text = doc?.text ?? ''
+        setSourceEdit({
+          text,
+          original: text,
+          baseRevision: doc?.revision ?? null,
+          preview: null,
+          message: '',
+          operationId: newOperationId(),
+        })
         setSectionEdit(null)
         setNewSection(null)
       }
@@ -1985,20 +2155,29 @@ window.__ModuleLoader__.load({
         }
         acknowledgeSource()
         setConfirmSource(false)
-        setSourceEdit({ text: doc?.text ?? '' })
-        setSectionEdit(null)
-        setNewSection(null)
+        beginSource()
       }
 
+      /**
+       * One action against the store, with the panel's shared error handling.
+       *
+       * `payload.key` names the project the write belongs to; everything else is
+       * forwarded verbatim, so an action that freezes a revision or an operation
+       * id keeps it. A successful write records an undo entry bound to *that*
+       * write — the file, the project, the backup it produced and the revision it
+       * left behind — rather than to whatever document happens to be on screen
+       * ten seconds later.
+       */
       async function act(payload) {
         setBusy(true)
         setError('')
         const key = payload.key ?? selected?.key ?? effectiveKey
         const body = { ...payload }
         delete body.key
-        // One id per click. A caller that supplies its own (the conflict
-        // dialog's retry) keeps it, so a retried request replays the operation
-        // the store may already have committed instead of writing twice.
+        // One id per click. A caller that supplies its own (a retry, or a frozen
+        // draft/archive request) keeps it, so a repeated request replays the
+        // operation the store may already have committed instead of writing
+        // twice.
         if (!body.operationId) body.operationId = newOperationId()
         const suffix = key ? `?project=${encodeURIComponent(key)}` : ''
         try {
@@ -2007,8 +2186,12 @@ window.__ModuleLoader__.load({
           if (result.ok) {
             if (result.backup) {
               setUndo({
+                key: key ?? null,
                 target: payload.target,
                 name: String(result.backup).split(/[\\/]/).pop(),
+                // The revision this write produced. The undo must name it: using
+                // the document's current revision would either fail the CAS (if
+                // the file moved on) or, worse, target a different file.
                 revision: result.revision,
                 until: Date.now() + 10000,
               })
@@ -2089,17 +2272,39 @@ window.__ModuleLoader__.load({
         }
       }
 
+      /**
+       * Save a source edit against the revision it opened with.
+       *
+       * The first click on save builds the diff against the original text and
+       * stops there: a whole-file write is exactly the shape that needs a look
+       * before it lands. The second click writes, and it writes with the frozen
+       * base — a stale base is refused by the store instead of overwriting
+       * whatever arrived in the meantime.
+       */
       async function saveSource(text) {
+        if (!sourceEdit) return
+        if (!sourceEdit.preview) {
+          const diff = lineDiff(sourceEdit.original ?? '', text)
+          setSourceEdit({ ...sourceEdit, text, preview: diff, message: '' })
+          return
+        }
         const result = await act({
           type: 'replace-document',
           target: selected.target,
           text,
-          expectedRevision: doc?.revision,
+          expectedRevision: sourceEdit.baseRevision,
+          operationId: sourceEdit.operationId,
         })
         if (result?.ok) {
           setSourceEdit(null)
           flash(t('flash.documentSaved'))
           await reload()
+        } else if (result?.code === 'conflict') {
+          // Keep the draft and the text, drop the preview: the person has to
+          // reload (or re-preview) rather than write over a file they have not
+          // seen. Deleting the revision to force it through is the one thing
+          // this path must never do.
+          setSourceEdit((current) => (current ? { ...current, preview: null, message: t('history.stale') } : current))
         }
       }
 
@@ -2117,9 +2322,24 @@ window.__ModuleLoader__.load({
         }
       }
 
+      /**
+       * Put the file back the way the last write found it.
+       *
+       * The undo entry carries its own project, target, backup name and the
+       * revision that write produced. Reading any of those from the current
+       * document would restore the wrong file the moment a person switches
+       * files inside the ten-second window — and the store would happily accept
+       * it, because that revision really does belong to that other file.
+       */
       async function undoLast() {
         if (!undo) return
-        const result = await act({ type: 'restore', target: undo.target, name: undo.name, expectedRevision: doc?.revision })
+        const result = await act({
+          type: 'restore',
+          target: undo.target,
+          name: undo.name,
+          expectedRevision: undo.revision,
+          key: undo.key,
+        })
         if (result?.ok) {
           setUndo(null)
           flash(t('misc.undo'))
@@ -2142,6 +2362,7 @@ window.__ModuleLoader__.load({
           setSelected(null)
           setDoc(null)
           setSourceEdit(null)
+          dropManagement()
         }
       }
 
@@ -2156,6 +2377,210 @@ window.__ModuleLoader__.load({
 
       function detailFor(key) {
         return details[key] ?? (key === effectiveKey ? state?.stores?.project ?? null : null)
+      }
+
+      // ── version history ────────────────────────────────────────────────────
+
+      /** The frozen identity of the file a management surface is about. */
+      function frozenTarget() {
+        if (!selected) return null
+        return {
+          projectKey: selected.key ?? effectiveKey ?? null,
+          target: selected.target,
+          date: selected.date ?? undefined,
+          name: null,
+          // The revision the diff is computed against. Frozen with the request:
+          // reading `doc.revision` when the restore button is clicked would let a
+          // refresh in between move the base out from under the preview.
+          currentRevision: doc?.revision ?? null,
+        }
+      }
+
+      /** Open the backup list for the file on screen. */
+      async function openHistory() {
+        const frozen = frozenTarget()
+        if (!frozen) return
+        const seq = manageSeq.current + 1
+        manageSeq.current = seq
+        setHistory({ ...frozen, status: 'loading', revisions: [], picked: null, diff: null, message: '' })
+        const params = new URLSearchParams({ target: frozen.target })
+        if (frozen.projectKey) params.set('project', frozen.projectKey)
+        try {
+          const body = await getJson(`${API}/revisions?${params.toString()}`)
+          if (seq !== manageSeq.current) return
+          setHistory((current) =>
+            current && current.target === frozen.target && current.projectKey === frozen.projectKey
+              ? { ...current, status: 'ready', revisions: body.revisions ?? [], message: '' }
+              : current,
+          )
+        } catch (cause) {
+          if (seq !== manageSeq.current) return
+          setHistory((current) => (current ? { ...current, status: 'error', message: describeCode(String(cause?.message ?? cause)) } : current))
+        }
+      }
+
+      /** Read one backup and diff it against the file on disk. */
+      async function previewRevision(name) {
+        const frozen = history
+        if (!frozen) return
+        const seq = manageSeq.current + 1
+        manageSeq.current = seq
+        setHistory({ ...frozen, picked: name, status: 'loading-diff', diff: null, message: '' })
+        const params = new URLSearchParams({ target: frozen.target, name })
+        if (frozen.projectKey) params.set('project', frozen.projectKey)
+        try {
+          const body = await getJson(`${API}/revision?${params.toString()}`)
+          if (seq !== manageSeq.current) return
+          setHistory((current) => {
+            if (!current || current.target !== frozen.target || current.projectKey !== frozen.projectKey) return current
+            const currentText = body.current?.text ?? ''
+            return {
+              ...current,
+              status: 'ready',
+              picked: name,
+              // The restore base is the revision the diff was built against, not
+              // whatever the document reports later.
+              baseRevision: body.current?.revision ?? null,
+              diff: lineDiff(currentText, body.text ?? ''),
+              message: body.current?.revision ? '' : t('history.noBase'),
+            }
+          })
+        } catch (cause) {
+          if (seq !== manageSeq.current) return
+          setHistory((current) => (current ? { ...current, status: 'ready', diff: null, message: describeCode(String(cause?.message ?? cause)) } : current))
+        }
+      }
+
+      /** Restore the previewed backup, against the revision its diff used. */
+      async function restoreRevision() {
+        const frozen = history
+        if (!frozen?.picked || !frozen.baseRevision) return
+        const result = await act({
+          type: 'restore',
+          target: frozen.target,
+          name: frozen.picked,
+          expectedRevision: frozen.baseRevision,
+          key: frozen.projectKey,
+        })
+        if (result?.ok) {
+          setHistory(null)
+          flash(t('history.restored'))
+          await reload()
+        } else if (result?.code === 'conflict') {
+          setHistory((current) => (current ? { ...current, diff: null, baseRevision: null, message: t('history.stale') } : current))
+        }
+      }
+
+      // ── drafts ─────────────────────────────────────────────────────────────
+
+      /**
+       * Open the draft surface for the file on screen.
+       *
+       * A draft is a whole-file body the model produced plus the revision it read
+       * it from. The panel cannot verify the body, but it can refuse to preview
+       * one whose base is not the file it is looking at right now — which is the
+       * difference between "the model read the current file" and "the model read
+       * something three writes ago".
+       */
+      function openDraft() {
+        const frozen = frozenTarget()
+        if (!frozen) return
+        manageSeq.current += 1
+        setHistory(null)
+        // The panel already knows whether this source can be drafted against: a
+        // truncated read has no revision, so the base field would start empty and
+        // every preview would fail. Saying so up front is cheaper than letting the
+        // person paste a body first.
+        const unusable = !frozen.currentRevision
+        setDraft({
+          ...frozen,
+          body: '',
+          base: frozen.currentRevision ?? '',
+          preview: null,
+          message: unusable ? t('draft.truncated') : '',
+          status: 'editing',
+          operationId: newOperationId(),
+        })
+      }
+
+      /** Read the full original and diff the draft against it, or refuse. */
+      async function previewDraft() {
+        const frozen = draft
+        if (!frozen) return
+        const base = String(frozen.base ?? '').trim()
+        if (!base) {
+          // An empty base has two causes, and they need different advice: the
+          // source cannot be read whole, or the person has not pasted one yet.
+          const message = frozen.currentRevision ? t('draft.needBase') : t('draft.truncated')
+          setDraft({ ...frozen, status: 'editing', preview: null, message })
+          return
+        }
+        if (!String(frozen.body ?? '').trim()) return
+        const seq = manageSeq.current + 1
+        manageSeq.current = seq
+        setDraft({ ...frozen, status: 'loading', preview: null, message: '' })
+        const params = new URLSearchParams({ target: frozen.target })
+        if (frozen.date) params.set('date', frozen.date)
+        if (frozen.projectKey) params.set('project', frozen.projectKey)
+        try {
+          const body = await getJson(`${API}/content?${params.toString()}`)
+          if (seq !== manageSeq.current) return
+          setDraft((current) => {
+            if (!current || current.target !== frozen.target || current.projectKey !== frozen.projectKey) return current
+            // The two ways a draft can be unusable, both refused before a diff:
+            // the source is not whole, or the base is not what is on disk.
+            if (body.truncated || !body.revision) return { ...current, status: 'editing', preview: null, message: t('draft.truncated') }
+            if (body.revision !== base) return { ...current, status: 'editing', preview: null, message: t('draft.staleBase', { disk: body.revision, base }) }
+            const diff = lineDiff(body.text ?? '', String(current.body ?? ''))
+            if (!diff.truncated && diff.added === 0 && diff.removed === 0) return { ...current, status: 'editing', preview: null, message: t('draft.noDiff') }
+            return { ...current, status: 'previewed', baseRevision: base, preview: diff, message: '' }
+          })
+        } catch (cause) {
+          if (seq !== manageSeq.current) return
+          setDraft((current) => (current ? { ...current, status: 'editing', preview: null, message: describeCode(String(cause?.message ?? cause)) } : current))
+        }
+      }
+
+      /** Apply the previewed draft: frozen base, frozen body, one operation id. */
+      async function applyDraft() {
+        const frozen = draft
+        if (!frozen || frozen.status !== 'previewed') return
+        const result = await act({
+          type: 'replace-document',
+          target: frozen.target,
+          text: frozen.body,
+          expectedRevision: frozen.baseRevision,
+          // The same id for this draft, so a retry of the click replays instead
+          // of writing the body twice.
+          operationId: frozen.operationId,
+          key: frozen.projectKey,
+        })
+        if (result?.ok) {
+          setDraft(null)
+          flash(t('draft.applied'))
+          await reload()
+        } else if (result?.code === 'conflict') {
+          setDraft((current) => (current ? { ...current, status: 'editing', preview: null, message: t('history.stale') } : current))
+        }
+      }
+
+      /**
+       * Edit one field of the draft, discarding any preview built from the old
+       * values.
+       *
+       * A preview is a statement about one body against one base. Keeping it
+       * after either changes would let the apply button write something the
+       * person never saw.
+       */
+      function editDraft(patch) {
+        setDraft((current) => {
+          if (!current) return current
+          const next = { ...current, ...patch, status: 'editing', preview: null, message: '' }
+          // A fresh body or base means a fresh operation: replaying the previous
+          // id would be refused as an operation_mismatch, which reads as a bug.
+          if ('body' in patch || 'base' in patch) next.operationId = newOperationId()
+          return next
+        })
       }
 
       // ── rail ──────────────────────────────────────────────────────────────
@@ -2384,6 +2809,7 @@ window.__ModuleLoader__.load({
                     setSectionEdit(null)
                     setSourceEdit(null)
                     setExpanded(new Set())
+                    dropManagement()
                   },
                 },
                 t('rail.allProjects'),
@@ -2654,6 +3080,7 @@ window.__ModuleLoader__.load({
       function renderSource() {
         const current = sourceEdit.text
         const validation = current.length > 262144 ? t('editor.fileTooLarge') : null
+        const previewed = Boolean(sourceEdit.preview)
         return h(
           'div',
           { className: 'wbm-editor' },
@@ -2667,16 +3094,25 @@ window.__ModuleLoader__.load({
               if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') saveSource(current)
               if (event.key === 'Escape') setSourceEdit(null)
             },
-            onChange: (event) => setSourceEdit({ text: event.target.value }),
+            onChange: (event) =>
+              setSourceEdit((entry) =>
+                entry ? { ...entry, text: event.target.value, preview: null, message: '', operationId: newOperationId() } : entry,
+              ),
           }),
           validation ? h('div', { className: 'wbm-banner warn' }, validation) : null,
+          sourceEdit.message ? h('div', { className: 'wbm-banner warn' }, sourceEdit.message) : null,
+          diffBlock(sourceEdit.preview, t('draft.diffTitle')),
           h(
             'div',
             { className: 'wbm-editor-bar' },
             h('span', { className: 'wbm-note', style: { padding: 0 } }, t('editor.saveHint')),
             h('span', { className: 'wbm-spacer' }),
             h('button', { type: 'button', className: 'wbm-btn', onClick: () => setSourceEdit(null) }, t('common.cancel')),
-            h('button', { type: 'button', className: 'wbm-btn primary', disabled: busy || Boolean(validation), onClick: () => saveSource(current) }, t('editor.saveDocument')),
+            h(
+              'button',
+              { type: 'button', className: 'wbm-btn primary', disabled: busy || Boolean(validation), onClick: () => saveSource(current) },
+              previewed ? t('editor.saveDocument') : t('draft.preview'),
+            ),
           ),
         )
       }
@@ -2814,6 +3250,10 @@ window.__ModuleLoader__.load({
 
       function docHeader() {
         const target = selected?.target
+        // History and drafts are whole-file surfaces: they need a full revision
+        // to freeze as their base, and a daily note has none (it is appended to,
+        // never rewritten). The profile is read-only.
+        const canManage = Boolean(panelWriteOn && state?.writeEnabled !== false && !state?.readOnly && selected && doc && target !== 'profile' && target !== 'project-daily')
         return h(
           'div',
           { className: 'wbm-doc-head' },
@@ -2836,8 +3276,14 @@ window.__ModuleLoader__.load({
             canSource
               ? h('button', { type: 'button', className: 'wbm-btn', onClick: openSource }, h(SourceIcon), t('editor.source'))
               : null,
+            canManage
+              ? h('button', { type: 'button', className: 'wbm-btn', title: t('doc.history'), onClick: openHistory }, h(HistoryIcon), t('doc.history'))
+              : null,
+            canManage
+              ? h('button', { type: 'button', className: 'wbm-btn', title: t('doc.draft'), onClick: openDraft }, h(DraftIcon), t('doc.draft'))
+              : null,
             selected && writable && target === 'project-memory'
-              ? h('button', { type: 'button', className: 'wbm-btn', onClick: () => setDialog({ kind: 'prune' }) }, h(SparkIcon), t('doc.archiveOld'))
+              ? h('button', { type: 'button', className: 'wbm-btn', title: t('doc.archiveOld'), onClick: () => setDialog({ kind: 'prune' }) }, h(SparkIcon), t('doc.archiveOld'))
               : null,
             h('span', { className: 'wbm-spacer' }),
             h('button', { type: 'button', className: 'wbm-btn', onClick: reload, disabled: busy }, h(RefreshIcon), t('common.reload')),
@@ -2981,7 +3427,7 @@ window.__ModuleLoader__.load({
             )
           : null,
         h('div', { className: 'wbm-layout' }, rail(), detail()),
-        conflict ? h(ConflictDialog, { conflict, doc, act, getJson, selected, projectKey: effectiveKey, onClose: () => setConflict(null), reload, flash }) : null,
+        conflict ? h(ConflictDialog, { conflict, doc, getJson, selected, projectKey: effectiveKey, onClose: () => setConflict(null), reload }) : null,
         confirmSource
           ? h(SourceConfirmDialog, {
               allowed: flags.allowFullTextEdit,
@@ -2991,6 +3437,31 @@ window.__ModuleLoader__.load({
           : null,
         dialog?.kind === 'prune'
           ? h(PruneDialog, { projectKey: effectiveKey, act, onClose: () => setDialog(null), flash, reload })
+          : null,
+        history
+          ? h(HistoryDialog, {
+              state: history,
+              onPick: previewRevision,
+              onRestore: restoreRevision,
+              onClose: () => {
+                manageSeq.current += 1
+                setHistory(null)
+              },
+              busy,
+            })
+          : null,
+        draft
+          ? h(DraftDialog, {
+              state: draft,
+              onEdit: editDraft,
+              onPreview: previewDraft,
+              onApply: applyDraft,
+              onClose: () => {
+                manageSeq.current += 1
+                setDraft(null)
+              },
+              busy,
+            })
           : null,
         dialog?.kind === 'remove-section'
           ? h(ConfirmDialog, {
@@ -3078,8 +3549,17 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function ConflictDialog({ conflict, doc, act, getJson, selected, projectKey, onClose, reload, flash }) {
-      const [busy, setBusy] = React.useState(false)
+    /**
+     * A write was refused because the file moved.
+     *
+     * The three ways out are: reload (lose the draft, see the file as it is),
+     * keep the draft and keep editing (the next save is refused again until it
+     * is reloaded), and view the diff. There is deliberately no "overwrite
+     * anyway": that button deleted `expectedRevision` and wrote regardless, which
+     * is the one outcome the version fence exists to prevent — and it discards
+     * whatever the other client had just written.
+     */
+    function ConflictDialog({ conflict, doc, getJson, selected, projectKey, onClose, reload }) {
       const [diff, setDiff] = React.useState(null)
       const diskRevision = conflict?.body?.revision
 
@@ -3127,50 +3607,48 @@ window.__ModuleLoader__.load({
                 className: 'wbm-btn primary',
                 onClick: async () => {
                   onClose()
-                  setBusy(false)
                   await reload()
                 },
               },
               t('editor.reloadDiscard'),
             ),
             h('button', { type: 'button', className: 'wbm-btn', onClick: onClose }, t('editor.keepDraft')),
-            h(
-              'button',
-              {
-                type: 'button',
-                className: 'wbm-btn danger',
-                disabled: busy,
-                onClick: async () => {
-                  setBusy(true)
-                  const payload = { ...conflict.payload }
-                  delete payload.expectedRevision
-                  const result = await act({ ...payload, key: projectKey })
-                  setBusy(false)
-                  if (result?.ok) {
-                    onClose()
-                    flash(t('flash.overwritten'))
-                    await reload()
-                  }
-                },
-              },
-              t('editor.overwriteBackup'),
-            ),
           ),
         ),
       )
     }
 
+    /**
+     * Archive old daily files, in two steps: a preview, then an apply bound to it.
+     *
+     * The apply freezes `{projectKey, planId, dates, operationId}` on the first
+     * click. That matters for the retry: the store resolves an archive by
+     * operation id first, and only then consults the plan, so a retry with the
+     * same id and the same full date set replays whatever already moved instead
+     * of moving a second copy. Retrying with only the dates that failed would
+     * leave the unresolved ones without the receipt that decides their fate, and
+     * minting a new plan would re-enumerate a set nobody previewed.
+     *
+     * A stale plan (`plan_conflict` / expired / `unknown_plan`) is different: it
+     * cannot be replayed at all, so the only honest answer is a fresh preview.
+     */
     function PruneDialog({ projectKey, act, onClose, flash, reload }) {
       const [plan, setPlan] = React.useState(null)
       const [picked, setPicked] = React.useState(null)
       const [beforeDays, setBeforeDays] = React.useState(30)
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState('')
+      // The frozen apply request. Cleared by a new preview or a changed pick,
+      // because either means the person is looking at a different set.
+      const [frozen, setFrozen] = React.useState(null)
+      const [outcome, setOutcome] = React.useState(null)
 
       const load = React.useCallback(
         async (days) => {
           setBusy(true)
           setError('')
+          setFrozen(null)
+          setOutcome(null)
           const body = await act({ type: 'prune', dryRun: true, beforeDays: days, key: projectKey })
           setBusy(false)
           if (body?.ok) {
@@ -3189,7 +3667,74 @@ window.__ModuleLoader__.load({
 
       const candidates = plan?.candidates ?? []
       const pickedRows = candidates.filter((row) => !picked || picked.has(row.date))
-      const totals = pickedRows.reduce((sum, row) => sum + (row.entries ?? 0), 0)
+
+      /**
+       * Run one archive request, and classify what came back.
+       *
+       * Only three outcomes leave the request reusable: success (with or without
+       * `duplicate`), a partial move, and an unconfirmed one. Everything that
+       * says the plan itself is stale drops it.
+       */
+      async function apply(request) {
+        setBusy(true)
+        setError('')
+        setOutcome(null)
+        const body = await act(request)
+        setBusy(false)
+        if (body?.ok) {
+          setOutcome({ kind: 'done', pruned: body.pruned ?? [] })
+          flash(t('prune.archived', { n: body.pruned?.length ?? 0 }))
+          onClose()
+          await reload()
+          return
+        }
+        const code = String(body?.code ?? 'failed')
+        const stale = code === 'plan_conflict' || code === 'plan_required' || code === 'operation_mismatch'
+        if (stale) {
+          // The plan cannot be replayed at all, so keeping the frozen request
+          // would only offer a button that must fail again.
+          setFrozen(null)
+          setPlan(null)
+          setPicked(null)
+          setError(t(code === 'plan_required' ? 'prune.planGone' : 'prune.stalePlan'))
+          return
+        }
+        if (code === 'partial' || code === 'outcome_unknown') {
+          setOutcome({ kind: 'unresolved', done: (body.pruned ?? []).length, left: (body.failed ?? []).length })
+          await reload()
+          return
+        }
+        setError(describeCode(code))
+      }
+
+      /** The apply button: freeze the request on the first click, then retry it. */
+      async function submit() {
+        if (frozen) {
+          await apply(frozen)
+          return
+        }
+        const request = {
+          type: 'prune',
+          dryRun: false,
+          planId: plan?.planId,
+          beforeDays,
+          dates: pickedRows.map((row) => row.date),
+          operationId: newOperationId(),
+          key: projectKey,
+        }
+        setFrozen(request)
+        await apply(request)
+      }
+
+      const pick = (next) => {
+        setPicked(next)
+        // A different selection is a different request: the frozen one names the
+        // set it was built from.
+        setFrozen(null)
+        setOutcome(null)
+      }
+
+      const retryable = Boolean(frozen)
 
       return h(
         'div',
@@ -3215,6 +3760,9 @@ window.__ModuleLoader__.load({
             h('button', { type: 'button', className: 'wbm-btn', onClick: () => load(beforeDays), disabled: busy }, t('prune.replan')),
           ),
           error ? h('div', { className: 'wbm-banner warn' }, error) : null,
+          outcome?.kind === 'unresolved'
+            ? h('div', { className: 'wbm-banner warn' }, t('prune.partial', { done: outcome.done, left: outcome.left }))
+            : null,
           !plan
             ? h('div', { className: 'wbm-note' }, busy ? t('prune.scanning') : t('prune.noResults'))
             : candidates.length === 0
@@ -3233,7 +3781,7 @@ window.__ModuleLoader__.load({
                           const next = new Set(picked ?? [])
                           if (event.target.checked) next.add(row.date)
                           else next.delete(row.date)
-                          setPicked(next)
+                          pick(next)
                         },
                       }),
                       h(
@@ -3253,23 +3801,135 @@ window.__ModuleLoader__.load({
               {
                 type: 'button',
                 className: 'wbm-btn primary',
-                disabled: busy || pickedRows.length === 0,
-                onClick: async () => {
-                  setBusy(true)
-                  const dates = pickedRows.map((row) => row.date)
-                  const body = await act({ type: 'prune', dryRun: false, beforeDays, dates, key: projectKey })
-                  setBusy(false)
-                  if (body?.ok) {
-                    flash(t('prune.archived', { n: body.pruned?.length ?? 0 }))
-                    onClose()
-                    await reload()
-                  } else {
-                    setError(describeCode(body?.code ?? 'failed'))
-                  }
-                },
+                disabled: busy || (!retryable && (pickedRows.length === 0 || !plan)),
+                onClick: submit,
               },
-              busy ? t('prune.running') : t('prune.action', { n: pickedRows.length }),
+              busy ? t('prune.running') : retryable ? t('prune.retry') : t('prune.action', { n: pickedRows.length }),
             ),
+          ),
+        ),
+      )
+    }
+
+    /**
+     * Browse the backups of the file on screen and restore one.
+     *
+     * The state it renders is frozen by the caller: `{projectKey, target, name,
+     * currentRevision}`. Nothing here reads the live document, so a list that
+     * arrives after the person switched files cannot be previewed or restored
+     * against the new one — the caller drops it instead of rendering it.
+     */
+    function HistoryDialog({ state, onPick, onRestore, onClose, busy }) {
+      const frozen = state ?? {}
+      const revisions = frozen.revisions ?? []
+      const diff = frozen.diff
+      const ready = frozen.status === 'ready'
+      return h(
+        'div',
+        { className: 'wbm-mask' },
+        h(
+          'div',
+          { className: 'wbm-modal' },
+          h('div', { className: 'h' }, t('history.title')),
+          h('div', { className: 'd' }, t('history.subtitle', { target: TARGET_LABEL[frozen.target] ?? frozen.target ?? '' })),
+          frozen.status === 'loading' && !revisions.length ? h('div', { className: 'wbm-note' }, t('history.loading')) : null,
+          frozen.message ? h('div', { className: 'wbm-banner warn' }, frozen.message) : null,
+          ready && revisions.length === 0 ? h('div', { className: 'wbm-note' }, t('history.empty')) : null,
+          revisions.length
+            ? h(
+                'div',
+                { className: 'wbm-list' },
+                revisions.map((row) =>
+                  h(
+                    'button',
+                    {
+                      key: row.name,
+                      type: 'button',
+                      className: `wbm-list-row${frozen.picked === row.name ? ' wbm-row-active' : ''}`,
+                      style: { textAlign: 'left', cursor: 'pointer', background: 'transparent', border: 'none', font: 'inherit' },
+                      onClick: () => onPick(row.name),
+                    },
+                    h('span', { className: 'wbm-name' }, row.name),
+                    h('span', { className: 'wbm-meta' }, `${relativeTime(row.mtime)} · ${humanBytes(row.bytes)}`),
+                  ),
+                ),
+              )
+            : null,
+          diff ? diffBlock(diff, t('history.diffTitle')) : null,
+          diff && !diff.truncated
+            ? h('div', { className: 'wbm-note', style: { padding: 0 } }, t('history.stats', { added: diff.added, removed: diff.removed }))
+            : null,
+          frozen.baseRevision && frozen.picked
+            ? h('div', { className: 'wbm-note', style: { padding: 0 } }, t('history.base', { revision: frozen.baseRevision }))
+            : null,
+          h(
+            'div',
+            { className: 'row', style: { justifyContent: 'flex-end' } },
+            h('button', { type: 'button', className: 'wbm-btn', onClick: onClose }, t('common.close')),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'wbm-btn primary',
+                disabled: busy || !diff || !frozen.baseRevision,
+                onClick: onRestore,
+              },
+              t('history.restore'),
+            ),
+          ),
+        ),
+      )
+    }
+
+    /**
+     * Paste a draft body plus the revision it was written against.
+     *
+     * The panel owns the two checks the model cannot make for itself: the file
+     * must be readable whole, and its revision must be exactly the base the draft
+     * names. A diff is only built after both pass, and the apply submits that
+     * same base — so a draft is never written on top of a file the person has not
+     * seen.
+     */
+    function DraftDialog({ state, onEdit, onPreview, onApply, onClose, busy }) {
+      const frozen = state ?? {}
+      const previewed = frozen.status === 'previewed'
+      const canPreview = String(frozen.body ?? '').trim().length > 0 && String(frozen.base ?? '').trim().length > 0
+      return h(
+        'div',
+        { className: 'wbm-mask' },
+        h(
+          'div',
+          { className: 'wbm-modal' },
+          h('div', { className: 'h' }, t('draft.title')),
+          h('div', { className: 'd' }, t('draft.subtitle')),
+          h('div', { style: { fontSize: '12px', fontWeight: 600 } }, t('draft.body')),
+          h('textarea', {
+            className: 'wbm-textarea',
+            style: { minHeight: '220px' },
+            value: frozen.body ?? '',
+            spellCheck: false,
+            placeholder: t('draft.bodyPlaceholder'),
+            onChange: (event) => onEdit({ body: event.target.value }),
+          }),
+          h('div', { style: { fontSize: '12px', fontWeight: 600 } }, t('draft.base')),
+          h('input', {
+            className: 'wbm-input',
+            value: frozen.base ?? '',
+            spellCheck: false,
+            onChange: (event) => onEdit({ base: event.target.value }),
+          }),
+          h('div', { className: 'wbm-note', style: { padding: 0 } }, t('draft.baseHint')),
+          frozen.message ? h('div', { className: 'wbm-banner warn' }, frozen.message) : null,
+          frozen.preview ? diffBlock(frozen.preview, t('draft.diffTitle')) : null,
+          frozen.preview && !frozen.preview.truncated
+            ? h('div', { className: 'wbm-note', style: { padding: 0 } }, t('draft.stats', { added: frozen.preview.added, removed: frozen.preview.removed }))
+            : null,
+          h(
+            'div',
+            { className: 'row', style: { justifyContent: 'flex-end' } },
+            h('button', { type: 'button', className: 'wbm-btn', onClick: onClose }, t('common.cancel')),
+            h('button', { type: 'button', className: 'wbm-btn', disabled: busy || !canPreview, onClick: onPreview }, t('draft.preview')),
+            h('button', { type: 'button', className: 'wbm-btn primary', disabled: busy || !previewed, onClick: onApply }, t('draft.apply')),
           ),
         ),
       )
@@ -3495,6 +4155,8 @@ window.__ModuleLoader__.load({
         MemoryProjectTab,
         SettingsCard,
         PruneDialog,
+        HistoryDialog,
+        DraftDialog,
         ConfirmDialog,
         SourceConfirmDialog,
         OverviewIcon,

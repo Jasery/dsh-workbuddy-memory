@@ -10,7 +10,7 @@ import test from 'node:test'
 import { normalizeConfig } from '../src/config.js'
 import { probeEnvironment } from '../src/env.js'
 import { createTranslator } from '../src/locale.js'
-import { appendTool, editTool, pruneTool } from '../src/tools/write.js'
+import { appendTool, editTool } from '../src/tools/write.js'
 import { readTool } from '../src/tools/read.js'
 import { searchTool } from '../src/tools/search.js'
 import { statusTool } from '../src/tools/status.js'
@@ -18,7 +18,7 @@ import { createStore } from '../src/write/store.js'
 
 const t = createTranslator('zh')
 
-/** A workspace with project memory, one daily note and a user file. */
+/** The five tools the model gets. Management (prune/restore/revisions) is the panel's. */
 function fixture(config = {}) {
   const root = mkdtempSync(join(tmpdir(), 'wbm-tools-'))
   const home = join(root, 'home')
@@ -35,6 +35,7 @@ function fixture(config = {}) {
   const store = createStore({ cfg, stateDir: join(root, 'state') })
   const deps = { cfg, t, store }
   const exec = { agent: { session: { header: { cwd } } } }
+  const probe = () => probeEnvironment({ cfg, cwd, detail: true })
 
   return {
     root,
@@ -43,13 +44,14 @@ function fixture(config = {}) {
     dir,
     cfg,
     exec,
+    store,
+    probe,
     tools: {
       status: statusTool(deps),
       read: readTool(deps),
       search: searchTool(deps),
       append: appendTool(deps),
       edit: editTool(deps),
-      prune: pruneTool(deps),
     },
   }
 }
@@ -341,11 +343,14 @@ test('a write survives a round trip through read', async () => {
   assert.match(file.content, /往返一条/)
 })
 
-test('memory_prune previews a plan and refuses an apply without planId', async () => {
-  const { tools, exec, dir } = fixture()
+test('memory_prune is not in the model catalog, and the store still plans then refuses an apply without planId', async () => {
+  // The tool left the catalog (bulk archive is a panel action), but the store
+  // contract it fronted is unchanged: a plan first, then an apply bound to it.
+  const { tools, store, probe, dir } = fixture()
+  assert.equal(tools.prune, undefined, 'the model has no prune tool')
   writeFileSync(join(dir, '2026-01-02.md'), '- 很久以前的一条\n', 'utf8')
 
-  const plan = await tools.prune.execute({ beforeDays: 30 }, exec)
+  const plan = await store.prune({ beforeDays: 30 }, probe())
   assert.equal(plan.ok, true)
   assert.equal(plan.dryRun, true)
   assert.deepEqual(plan.candidates.map((row) => row.date), ['2026-01-02'])
@@ -354,10 +359,9 @@ test('memory_prune previews a plan and refuses an apply without planId', async (
   assert.equal(readFileSync(join(dir, '2026-01-02.md'), 'utf8'), '- 很久以前的一条\n')
   assert.equal(readFileSync(join(dir, 'MEMORY.md'), 'utf8').includes('很久以前的一条'), false)
 
-  // Task 4 will forward planId from the UI. Until then the tool deliberately
-  // cannot archive without it: an apply that guesses the set is exactly the
-  // unsafe retry this contract removes.
-  const done = await tools.prune.execute({ beforeDays: 30, dryRun: false, operationId: 'op-1' }, exec)
+  // An apply that guesses the set is exactly the unsafe retry this contract
+  // removes, so it is refused rather than re-enumerated.
+  const done = await store.prune({ beforeDays: 30, dryRun: false, operationId: 'op-1' }, probe())
   assert.equal(done.ok, false)
   assert.equal(done.code, 'plan_required')
   assert.equal(existsSync(join(dir, '2026-01-02.md')), true)
@@ -367,12 +371,12 @@ test('memory_prune previews a plan and refuses an apply without planId', async (
   assert.equal(memory.includes('2026-01-02'), false)
 })
 
-test('memory_prune accepts an explicit date list', async () => {
-  const { tools, exec, dir } = fixture()
+test('the store archive accepts an explicit date list', async () => {
+  const { store, probe, dir } = fixture()
   writeFileSync(join(dir, '2026-01-02.md'), '- 甲\n', 'utf8')
   writeFileSync(join(dir, '2026-01-03.md'), '- 乙\n', 'utf8')
 
-  const plan = await tools.prune.execute({ dates: '2026-01-03', dryRun: true }, exec)
+  const plan = await store.prune({ dates: ['2026-01-03'], dryRun: true }, probe())
   assert.deepEqual(plan.candidates.map((row) => row.date), ['2026-01-03'])
 })
 
@@ -439,7 +443,7 @@ test('every write tool returns a result the host can snapshot', async () => {
   assert.deepEqual(losslessViolations(edited), [], 'edit reports created only sometimes; it must not leak undefined')
   assert.equal(edited.created, false)
 
-  const pruned = await f.tools.prune.execute({ dryRun: true }, freshExec)
+  const pruned = await f.store.prune({ dryRun: true }, f.probe())
   assert.deepEqual(losslessViolations(pruned), [])
 
   const status = await f.tools.status.execute({}, freshExec)

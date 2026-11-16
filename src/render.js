@@ -7,14 +7,28 @@ export const SECTION_ORDER = { project: 200, rules: 210, user: 220, profile: 230
  * States that mean "this source did what it was asked to do".
  *
  * Everything else — a legacy fallback, an over-budget core, a truncated topic
- * list — is something the model or the user needs to know about, because the
- * block in front of them is not the whole story. `ambiguous` is normal here
- * because it already gets its own explicit line in the topic directory.
+ * list, a limit too small to say anything in — is something the model or the
+ * user needs to know about, because the block in front of them is not the whole
+ * story. `ambiguous` is normal here because it already gets its own explicit
+ * line in the topic directory.
  */
 const NORMAL_STATES = new Set(['layered', 'full', 'enabled', 'disabled', 'unavailable', 'read-only-entry', 'ambiguous'])
 
 /** Whether a state says the injected text is a subset or a fallback. */
 export const isAbnormalState = (state) => !NORMAL_STATES.has(String(state))
+
+/**
+ * The state for a whole-file block, which may have contributed nothing.
+ *
+ * `renderFileBlock` returns `''` when the limit cannot fit the label plus one
+ * line of body, and the caller then drops the section. Recording `full` anyway
+ * claimed the whole file had been injected while the model saw nothing — and
+ * because `full` is a normal state, `compatibility` stayed silent about it.
+ *
+ * @param {string} block - what `renderFileBlock` returned.
+ * @returns {string}
+ */
+const fileState = (block) => (block ? 'full' : 'full:too-small')
 
 /** Whether a source fell back to whole-file injection, which makes the mode mixed. */
 const isLegacy = (state) => String(state).startsWith('legacy:')
@@ -37,7 +51,7 @@ export function renderSections({ cfg, probe, t, readFile }) {
       if (!(limit > 0)) { states[key] = 'disabled'; return }
       const block = renderFileBlock({ label, raw, limit, sanitize, t })
       if (block) sections.push({ name: `workbuddy-memory:${key}`, order: SECTION_ORDER[key], text: block })
-      states[key] = 'full'
+      states[key] = fileState(block)
       return
     }
     if (!(cfg.inject.limits[key] > 0)) { states[key] = 'disabled'; return }
@@ -88,7 +102,7 @@ export function renderSections({ cfg, probe, t, readFile }) {
       const raw = read(probe.profile.path)
       const block = renderFileBlock({ label: t('section.profile'), raw, limit: cfg.inject.limits.profile, sanitize, t })
       if (block) sections.push({ name: 'workbuddy-memory:profile', order: SECTION_ORDER.profile, text: block })
-      states.profile = 'full'
+      states.profile = fileState(block)
     } else {
       states.profile = 'read-only-entry'
       profileTopics = [t('profileEntry')]

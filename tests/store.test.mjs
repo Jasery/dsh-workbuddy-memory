@@ -9,7 +9,6 @@ import { normalizeConfig } from '../src/config.js'
 import { ageInDays, probeEnvironment } from '../src/env.js'
 import { contentRevision } from '../src/write/fslock.js'
 import { createStore, localDateStamp } from '../src/write/store.js'
-import { listRevisionsTool, replaceSectionTool, restoreTool } from '../src/tools/write.js'
 import { analyzeMemory } from '../src/layers.js'
 
 function workspace() {
@@ -772,37 +771,37 @@ test('bullets above the first H2 are reachable as the top section', async () => 
   assert.ok(readFileSync(file, 'utf8').includes('- 再改'))
 })
 
-test('memory_replace_section compresses a section through the tool', async () => {
+test('replaceSection compresses a section through the store', async () => {
+  // The tool that used to front this is gone (the panel owns bulk tidy-up now),
+  // so the regression lives on the store method the panel calls.
   const s = setup()
   const file = join(s.memoryDir, 'MEMORY.md')
   writeFileSync(file, '# T\n\n## 环境\n- Node 22\n- pnpm 9\n- git 2.4\n\n## 偏好\n- 简体中文\n', 'utf8')
 
-  const tool = replaceSectionTool({ cfg: s.cfg, store: s.store })
-  const result = await tool.execute({ target: 'project-memory', section: '环境', body: '- Node 22 + pnpm 10\n- git 2.4\n', expectedRevision: contentRevision(readFileSync(file, 'utf8')) }, { agent: s.agent })
+  const result = await s.store.replaceSection(
+    { target: 'project-memory', section: '环境', body: '- Node 22 + pnpm 10\n- git 2.4\n', expectedRevision: contentRevision(readFileSync(file, 'utf8')) },
+    s.probe,
+  )
   assert.equal(result.ok, true)
   assert.equal(readFileSync(file, 'utf8'), '# T\n\n## 环境\n- Node 22 + pnpm 10\n- git 2.4\n\n## 偏好\n- 简体中文\n')
 })
 
-test('memory_list_revisions and memory_restore round-trip one backup', async () => {
+test('listRevisions and restore round-trip one backup through the store', async () => {
   const s = setup()
   const file = join(s.memoryDir, 'MEMORY.md')
   writeFileSync(file, '## A\n- one\n', 'utf8')
 
   await s.store.append({ target: 'project-memory', section: 'A', text: 'two' }, s.probe)
-  const list = await listRevisionsTool({ cfg: s.cfg, store: s.store }).execute({ target: 'project-memory' }, { agent: s.agent })
-  assert.equal(list.ok, true)
-  assert.equal(list.count, 1)
+  const list = s.store.listRevisions(file)
+  assert.equal(list.length, 1)
 
   const revision = contentRevision(readFileSync(file, 'utf8'))
-  const restored = await restoreTool({ cfg: s.cfg, store: s.store }).execute(
-    { target: 'project-memory', name: list.revisions[0].name, expectedRevision: revision },
-    { agent: s.agent },
-  )
+  const restored = await s.store.restore({ target: 'project-memory', name: list[0].name, expectedRevision: revision }, s.probe)
   assert.equal(restored.ok, true)
   assert.equal(readFileSync(file, 'utf8'), '## A\n- one\n')
 })
 
-test('the new write tools return a result the host can snapshot', async () => {
+test('the management store methods return a result the host could snapshot', async () => {
   const s = setup()
   const file = join(s.memoryDir, 'MEMORY.md')
   writeFileSync(file, '## A\n- one\n', 'utf8')
@@ -810,9 +809,10 @@ test('the new write tools return a result the host can snapshot', async () => {
 
   const { lossless } = await import('../src/tools/index.js')
   const calls = [
-    () => replaceSectionTool({ cfg: s.cfg, store: s.store }).execute({ target: 'project-memory', section: 'A', body: '- only\n' }, { agent: s.agent }),
-    () => listRevisionsTool({ cfg: s.cfg, store: s.store }).execute({ target: 'project-memory' }, { agent: s.agent }),
-    () => restoreTool({ cfg: s.cfg, store: s.store }).execute({ target: 'project-memory', name: 'nope.md', expectedRevision: 'x' }, { agent: s.agent }),
+    () => s.store.replaceSection({ target: 'project-memory', section: 'A', body: '- only\n' }, s.probe),
+    () => s.store.listRevisions(file),
+    () => s.store.restore({ target: 'project-memory', name: 'nope.md', expectedRevision: 'x' }, s.probe),
+    () => s.store.prune({ dryRun: true }, s.probe),
   ]
   for (const call of calls) {
     const value = lossless(await call())

@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -228,4 +228,92 @@ test('a project target without a workspace says so, rather than blaming the targ
   // An actually unknown target still reports as one.
   const bogus = await call('/workbuddy-memory/content?target=../etc/passwd')
   assert.equal(JSON.parse(bogus.body).code, 'unknown_target')
+})
+
+/** A workspace with one old daily file, so an archive plan has a candidate. */
+async function archiveHarness() {
+  const root = mkdtempSync(join(tmpdir(), 'wbm-routes-prune-'))
+  const home = join(root, 'home')
+  const proj = join(root, 'proj')
+  const memDir = join(proj, '.workbuddy', 'memory')
+  mkdirSync(join(home, 'memory'), { recursive: true })
+  mkdirSync(memDir, { recursive: true })
+  writeFileSync(join(home, 'MEMORY.md'), '## 偏好\n- 简体中文\n', 'utf8')
+  writeFileSync(join(memDir, 'MEMORY.md'), '## 环境\n- Node 22\n', 'utf8')
+  writeFileSync(join(memDir, '2020-01-02.md'), '- 很久以前\n', 'utf8')
+
+  const stateDir = join(root, 'state')
+  const cfg = normalizeConfig({ workbuddyHome: home, stateDir, ui: { allowWriteActions: true } })
+  const store = createStore({ cfg, stateDir })
+  const routes = []
+  const ctx = {
+    webServer: { register: (route) => { routes.push(route); return () => {} } },
+    effect: (fn) => fn(),
+    logger: { warn() {} },
+    get: () => undefined,
+  }
+  registerRoutes(ctx, { cfg, recent: { cwd: proj }, stateDir, version: 'test', store })
+
+  const post = (payload) =>
+    new Promise((resolve) => {
+      const res = {
+        status: 0,
+        headers: null,
+        body: '',
+        writeHead(status, headers) { this.status = status; this.headers = headers },
+        end(payload) { this.body = payload ?? ''; resolve({ status: this.status, body: this.body }) },
+      }
+      const req = Readable.from([Buffer.from(JSON.stringify(payload), 'utf8')])
+      req.url = '/workbuddy-memory/action'
+      req.method = 'POST'
+      req.headers = { 'content-type': 'application/json' }
+      void routes[0].handler(req, res)
+    })
+
+  return { post, memDir }
+}
+
+test('the archive route forwards planId, so an apply lands on the previewed set', async () => {
+  // Without the passthrough the store sees no plan and refuses every apply with
+  // plan_required — the preview would be a dead end.
+  const { post, memDir } = await archiveHarness()
+
+  const planned = JSON.parse((await post({ type: 'prune', dryRun: true, beforeDays: 30 })).body)
+  assert.equal(planned.ok, true)
+  assert.equal(typeof planned.planId, 'string')
+  assert.deepEqual(planned.candidates.map((row) => row.date), ['2020-01-02'])
+
+  const applied = JSON.parse(
+    (await post({ type: 'prune', dryRun: false, planId: planned.planId, dates: ['2020-01-02'], operationId: 'op-route-plan' })).body,
+  )
+  assert.equal(applied.ok, true, JSON.stringify(applied))
+  assert.deepEqual(applied.pruned.map((row) => row.date), ['2020-01-02'])
+  assert.equal(existsSync(join(memDir, '2020-01-02.md')), false)
+  assert.equal(existsSync(join(memDir, 'archive', '2020-01-02.md')), true)
+})
+
+test('an archive retry replays the same plan instead of re-enumerating it', async () => {
+  const { post, memDir } = await archiveHarness()
+  const planned = JSON.parse((await post({ type: 'prune', dryRun: true, beforeDays: 30 })).body)
+
+  const payload = { type: 'prune', dryRun: false, planId: planned.planId, dates: ['2020-01-02'], operationId: 'op-route-replay' }
+  const first = JSON.parse((await post(payload)).body)
+  assert.equal(first.ok, true)
+
+  // A timeout retry of the same click: the store recognises the receipt.
+  const again = JSON.parse((await post(payload)).body)
+  assert.equal(again.ok, true)
+  assert.equal(again.duplicate, true)
+  assert.equal(existsSync(join(memDir, 'archive', '2020-01-02.md')), true)
+})
+
+test('a plan the store never issued is refused, and nothing moves', async () => {
+  const { post, memDir } = await archiveHarness()
+  const refused = JSON.parse(
+    (await post({ type: 'prune', dryRun: false, planId: 'plan-not-minted-here', dates: ['2020-01-02'], operationId: 'op-route-bogus' })).body,
+  )
+  assert.equal(refused.ok, false)
+  assert.equal(refused.code, 'plan_required')
+  assert.equal(refused.reason, 'unknown_plan')
+  assert.equal(existsSync(join(memDir, '2020-01-02.md')), true)
 })
