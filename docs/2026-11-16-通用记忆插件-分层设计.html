@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>通用记忆插件 · 默认分层设计讨论稿 · 2026-11-16</title>
+<style>
+:root{color-scheme:light dark;--bg:#f5f7fa;--paper:#fff;--text:#1e293b;--muted:#526174;--line:#d7e0ea;--accent:#087e75;--soft:#edf8f5;--warn:#935a00;--warnbg:#fff5df;--code:#eef2f7}
+@media(prefers-color-scheme:dark){:root{--bg:#0d141e;--paper:#141f2d;--text:#e4edf7;--muted:#aabacf;--line:#34445a;--accent:#68d9cb;--soft:#15322f;--warn:#ffd18a;--warnbg:#34291b;--code:#1d2a3c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.8 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}.wrap{max-width:1080px;margin:auto;padding:36px 22px 70px}header{padding:8px 0 22px;border-bottom:2px solid var(--line)}h1{font-size:30px;line-height:1.4;margin:8px 0 14px}h2{font-size:23px;margin:0 0 16px}h3{font-size:18px;margin:24px 0 8px}p{max-width:72ch;margin:10px 0}a{color:var(--accent);text-underline-offset:3px}.meta,.muted{color:var(--muted);font-size:14px}nav{display:flex;gap:9px;flex-wrap:wrap;margin:20px 0}nav a{padding:4px 10px;border:1px solid var(--line);border-radius:6px;text-decoration:none;font-size:14px}section{background:var(--paper);border:1px solid var(--line);border-radius:12px;margin:20px 0;padding:24px}.note{padding:14px 17px;background:var(--soft);border-left:4px solid var(--accent);border-radius:6px;margin:16px 0}.warning{background:var(--warnbg);border-color:var(--warn);color:var(--text)}.scroll{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px;margin:14px 0}th,td{text-align:left;vertical-align:top;border:1px solid var(--line);padding:10px 12px}th{background:var(--code)}code{font-family:ui-monospace,Consolas,monospace;font-size:.9em;background:var(--code);padding:2px 5px;border-radius:4px}pre{background:var(--code);padding:18px;border-radius:8px;overflow:auto;white-space:pre-wrap;line-height:1.65}pre code{padding:0}ul,ol{padding-left:24px}li{margin:6px 0}.tag{display:inline-block;padding:2px 8px;margin-right:7px;border:1px solid var(--line);border-radius:5px;font-size:12px;color:var(--muted)}details{border:1px solid var(--line);border-radius:7px;padding:10px 14px;margin:12px 0}summary{cursor:pointer;font-weight:600}footer{font-size:13px;color:var(--muted);margin-top:25px}button{font:inherit;padding:6px 12px;background:var(--paper);color:var(--text);border:1px solid var(--line);border-radius:6px;cursor:pointer}@media(max-width:640px){.wrap{padding:18px 12px 45px}section{padding:18px 15px}h1{font-size:25px}table{min-width:620px}}@media print{body{background:#fff;color:#111}.wrap{max-width:none;padding:0}section{break-inside:avoid;background:#fff;border-color:#bbb}nav,.print-button{display:none}.note{background:#eee}pre,th,code{background:#f2f2f2}a{color:#135a80}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+<div class="meta">2026-11-16 · dsh-workbuddy-memory · 设计讨论稿 v0.1 · 尚未实施</div>
+<h1>默认分层的通用记忆插件</h1>
+<p>给 DSH 提供轻量、可控、可恢复的长期记忆；默认使用 WorkBuddy 兼容目录，不要求安装 WorkBuddy，已有记忆直接复用。</p>
+<p class="meta">本稿整理本次讨论的已确认取舍，并给出可评审的具体规则。批准本稿之后才编写实施计划、修改产品代码；不发布、不打 tag。</p>
+<button class="print-button" type="button" onclick="window.print()">打印 / 保存 PDF</button>
+</header>
+<nav aria-label="文档目录">
+<a href="#plain">一分钟读懂</a><a href="#decisions">确认与提案</a><a href="#approaches">路线取舍</a><a href="#storage">文件与识别</a><a href="#disclosure">读取与写入</a><a href="#budget">预算与刷新</a><a href="#transition">旧文件过渡</a><a href="#initialization">首次使用</a><a href="#scope">首版范围</a><a href="#acceptance">验收</a><a href="#evidence">证据与边界</a>
+</nav>
+<section id="plain">
+<h2>一分钟读懂</h2>
+<p>记忆文件还是原来那本记事本。区别是：不再每次把整本都递给模型，而是随身带几条底线，再附一张小目录；遇到具体问题，才翻对应的页。</p>
+<div class="note"><strong>像 Skill 一样渐进式披露，但不把底线藏起来。</strong>“发布前先问人”直接常驻；代理参数、历史故障、工具经验按需查询。渐进式的是细节，不是用户底线。</div>
+<p>本稿主要处理三件事：常驻哪些内容、模型如何发现其余内容、旧文件怎样安全过渡。不增加每轮专用模型调用，不引入向量库，不另存第二份记忆。</p>
+<p><strong>默认分层；全文模式保留为显式兼容与排障回退。</strong>旧文件还没确认划分时是一个可见的过渡状态，不悄悄裁掉旧内容，也不假装已经完成分层。</p>
+</section>
+<section id="decisions">
+<h2>1. 哪些已经确认，哪些仍是设计提案</h2>
+<div class="scroll"><table>
+<thead><tr><th>状态</th><th>内容</th></tr></thead>
+<tbody>
+<tr><td>用户已确认</td><td>定位是通用的 DSH 长期记忆，平衡实用性与成本，不以安装 WorkBuddy 为前提。</td></tr>
+<tr><td>用户已确认</td><td>保留现有 WorkBuddy 兼容目录；已有文件原地复用，不为“通用”另造默认目录。</td></tr>
+<tr><td>用户已确认</td><td>第一次明确写记忆时创建所需目录；纯读取不创建任何东西。</td></tr>
+<tr><td>用户已确认</td><td>默认“少量核心常驻＋经验按需查询”，类似 Skill 的渐进式披露；全文注入作为兼容与排障回退。</td></tr>
+<tr><td>用户已确认</td><td>旧文件由当前主模型给出常驻／按需划分预览，用户确认后再整理；确认前不改原文件，暂时兼容注入并明确提示。</td></tr>
+<tr><td>本稿提案，待确认</td><td>使用一个明确的 H2“常驻记忆”或“Core Memory”小节识别核心；不做逐条权重、访问次数或每轮智能分类。</td></tr>
+<tr><td>本稿提案，待确认</td><td>分层总常驻预算起点为 4000 个 UTF-16 码元：项目核心 1500、用户核心 1500、规则 500、目录与过渡说明 500。它是初始参数，不是实测最优值，也不是 token 数。</td></tr>
+<tr><td>本稿提案，待确认</td><td>首版旧文件整理复用面板源码编辑与用户保存确认；主模型提供草案，先不新增模型草案自动投递面板的专用通道。</td></tr>
+<tr><td>留给实现者</td><td>具体配置键名、内部函数拆分、缓存容量与界面样式。不得改变已确认行为；预算分配及过渡例外必须有机器测试。</td></tr>
+</tbody></table></div>
+<p class="muted">“已确认”仅指对话中明确同意的方向，不表示用户已经批准本稿的全部细节。</p>
+</section>
+<section id="approaches">
+<h2>2. 为什么选择分层，而不是另两种极端</h2>
+<div class="scroll"><table>
+<thead><tr><th>路线</th><th>实际代价</th><th>决定</th></tr></thead>
+<tbody>
+<tr><td>全文限额注入</td><td>最容易兼容；低频资料长期占上下文，超限后仍要决定丢谁。读盘缓存不能消除这些模型输入。</td><td>保留为回退，不作为新默认。</td></tr>
+<tr><td>核心常驻＋目录＋按需读取</td><td>多一层明确的选择与少量目录；相关任务可能多一次读取。底线不依赖临时检索，长尾不必常驻。</td><td>用户选择的默认路线。</td></tr>
+<tr><td>所有内容都只按需读取</td><td>常驻最少，但模型可能连“发布前需确认”都没读到；每轮取回底线又会增加往返。</td><td>不采用。不是把所有记忆都改成可选资料。</td></tr>
+</tbody></table></div>
+<p>文件分层与注入刷新是两件事。首版先改变“哪些文字常驻”，不顺带承诺“写一次就省下一次完整请求”，也不把复杂历史投影作为前置条件。</p>
+</section>
+<section id="storage">
+<h2>3. 文件不换，识别规则要明确</h2>
+<h3>3.1 仍然是一处真源</h3>
+<p>项目沿用 <code>&lt;cwd&gt;/&lt;dataFolder&gt;/memory/MEMORY.md</code>，用户沿用 <code>&lt;workbuddyHome&gt;/MEMORY.md</code>。默认目录不变，现有自定义路径与环境变量继续有效。备份、锁、幂等台账与可重建缓存不是第二份可编辑真源。</p>
+<pre><code># 项目记忆
+
+## 常驻记忆
+- 开发改动先走功能分支。
+- 发布、打 tag 或创建 Release 前，必须取得用户确认。
+
+## Git 与网络（推送、代理、连接失败）
+- 具体的网络限制、代理参数与已验证的处理方法。
+
+## 测试环境
+- 测试环境的连接方式、非直觉限制与历史故障经验。</code></pre>
+<h3>3.2 核心小节的确定性识别</h3>
+<ul>
+<li>只识别代码围栏之外的 H2 标题；去除标题两端空白后，接受“常驻记忆”或不区分大小写的“Core Memory”。两者是等价别名，不同时取两份。</li>
+<li>每个目标文件必须恰有一个核心小节。空小节有效，表示当前没有核心条目；没有小节属于未划分旧文件，重复或两个别名同时出现属于歧义，均进入明确的兼容状态。</li>
+<li>核心小节采用现有完整 bullet 条目模型，可带缩进续行和嵌套条目。若包含不能可靠按条目处理的正文或子标题，保守降级并提示，不偷偷丢弃非条目文字。</li>
+<li>不根据“重要”“必须”等词自动提升条目，不根据访问次数升级常驻；新鲜程度与重要程度不是一回事。</li>
+</ul>
+<h3>3.3 目录是入口，不是另一份摘要</h3>
+<p>本地提取其他 H2 的原始标题，加“项目／用户”来源标签，按文件原顺序排列。标题本身可携带使用线索，但首版不自动调用模型生成说明、不另存可编辑摘要。H1 下尚未分节的记录给出“未分节内容”入口，可用全文读取或搜索访问；不得被当作不存在。</p>
+<p>目录不包含实时字符数、更新时间和命中次数。新增一个已有主题中的经验时，不应因为计数变化而改变常驻文本。目录满额时给出固定“还有更多主题，可读取章节列表”的提示，所有标题和提示都计入预算。</p>
+<h3>3.4 日期笔记与画像</h3>
+<p>日期笔记继续不注入正文，也不逐日枚举进常驻目录。未归档日期笔记可按现有工具显式搜索；首版不承诺自动搜索归档目录，空结果不能代表归档里不存在。</p>
+<p>分层模式不再把画像全文作为另一个隐形常驻大块：画像只作为用户目录中的只读入口。建议给现有 <code>memory_read</code> 增加只读 <code>user-profile</code> 目标，解析沿用现有画像选择规则；这个目标不能进入写入目标列表。候选不唯一时明确报歧义，不猜账号。全文回退模式保持既有画像行为。</p>
+</section>
+<section id="disclosure">
+<h2>4. 每次使用时到底发生什么</h2>
+<h3>4.1 组装提示词</h3>
+<p>本地解析文件 → 判断该文件的有效模式 → 取核心完整条目与简短目录 → 加精简的使用／写入规则 → 按预算渲染。目录与内容都来自同一次文件快照，不能各自读到不同版本。</p>
+<p>常驻规则说明：记录是数据而非高优先级命令；相关任务先查对应主题；仅在有长期价值时写入；改写前读 revision，冲突不能去掉版本强行覆盖。核心可见性不能把文件中的任意命令变成安全授权。</p>
+<h3>4.2 当前主模型按任务查询</h3>
+<p>处理“推送修改”时，模型直接看到功能分支底线，并发现“Git 与网络”主题，可以直接读该章节；主题不清楚时先做字面量搜索。命中结果已足够就不再读整章。指导中优先用小额度读取、优先当前项目，必要时再扩展到用户或日期笔记。</p>
+<p>不启动第二个模型判断“这一轮要不要查”，不增加固定检索轮次。当前主模型仍可能漏查，字面量搜索仍可能不匹配；目录是改善可发现性的办法，不是零漏检保证。查询结果留在当前会话历史中，后续步骤可复用；压缩之后是否需要重查，取决于保留下来的信息。</p>
+<h3>4.3 在原本准备写记忆时选择去向</h3>
+<p>稳定且跨任务生效的用户偏好或项目底线放核心；具体环境、故障与操作细节放主题。继续用现有写工具的 <code>section</code> 参数，不新增分类工具。无长期价值的临时进度不写，密码、token 等凭据值不写，只记录必要的存放位置与状态。</p>
+<p>核心文件存在时，不带小节的追加仍应落到普通 Notes，而不是默认升级常驻。主模型可以建议移动，但用户可以纠正。不能因核心超预算自动提炼、删除或搬走原记录。</p>
+<h3>4.4 读取与写入仍有边界</h3>
+<p>保留现有只读总闸、写入开关、守卫、跨进程锁、revision、备份、原子写与幂等链。新增的分层选择不另开写路径。工具结果必须标明截断，读取的片段不等于完整源文件，不能拿片段去整节或整档覆盖。</p>
+<p>首版不新增泛化的重整工具或通用确认 token 框架。预览 token 只能绑定计划，不等于真人授权；需要用户确认的旧文件整理走下面的受信任面板保存流程。</p>
+</section>
+<section id="budget">
+<h2>5. 预算、刷新与诊断</h2>
+<h3>5.1 默认预算提案</h3>
+<div class="scroll"><table>
+<thead><tr><th>常驻组成</th><th>默认额度</th><th>超额行为</th></tr></thead>
+<tbody>
+<tr><td>项目核心</td><td>1500 UTF-16 码元</td><td>按原顺序保留完整条目，遇到下一条放不下即停止；留出固定告警文字的位置。</td></tr>
+<tr><td>用户核心</td><td>1500 UTF-16 码元</td><td>同上。项目与用户分别保留额度，不互相挤占。</td></tr>
+<tr><td>精简规则</td><td>500 UTF-16 码元</td><td>使用独立的精简规则模板，不截掉关键安全／查询指引。模板不合预算时测试失败，不能上线。</td></tr>
+<tr><td>所有目录、画像入口与过渡说明</td><td>500 UTF-16 码元</td><td>按项目、用户、画像固定顺序加入完整入口，留出“还有更多主题”的提示位置。</td></tr>
+</tbody></table></div>
+<p>总计 4000。标题、来源标签、分隔符、包装和告警全部计入所属额度；不允许结构行免费超预算。不切断完整条目，不产生半个 UTF-16 代理对。首版不把未用额度借给其他块，优先保证行为可解释。</p>
+<p>仅新增“注入模式”和一个“分层总常驻预算”设置；总预算按上述固定比例分配，整数取整后的余数归目录。建议总预算范围 4000–20000；规则模板必须在最小配置下完整容纳。既有各块开关继续生效。旧的分块全文 limits 在全文／兼容路径继续使用，界面与文档明确其适用模式，不偷偷把存量自定义值解释为新的核心预算。</p>
+<p class="muted">这是对本插件贡献的限制，不是整个 DSH 提示词、工具 schema 或整段会话的总限制。工具读取结果、模型输出和历史会话成本另计。处于旧文件兼容状态时，旧正文可能超过上述分层预算，必须在诊断里显式区分，不能宣称已受到 4000 上限保护。</p>
+<h3>5.2 先稳定文本，不抢做复杂缓存策略</h3>
+<p>本稿不改变现有刷新设置的默认语义。已有主题内新增长尾内容但标题不变时，核心与目录应逐字不变；修改核心或主题标题时，正常刷新。移除常驻提示中的实时计数，数字放诊断工具和面板。</p>
+<p>按轮冻结若后续引入，必须先按 session／turn 隔离，不能继续只用 cwd 共享快照；它不是本版分层的前置条件。文件缓存只优化本地 I/O，并应有有界容量；不把“少读盘”等同于“少付模型费用”。</p>
+<h3>5.3 必须看得见的状态</h3>
+<p>按文件显示：配置模式、有效模式、兼容原因、核心是否歧义或超额、原文有多少条未常驻。按会话显示最近一次实际装配的各块字符数、是否截断；尚未装配时为 null，不用估计值冒充实测值。所有输出使用 lossless JSON。</p>
+<p>这些指标不写进常驻目录。用户打开诊断时再读详细数字，避免“为了显示状态”反而不停改变提示词。</p>
+</section>
+<section id="transition">
+<h2>6. 旧文件过渡：默认分层，不等于擅自重写旧记忆</h2>
+<div class="scroll"><table>
+<thead><tr><th>文件状态</th><th>有效行为</th><th>原文件是否改变</th></tr></thead>
+<tbody>
+<tr><td>不存在</td><td>只读返回未初始化；首次合法写入按新格式建立文件。</td><td>只读不创建。</td></tr>
+<tr><td>恰有一个有效核心小节</td><td>默认使用分层；其他内容按需。</td><td>读取不改动。</td></tr>
+<tr><td>旧文件没有核心小节</td><td>该文件暂时兼容全文限额注入，明确显示“待确认划分”；其他已划分文件仍分层。</td><td>不自动添加标题或重排。</td></tr>
+<tr><td>核心重复、结构歧义</td><td>该文件兼容注入并标出原因，不只读第一处假装成功。</td><td>不自动合并。</td></tr>
+<tr><td>用户显式选择全文模式</td><td>全部目标采用旧的限额注入方式，用于兼容与排障。</td><td>不删除已存在的核心小节。</td></tr>
+</tbody></table></div>
+<h3>6.1 草案由当前主模型给，不后台付费整理</h3>
+<p>用户明确要求整理时，当前主模型读取完整目标，提出“拟常驻内容／拟按需内容／必要的主题标题调整”，并给出修改草案。不是安装时自动调用模型，也不是每轮跑一次；内容太大、未读全或用户不想整理，就继续兼容状态。</p>
+<p>首版只做划分：尽量移动完整条目，不顺带删除、压缩、改写事实；如确需改写，单独标明差异并由用户决定。单个项目文件与单个用户文件分别处理，不做跨文件事务，不把同一条记录同时保留为两份可编辑正文。</p>
+<h3>6.2 用现有面板完成一次真实确认</h3>
+<ol>
+<li>主模型在会话中给出完整草案，并单独附上来源目标与读取时的 baseRevision；用户将正文和基线 revision 一起填入面板草案预览。首版不自动投递草案，也不增加后台模型入口。</li>
+<li>面板先校验草案 baseRevision 与读取到的源文件一致，再展示该快照与草案的整档差异；基线缺失或不一致即拒绝导入，不自动把旧草案换绑到最新 revision。差异视图与基线输入是需要补的能力，不能把当前编辑器已有功能夸大为已提供。用户点击保存／应用才发起写入。</li>
+<li>保存强制携带同一个基线作为 expectedRevision，并带幂等键，使用同一 store。预览后文件变动、源文本被截断、写入被关闭或没有真人点击，都不能应用旧草案；冲突只允许重新读取、由主模型基于新快照重做草案并重新预览，不能走“移除 revision 后覆盖”。</li>
+<li>保留完整备份与恢复入口。成功后从原文件重新识别核心小节，该文件变为分层；不另存“已确认”影子正文。</li>
+</ol>
+<p>复用现有 replaceDocument 动作意味着必须先补强它的强制版本检查；源码编辑器的旧“冲突后无 revision 覆盖”出口也需收紧，不能绕过此要求。确认按钮不是权限边界：面板继续接入宿主 connection.requestRejection 信任栅栏，并共用存储校验。</p>
+<p>没有 Web 面板、面板只读或源码编辑被关闭时，不放宽权限；保留草案和兼容状态，用户可通过可信本地编辑器自行确认修改。首版不为 headless 新造授权框架。</p>
+<p class="muted">待确认提示采用固定、非阻断文字；不每轮弹窗催迁移。用户拒绝或略过，不视为允许整理。</p>
+</section>
+<section id="initialization">
+<h2>7. 首次使用与惰性初始化</h2>
+<p><strong>读不创建，写才创建。</strong>安装、注入、状态查询、搜索、读取，都不创建记忆目录、空文件、备份目录或持久状态目录。缺文件是正常状态，不要求先安装或登录 WorkBuddy。</p>
+<p>只有经过只读／写入开关、目标解析、参数与内容校验的合法写入，才按既有配置解析路径，创建必要目录与文件；无 cwd 时不能拿进程目录凑项目路径。拒绝或无效写入也不应留下初始化垃圾。</p>
+<p>新建长期记忆文件时，写入语言对应的 H1、一个空核心小节，再把首条内容放进调用指定的小节；未指定小节仍为普通 Notes。若第一次就明确写核心，则追加到已有的空核心小节，不再创建同名标题。日期笔记仍按日期格式，不顺带制造长期记忆或画像。</p>
+<p>已有任意目录或文件直接复用；已有旧文件不能因普通追加就被自动插入核心小节，从而跳过用户确认。普通 append／edit／replace-section 等写工具不得将一个尚未划分或有歧义的旧文件变成有效分层文件：尤其 append 指定缺失的保留核心标题时，必须返回“需要先确认划分”，不落盘，不自动创建该标题。新偏好可由主模型另行写到普通 Notes 或主题中，不能静默改写调用目标来伪装成功。此限制只针对已有旧文件；不存在的目标仍按新格式合法初始化。</p>
+<p>该转换检查必须在同一写锁内依据当前原文与拟写正文执行，不能只在工具入口读一次后做判断。已确认分层文件的正常核心追加不受此转换限制，仍受预算提示与原有写入校验约束。用户经可信本地编辑器自行改格式，或按已有授权恢复一个历史备份，分别按显式编辑／恢复规则处理，不把它们当成后台自动迁移。只创建本次目标确实需要的目录与状态，不创建 USER、IDENTITY、SOUL 或第二套默认目录。</p>
+<p>如果保留现有 ensureLayout 配置，建议新默认开启，显式 false 仍表示拒绝自动建目录；它仅约束写入，不能被用作“读取时顺便初始化”的理由。</p>
+</section>
+<section id="scope">
+<h2>8. 首版范围与原优化清单的关系</h2>
+<div class="scroll"><table>
+<thead><tr><th>首版包含</th><th>明确不顺带做</th></tr></thead>
+<tbody>
+<tr><td>默认分层、显式全文回退、核心识别、受限目录、状态可见。</td><td>向量数据库、语义排序、访问频率学习、每轮记忆子代理。</td></tr>
+<tr><td>现有读搜写工具复用；画像只读目标的小扩展；合法首写初始化。</td><td>多目录自动发现、双写同步、为所有 Agent 做适配框架。</td></tr>
+<tr><td>旧文件草案＋面板差异与用户保存；强制 revision；原备份恢复链。</td><td>自动重整、冷却期系统、通用确认 token 框架、后台草案投递。</td></tr>
+<tr><td>与改造同步的回归测试、只校验不发布的 CI、真实成本／效果对照。</td><td>按轮冻结作为首发强依赖、静默预设掩码、同装工具前缀。</td></tr>
+</tbody></table></div>
+<p>原 <a href="2026-11-13-dsh-workbuddy-memory-优化方案.html">11 项优化方案</a>保留作历史分析材料，本稿不是把它全部打包进首发：O-01 改为硬预算与完整条目，不承诺“文件尾＝最新”；O-03 先补高影响替换的版本与真实确认；O-06 的缓存收益按路由实测；O-07／O-08 前移为改造护栏。全文回退仍保持可控截断，但不把一次性全面翻修旧模式作为分层前提。</p>
+<p>建议实施次序：先固定纯解析、预算与拒绝路径的不变量，再接入注入／诊断和合法首写，再做面板差异与旧文件过渡，最后跑任务效果与成本对照。此处是依赖说明，不是已批准的实施计划。</p>
+</section>
+<section id="acceptance">
+<h2>9. 怎么证明它值得做</h2>
+<h3>9.1 工程验收</h3>
+<div class="scroll"><table>
+<thead><tr><th>场景</th><th>必须满足</th></tr></thead>
+<tbody>
+<tr><td>正常分层</td><td>核心可见，长尾正文不常驻，目录与源快照对应；项目与用户来源可辨认。</td></tr>
+<tr><td>只改已有主题里的经验</td><td>不改核心／标题时，常驻装配文本逐字相同；不混入 mtime、字符数等抖动。</td></tr>
+<tr><td>预算边界</td><td>各块与总预算均不超限；标题和告警算预算；不切断条目和代理对；超额状态可见。</td></tr>
+<tr><td>核心识别</td><td>中英文别名、空核心、围栏内伪标题、重复核心、非条目正文分别有测试。</td></tr>
+<tr><td>旧文件／混合状态</td><td>无确认不重排原文，普通主题追加可继续；普通写工具不得创建／修复核心小节从而暗中把旧文件切到分层。项目分层＋用户兼容可同时出现；兼容原因与真实字符数可查。</td></tr>
+<tr><td>首次使用</td><td>纯读前后文件系统无新增；无效／被拒绝写入不建目录；合法首写只初始化必要目标。</td></tr>
+<tr><td>确认与冲突</td><td>只有草案没有真人保存时不写；缺 revision、旧 revision、截断源、重放、只读均按约定拒绝或幂等；备份可恢复。</td></tr>
+<tr><td>并发与会话</td><td>不同 cwd 的读写不串项目；同 cwd 多会话不会错报别人的装配快照；同一基线 revision 并发改写不能无声覆盖。</td></tr>
+<tr><td>画像与读取</td><td>分层不隐式常驻画像全文；只读目标可访问唯一画像，写工具拒绝画像；歧义不猜选。工具截断不能冒充完整读取。</td></tr>
+<tr><td>降级</td><td>文件不可读、无法识别、无 Web 面板、关闭权限均不阻断正常对话，也不自动扩权。所有工具结果为 lossless JSON。</td></tr>
+<tr><td>CI 与发布</td><td>PR 跑相关测试与预算断言；不增加自动 npm publish、Release 或 tag 动作。最低宿主版本需单独验证，不能用当前安装结果代替。</td></tr>
+</tbody></table></div>
+<h3>9.2 效果与成本对照</h3>
+<p>使用同一批约 20 个固定任务，对照全文模式与完成确认后的分层模式：稳定偏好是否遵守；大量追加后底线是否仍可见；旧故障经验能否找回；无关任务是否避免无用读写；不同项目是否隔离。先记录基线，再比较，不先编“节省百分比”。</p>
+<p>同时记录实际常驻字符、工具往返与回显长度；按同一路由记录可取得的输入／输出 token、cacheRead／cacheWrite 与延迟。提供方没有返回的数据写 null 并说明未知，不用字符数推算成精确费用。查询结果的历史累计、一次性整理和本地 I/O 单独列出。</p>
+<div class="note warning"><strong>保守验收底线：</strong>固定测试中的常驻底线不得漏注入或违反；长尾查回能力不能因分层静默变差。若频繁取回大半本文件，或额外往返抵消收益，就收紧目录／检索范围或调整预算，而不是宣称“分层一定更便宜”。</div>
+</section>
+<section id="evidence">
+<h2>10. 已核对证据、风险与回退</h2>
+<details open>
+<summary>本次设计依据的现有实现</summary>
+<ul>
+<li><a href="../src/paths.js#L62-L108">paths.js</a>：已有路径配置与 WorkBuddy 兼容目录，不需要新造存储根。</li>
+<li><a href="../src/write/store.js#L497-L548">store.js</a>：当前首写在 ensureLayout 关闭且缺目录时拒绝；本稿改变默认首次使用行为，不假装已经具备。</li>
+<li><a href="../src/markdown.js#L264-L302">markdown.js</a>：已有章节追加在章节末尾，而非全文件末尾；因此尾截不保证最近写入。</li>
+<li><a href="../src/tools/read.js#L49-L103">read.js</a>与<a href="../src/tools/search.js#L15-L94">search.js</a>：已有章节目录、章节读取与字面量搜索；画像目标与分层预算仍需新增实现。</li>
+<li><a href="../src/write/store.js#L166-L184">整档替换</a>与<a href="../src/host/routes.js#L468-L475">面板截断保护</a>：替换已共用 store，但强制 revision 与迁移差异确认仍需补齐。</li>
+<li><a href="../src/inject.js#L67-L103">inject.js</a>：现有冻结按 cwd、失效全清；如后续做按轮冻结，必须单独修正作用域。</li>
+</ul>
+</details>
+<p>当前核对的安装版本为 DSH 0.2.2-rc.3。其系统提示词文档说明：支持 systemPromptUpdate: in-history 的路由可在同一请求序列追加提示词更新；其他路由可能重写头部；历史内更新又会累积提示词版本。不据此承诺所有模型都命中缓存，也没有验证旧的最低支持版本已具备同样能力。</p>
+<p>主要剩余风险是主模型漏查、标题不够好、用户把太多内容放常驻、旧文件长期停在兼容状态，以及双模式增加维护成本。对应措施是有界入口、明确诊断、任务对照与显式全文回退；不是再堆一个自动后台系统。</p>
+<p>回退只改变注入选择，不自动还原或删除已整理文件。原文整理错误走现有备份恢复，恢复本身仍需当前 revision；独立文件分别回退，不能承诺跨文件原子恢复。</p>
+</section>
+<footer>本文件为自包含 HTML：样式内嵌，无外部字体、图表库或网络加载；代码链接仅用于回查仓库证据。<br>设计稿待用户确认；当前产品代码、默认配置、版本号及原 11 项文档均未修改。文档提交与推送不等于产品发布。</footer>
+</div>
+</body>
+</html>
