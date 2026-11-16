@@ -2209,15 +2209,22 @@ window.__ModuleLoader__.load({
        * `options.owned` says the caller renders its own failure inside a modal.
        * The banner is in the normal flow with no z-index while a modal mask is
        * `position:fixed; z-index:55`, so a refusal written there during a dialog
-       * is a refusal nobody can read or dismiss. It also keeps `conflict` out of
-       * the global dialog: a modal that owns the failure owns its conflict too,
-       * which is what stops two masks stacking at the same z-index.
+       * is a refusal nobody can read or dismiss. A modal caller therefore also
+       * keeps `conflict` out of the global dialog: it owns its conflict too, which
+       * is what stops two masks stacking at the same z-index.
        *
        * @param {object} payload
-       * @param {{ owned?: boolean }} [options]
+       * @param {{ owned?: boolean, conflictDialog?: boolean }} [options]
        */
       async function act(payload, options = {}) {
         const owned = options.owned === true
+        // `conflictDialog` is for the one caller that is inline but still owns its
+        // other refusals: source mode. Its editor sits in the page flow, so opening
+        // the conflict dialog over it stacks nothing — and a conflict has three
+        // exits (see the diff, reload, keep editing) that a banner cannot offer.
+        // Without it, a source save that loses the race either drops the draft or
+        // has to invent a conflict UI of its own.
+        const conflictDialog = owned && options.conflictDialog === true
         setBusy(true)
         if (!owned) setError('')
         const key = payload.key ?? selected?.key ?? effectiveKey
@@ -2248,7 +2255,7 @@ window.__ModuleLoader__.load({
             return result
           }
           if (result.code === 'conflict') {
-            if (owned) return result
+            if (owned && !conflictDialog) return result
             setConflict({ payload: body, body: result })
             return result
           }
@@ -2345,7 +2352,7 @@ window.__ModuleLoader__.load({
           text,
           expectedRevision: sourceEdit.baseRevision,
           operationId: sourceEdit.operationId,
-        }, { owned: true })
+        }, { owned: true, conflictDialog: true })
         if (result?.ok) {
           setSourceEdit(null)
           flash(t('flash.documentSaved'))
@@ -2353,11 +2360,17 @@ window.__ModuleLoader__.load({
           return
         }
         if (!result) return
-        // Source mode is an inline editor rather than a mask, but it still owns
-        // its failure: opening the conflict dialog on top of it would leave a
-        // second, higher layer whose exits are behind the editor. The message
-        // says the same thing the conflict dialog would.
-        const message = result.code === 'conflict' ? t('history.stale') : describeCode(result.code)
+        if (result.code === 'conflict') {
+          // The conflict dialog owns this one: it is the only surface that offers
+          // all three exits (view the on-disk diff, reload and drop the draft,
+          // keep editing). The editor is inline, not a mask, so opening it stacks
+          // nothing. What is left here is the line the editor keeps for after the
+          // dialog closes, and no armed save button — the base it would send is
+          // the one that just lost the race.
+          setSourceEdit((current) => (current ? { ...current, preview: null, message: t('code.conflict') } : current))
+          return
+        }
+        const message = describeCode(result.code)
         setSourceEdit((current) => (current ? { ...current, preview: null, message } : current))
       }
 
@@ -2368,8 +2381,14 @@ window.__ModuleLoader__.load({
           section,
           expectedRevision: doc?.revision,
         })
+        // The confirmation closes whatever the write did. Leaving it open on a
+        // refusal stacks two masks at the same z-index (the confirmation renders
+        // last, so it covers the conflict dialog's three exits), and on a plain
+        // refusal it covers the banner that says what went wrong. Either way the
+        // failure belongs to a surface that can be read: the conflict dialog for a
+        // lost race, the banner for everything else.
+        setDialog(null)
         if (result?.ok) {
-          setDialog(null)
           flash(t('flash.sectionRemoved'))
           await reload()
         }

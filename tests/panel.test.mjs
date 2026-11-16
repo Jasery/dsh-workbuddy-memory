@@ -1127,6 +1127,101 @@ test('a conflict during a source save never stacks two masks', async () => {
   }
 })
 
+test('a conflict during a source save is answered by the conflict dialog, not a dead end', async () => {
+  // `masks <= 1` above is satisfied by "no dialog at all", which is exactly the
+  // regression: source mode is an inline editor with no conflict UI of its own,
+  // so swallowing the conflict left one exit — a generic reload that drops the
+  // draft — and copy about picking a version, which source mode has none of.
+  // The disk moved on while the draft was being written: the first read is what
+  // the editor opened with, the second is what the diff exit finds there now.
+  let reads = 0
+  const calls = installFetch({
+    actionResult: () => ({ ok: false, code: 'conflict', revision: 'rev-other', expectedRevision: 'rev-project' }),
+    content: () => {
+      reads += 1
+      return reads === 1 ? projectContent : { ...projectContent, revision: 'rev-other', text: projectMemory.replace('Node 22', 'Node 20') }
+    },
+  })
+  const restore = installTimers()
+  try {
+    let tree = await openSourceMode(await openProject())
+    const area = walk(tree).find((node) => node.type === 'textarea' && String(node.props?.value ?? '').includes('Node 22'))
+    tree = await runtime.fire(area, 'onChange', MemoryOverviewPanel, {}, { value: projectMemory.replace('Node 22', 'Node 24') })
+    tree = await runtime.fire(walk(tree).find((node) => node.type === 'button' && text(node) === '预览差异'), 'onClick', MemoryOverviewPanel, {})
+    tree = await runtime.fire(walk(tree).find((node) => node.type === 'button' && text(node) === '保存整份文件'), 'onClick', MemoryOverviewPanel, {})
+    assert.equal(calls.actions.length, 1)
+
+    const masks = modalNodes(tree)
+    assert.equal(masks.length, 1, `exactly one modal, saw ${masks.length}`)
+    const shown = onlyModalText(tree)
+    assert.match(shown, /文件已被改动/, 'the conflict dialog is the one on screen')
+    // All three exits, so "keep editing" is a real choice and not just reload.
+    assert.match(shown, /查看磁盘差异/)
+    assert.match(shown, /重新加载/)
+    assert.match(shown, /保留草稿/)
+    assert.match(shown, /rev-other/, 'and it names the revision that is on disk')
+    // The version-picker wording belongs to the history dialog; there is no
+    // version to pick here.
+    assert.equal(shown.includes('重新选版本'), false, 'no advice to pick a version')
+
+    // The diff exit is live, not just a label: it reads the disk copy. (The rows
+    // it renders are the dialog's own state; this harness mounts one component,
+    // so what it can prove is that the click reaches the read and opens nothing
+    // else — the rows themselves are covered by the shared `diffBlock` tests.)
+    const viewDiff = walk(expand(tree)).find((node) => node.type === 'button' && text(node) === '查看磁盘差异')
+    tree = await runtime.fire(viewDiff, 'onClick', MemoryOverviewPanel, {})
+    assert.ok(calls.gets.some((url) => url.includes('/content?') && url.includes('target=project-memory')), 'the diff exit asks the disk')
+    assert.equal(modalNodes(tree).length, 1, 'and it stays the only mask')
+    assert.equal(onlyModalText(tree).includes('读取'), false, 'and the read did not fail')
+
+    // Keeping the draft really keeps it: the edited body is still in the editor
+    // after the dialog closes, and nothing is left on screen.
+    assert.ok(
+      walk(tree).some((node) => node.type === 'textarea' && String(node.props?.value ?? '').includes('Node 24')),
+      'the source draft survived the refusal',
+    )
+    const keep = walk(expand(tree)).find((node) => node.type === 'button' && text(node) === '保留草稿继续编辑')
+    tree = await runtime.fire(keep, 'onClick', MemoryOverviewPanel, {})
+    assert.equal(modalNodes(tree).length, 0, 'closing the dialog leaves no mask')
+    assert.ok(
+      walk(tree).some((node) => node.type === 'textarea' && String(node.props?.value ?? '').includes('Node 24')),
+      'and the person is back in their own text',
+    )
+  } finally {
+    restore()
+  }
+})
+
+test('a conflict while deleting a section never leaves a dialog with nothing to own it', async () => {
+  // The confirmation is a mask, and so is the conflict dialog it triggers. The
+  // confirmation renders later, so it covers the conflict's exits; dismissing it
+  // then left the conflict on screen with no surface that asked for it.
+  const calls = installFetch({ actionResult: () => ({ ok: false, code: 'conflict', revision: 'rev-other', expectedRevision: 'rev-project' }) })
+  const restore = installTimers()
+  try {
+    let tree = await openProject()
+    const trash = walk(tree).find((node) => node.props?.title === '删除小节')
+    assert.ok(trash, 'the section offers delete')
+    tree = await runtime.fire(trash, 'onClick', MemoryOverviewPanel, {})
+    assert.equal(modalNodes(tree).length, 1, 'the confirmation is the only mask')
+
+    const confirmDelete = walk(expand(tree)).find((node) => node.type === 'button' && text(node) === '删除')
+    assert.ok(confirmDelete, 'the confirmation asks before deleting')
+    tree = await runtime.fire(confirmDelete, 'onClick', MemoryOverviewPanel, {})
+    assert.equal(calls.actions.length, 1)
+
+    assert.equal(modalNodes(tree).length, 1, `one mask, saw ${modalNodes(tree).length}`)
+    assert.match(onlyModalText(tree), /文件已被改动/, 'and it is the conflict dialog')
+
+    // Closing it leaves nothing behind: no second, ownerless dialog.
+    const keep = walk(expand(tree)).find((node) => node.type === 'button' && text(node) === '保留草稿继续编辑')
+    tree = await runtime.fire(keep, 'onClick', MemoryOverviewPanel, {})
+    assert.equal(modalNodes(tree).length, 0, 'no dangling conflict dialog')
+  } finally {
+    restore()
+  }
+})
+
 // ── source mode ────────────────────────────────────────────────────────────
 
 /** Enter source mode, clicking through the first-run confirmation. */
