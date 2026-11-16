@@ -114,6 +114,16 @@ test('a relative path is resolved against the session working directory', () => 
   assert.match(denied, /memory_append/)
 })
 
+test('guard uses the host workingDirectory service before header cwd', () => {
+  const { cfg, cwd } = fixture()
+  const { ctx, captured } = fakeCtx()
+  ctx.get = (name) => name === 'workingDirectory' ? { get: (session) => session.id === 'selected' ? cwd : null } : null
+  registerWriteGuard(ctx, { cfg, t })
+  const agent = { session: { id: 'selected', header: { cwd: join(cwd, 'other') } } }
+  const denied = captured.guard({ name: 'write', arguments: { file_path: '.workbuddy/memory/MEMORY.md' }, agent })
+  assert.match(denied, /memory_append/)
+})
+
 test('the guard only intercepts writers that take a path', () => {
   const { cfg, cwd } = fixture()
   const { ctx, captured } = fakeCtx()

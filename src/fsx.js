@@ -7,7 +7,7 @@ export function statSafe(path) {
   if (!path) return null
   try {
     const stat = statSync(path)
-    return { size: stat.size, mtimeMs: stat.mtimeMs, isFile: stat.isFile(), isDirectory: stat.isDirectory() }
+    return { size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, isFile: stat.isFile(), isDirectory: stat.isDirectory() }
   } catch {
     return null
   }

@@ -60,13 +60,13 @@ test('memory_status reports the stores and warnings', async () => {
 
   assert.equal(result.ok, true)
   assert.equal(result.status, 'ok')
-  assert.equal(result.home.path, home)
-  assert.equal(result.stores.project.exists, true)
-  assert.equal(result.stores.project.memoryExists, true)
-  assert.deepEqual(result.stores.project.dailyFiles, ['2026-11-08.md'])
-  assert.equal(result.stores.user.memory, join(home, 'MEMORY.md'))
-  assert.equal(result.readOnly, false)
+  assert.equal(result.paths.source, 'config')
+  assert.equal(result.paths.user, join(home, 'MEMORY.md'))
+  assert.equal(result.mode, 'layered')
+  assert.equal(result.writable, true)
+  assert.equal(result.lastAssembly, null, 'status does not invent an assembly before one occurred')
   assert.deepEqual(result.warnings, [])
+  assert.equal('config' in result, false, 'the model status stays concise')
   void cwd
 })
 
@@ -83,7 +83,7 @@ test('memory_status explains an empty machine instead of failing', async () => {
 test('memory_status warns about read-only mode', async () => {
   const { tools, exec } = fixture({ readOnly: true })
   const result = await tools.status.execute({}, exec)
-  assert.equal(result.readOnly, true)
+  assert.equal(result.writable, false)
   assert.equal(result.status, 'read_only')
   assert.equal(result.warnings.some((line) => /只读|read-only/.test(line)), true)
 })
@@ -366,7 +366,7 @@ test('memory_search reports search_disabled when the switch is off', async () =>
 })
 
 test('memory_append bootstraps the memory directory only when ensureLayout is on', async () => {
-  const off = fixture()
+  const off = fixture({ write: { ensureLayout: false } })
   const emptyCwd = join(off.root, 'fresh')
   mkdirSync(emptyCwd, { recursive: true })
   const offExec = { agent: { session: { header: { cwd: emptyCwd } } } }
@@ -453,23 +453,13 @@ test('the lossless guard coerces what the host would reject', async () => {
   assert.equal(lossless(10n), '10')
 })
 
-test('memory_status reports the user file against its injection limit', async () => {
+test('memory_status never invents token or character estimates', async () => {
   const f = fixture()
-  // Under the limit: reported, but not flagged.
-  const small = await f.tools.status.execute({}, f.exec)
-  assert.equal(small.stores.user.overLimit, false)
-  assert.equal(small.stores.user.distillDue, false)
-  assert.equal(typeof small.stores.user.chars, 'number')
-  assert.equal(small.stores.user.injected, small.stores.user.chars)
-
-  // Past the limit: the excess is unreadable, and the warning names both numbers.
-  writeFileSync(join(f.home, 'MEMORY.md'), `${'- 一条\n'.repeat(6000)}`, 'utf8')
-  const big = await f.tools.status.execute({}, f.exec)
-  assert.equal(big.stores.user.overLimit, true)
-  assert.equal(big.stores.user.distillDue, true, 'twice the limit trips the threshold too')
-  assert.equal(big.stores.user.injected, big.config.inject.limits.user)
-  assert.ok(big.stores.user.chars > big.stores.user.injected)
-  assert.ok(big.warnings.some((line) => line.includes('注入上限')))
+  const result = await f.tools.status.execute({}, f.exec)
+  assert.equal(result.lastAssembly, null)
+  assert.equal('chars' in result, false)
+  assert.equal('config' in result, false)
+  assert.equal(typeof result.mode, 'string')
 })
 
 test('memory_search names the scope and hints when it scanned no files', async () => {

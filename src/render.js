@@ -1,164 +1,161 @@
-/**
- * Turn probed memory files into system-prompt sections.
- *
- * Rendering is pure and synchronous: it takes whatever the snapshot cache
- * decided is current and produces text. Nothing here writes, and an empty
- * string means "contribute nothing" — the host drops empty sections.
- */
-
 import { readTextSafe, truncateChars } from './fsx.js'
+import { analyzeMemory } from './layers.js'
 
-export const SECTION_ORDER = {
-  project: 200,
-  rules: 210,
-  user: 220,
-  profile: 230,
-}
+export const SECTION_ORDER = { project: 200, rules: 210, user: 220, profile: 230 }
 
-/**
- * @param {object} input
- * @param {object} input.cfg - normalized config.
- * @param {object} input.probe - result of `probeEnvironment`.
- * @param {(key: string, vars?: Record<string, string|number>) => string} input.t
- * @returns {{ name: string, order: number, text: string }[]}
- */
-export function renderSections({ cfg, probe, t }) {
+export function renderSections({ cfg, probe, t, readFile }) {
   const sections = []
+  const states = {}
+  const read = readFile ?? ((path, maxBytes = 2 * 1024 * 1024) => {
+    const file = readTextSafe(path, { maxBytes })
+    return file.ok && !file.truncated ? file.text : ''
+  })
   const sanitize = cfg.inject.sanitizePaths ? (text) => redact(text, probe.layout.home) : (text) => text
-
-  if (cfg.inject.project && probe.project.memoryExists) {
-    const text = renderFileBlock({
-      label: t('section.project'),
-      path: probe.project.memoryPath,
-      limit: cfg.inject.limits.project,
-      sanitize,
-      t,
-    })
-    if (text) sections.push({ name: 'workbuddy-memory:project', order: SECTION_ORDER.project, text })
+  const layered = cfg.inject.mode === 'layered'
+  const source = (key, label, path, enabled) => {
+    if (!enabled || !path) { states[key] = 'disabled'; return }
+    const raw = read(path)
+    if (!raw.trim()) { states[key] = 'unavailable'; return }
+    if (!layered) {
+      const limit = cfg.inject.limits[key]
+      if (!(limit > 0)) { states[key] = 'disabled'; return }
+      const block = renderFileBlock({ label, raw, limit, sanitize, t })
+      if (block) sections.push({ name: `workbuddy-memory:${key}`, order: SECTION_ORDER[key], text: block })
+      states[key] = 'full'
+      return
+    }
+    if (!(cfg.inject.limits[key] > 0)) { states[key] = 'disabled'; return }
+    const parsed = analyzeMemory(raw)
+    if (parsed.mode === 'legacy') {
+      const limit = cfg.inject.limits[key]
+      const block = renderFileBlock({ label, raw, limit, sanitize, t })
+      if (block) sections.push({ name: `workbuddy-memory:${key}`, order: SECTION_ORDER[key], text: block })
+      states[key] = `legacy:${parsed.reason}`
+      return
+    }
+    const budget = Math.floor(cfg.inject.coreBudget * 0.375)
+    const prefix = `### ${label}\n\n`
+    const core = renderEntries(parsed.coreEntries, `## ${t('coreHeading')}`, Math.max(0, budget - prefix.length))
+    const text = sanitize(`${prefix}${core}`)
+    sections.push({ name: `workbuddy-memory:${key}`, order: SECTION_ORDER[key], text })
+    states[key] = 'layered'
+    return parsed.topics.map((topic) => topic.heading ?? t('unsectioned'))
   }
 
-  if (cfg.inject.rules) {
-    // Read-only gets its own wording: telling the model how to write when every
-    // write returns `read_only` just burns turns on retries.
-    const rules = t(cfg.readOnly ? 'rulesReadOnly' : 'rules')
+  const projectTopics = cfg.inject.project && probe.project.memoryExists
+    ? source('project', t('section.project'), probe.project.memoryPath, true) : (states.project = 'disabled', [])
+  const userTopics = cfg.inject.user && probe.user.memoryExists
+    ? source('user', t('section.user'), probe.user.memoryPath, true) : (states.user = 'disabled', [])
+
+  if (cfg.inject.rules && cfg.inject.limits.rules > 0) {
+    const rules = t(layered ? (cfg.readOnly ? 'compactRulesReadOnly' : 'compactRules') : (cfg.readOnly ? 'rulesReadOnly' : 'rules'))
     const lines = Array.isArray(rules) ? rules : []
-    if (lines.length > 0) {
-      const body = lines.map((line, index) => `${index + 1}. ${line}`).join('\n')
-      // The pressure hint is appended, not baked into the locale table: it is
-      // the only line whose text depends on a live measurement, and read-only
-      // sessions never write, so they never need it.
-      const hint = cfg.readOnly ? '' : distillHint({ cfg, probe, t })
-      // The hint is measured against the budget first. Truncating the whole
-      // block would cut the hint itself whenever the base text is long, and the
-      // hint exists precisely for the case where something needs cutting — so
-      // the base gives way instead, and the hint always survives intact.
-      const base = `### ${t('section.rules')}\n\n${body}`
-      const room = Math.max(0, cfg.inject.limits.rules - hint.length)
-      sections.push({
-        name: 'workbuddy-memory:rules',
-        order: SECTION_ORDER.rules,
-        text: `${truncateChars(base, room)}${hint}`,
-      })
+    if (lines.length) {
+      const budget = layered ? Math.floor(cfg.inject.coreBudget * 0.125) : cfg.inject.limits.rules
+      const base = `### ${t('section.rules')}\n\n${lines.map((line, index) => `${index + 1}. ${line}`).join('\n')}`
+      const hint = layered ? '' : cfg.readOnly ? '' : distillHint({ cfg, probe, t })
+      const text = layered ? fitText(base, budget) : `${truncateChars(base, Math.max(0, budget - hint.length))}${hint}`
+      sections.push({ name: 'workbuddy-memory:rules', order: SECTION_ORDER.rules, text })
+      states.rules = 'enabled'
+    }
+  } else states.rules = 'disabled'
+
+  let profileTopics = []
+  if (!cfg.inject.profile || cfg.inject.limits.profile === 0) states.profile = 'disabled'
+  else if (probe.profile.ambiguous) {
+    if (!layered) sections.push({ name: 'workbuddy-memory:profile', order: SECTION_ORDER.profile, text: `### ${t('section.profile')}\n\n${t('ambiguousProfile')}` })
+    states.profile = 'ambiguous'
+  } else if (probe.profile.exists && probe.profile.path) {
+    if (!layered) {
+      const raw = read(probe.profile.path)
+      const block = renderFileBlock({ label: t('section.profile'), raw, limit: cfg.inject.limits.profile, sanitize, t })
+      if (block) sections.push({ name: 'workbuddy-memory:profile', order: SECTION_ORDER.profile, text: block })
+      states.profile = 'full'
+    } else {
+      states.profile = 'read-only-entry'
+      profileTopics = [t('profileEntry')]
+    }
+  } else states.profile = 'unavailable'
+
+  if (layered) {
+    const extra = [...(projectTopics ?? []), ...(userTopics ?? []), ...profileTopics]
+    const warnings = Object.entries(states).filter(([, state]) => state.startsWith?.('legacy:')).map(([key, state]) => `${key}=${state}`)
+    const entries = []
+    if (warnings.length) entries.push(`${t('compatibility')}: ${warnings.join(', ')}`)
+    if (cfg.inject.profile && cfg.inject.limits.profile > 0 && probe.profile.ambiguous) entries.push(t('ambiguousProfile'))
+    for (const topic of [...new Set(extra)]) entries.push(`${t('topicDirectory')}: ${topic}`)
+    const tail = entries.length ? fitText(`### ${t('topicDirectory')}\n\n${entries.join('\n')}`, Math.floor(cfg.inject.coreBudget * 0.125)) : ''
+    if (tail) {
+      states.directory = 'enabled'
+      sections.push({ name: 'workbuddy-memory:profile', order: SECTION_ORDER.profile, text: tail })
     }
   }
-
-  if (cfg.inject.user && probe.user.memoryExists) {
-    const text = renderFileBlock({
-      label: t('section.user'),
-      path: probe.user.memoryPath,
-      limit: cfg.inject.limits.user,
-      sanitize,
-      t,
-    })
-    if (text) sections.push({ name: 'workbuddy-memory:user', order: SECTION_ORDER.user, text })
-  }
-
-  if (cfg.inject.profile) {
-    if (probe.profile.ambiguous) {
-      sections.push({
-        name: 'workbuddy-memory:profile',
-        order: SECTION_ORDER.profile,
-        text: `### ${t('section.profile')}\n\n${t('ambiguousProfile')}`,
-      })
-    } else if (probe.profile.exists) {
-      const text = renderFileBlock({
-        label: t('section.profile'),
-        path: probe.profile.path,
-        limit: cfg.inject.limits.profile,
-        sanitize,
-        t,
-      })
-      if (text) sections.push({ name: 'workbuddy-memory:profile', order: SECTION_ORDER.profile, text })
-    }
-  }
-
+  sections.sort((left, right) => left.order - right.order)
+  sections.states = states
+  sections.mode = layered ? (Object.values(states).some((state) => state.startsWith?.('legacy:')) ? 'mixed' : 'layered') : 'full'
   return sections
 }
 
-/**
- * A one-line pressure hint, appended to the rules block when the user memory
- * has outgrown a budget.
- *
- * Two thresholds, because there are two distinct problems:
- *  - past `limits.user`, the injected block is already truncated, so part of the
- *    file is unreadable *right now* — that is a warning, not a suggestion;
- *  - past `distillAbove`, the file is large enough that a by-topic distillation
- *    is worth the turn.
- *
- * The original single threshold was `distillAbove`, which defaults to twice the
- * limit: a file between the two got no hint at all while already losing content
- * on every turn. `limits.user` is the honest lower bound.
- *
- * @param {{ cfg: object, probe: object, t: Function }} input
- * @returns {string} the hint with a leading newline, or '' when under both.
- */
+function renderFileBlock({ label, raw, limit, sanitize, t }) {
+  if (!raw?.trim() || !(limit > 0)) return ''
+  const body = raw.trim()
+  const prefix = `### ${label}\n\n`
+  if (prefix.length >= limit) return truncateChars(prefix, limit)
+  const room = limit - prefix.length
+  let kept = truncateChars(body, room)
+  let note = ''
+  if (kept.length < body.length) {
+    const candidate = `\n\n_${t('truncated', { limit })}_`
+    if (candidate.length <= room) {
+      note = candidate
+      kept = truncateChars(body, room - note.length)
+    }
+  }
+  return `${prefix}${sanitize(kept)}${note}`
+}
+
+function renderEntries(entries, heading, budget) {
+  const lines = [heading]
+  for (const entry of entries) {
+    const item = `- ${entry.text}`
+    const candidate = [...lines, item].join('\n')
+    if (candidate.length > budget) continue
+    lines.push(item)
+  }
+  return lines.join('\n')
+}
+
+function fitText(text, budget) {
+  if (text.length <= budget) return text
+  const kept = []
+  for (const line of text.split('\n')) {
+    const candidate = [...kept, line].join('\n')
+    if (candidate.length > budget) break
+    kept.push(line)
+  }
+  return kept.join('\n')
+}
+
 export function distillHint({ cfg, probe, t }) {
   if (!cfg.inject.user || !probe.user.memoryExists) return ''
-
   const limit = Number(cfg.inject.limits.user) || 0
   const above = Number(cfg.inject.distillAbove) || 0
   const chars = fileCharCount(probe.user.memoryPath)
-
-  // Already losing content: say so first, whatever the distillation threshold is.
-  if (limit > 0 && chars > limit) {
-    return `\n\n${t('overLimitHint', { chars, limit, above })}`
-  }
-  if (above > 0 && chars > above) {
-    return `\n\n${t('distillOverLimit', { chars, above, limit })}`
-  }
+  if (limit > 0 && chars > limit) return `\n\n${t('overLimitHint', { chars, limit, above })}`
+  if (above > 0 && chars > above) return `\n\n${t('distillOverLimit', { chars, above, limit })}`
   return ''
 }
 
-/** Characters in a file, or 0 when it cannot be read. */
 function fileCharCount(path) {
   if (!path) return 0
-  const file = readTextSafe(path, { maxBytes: 4 * 1024 * 1024 })
+  const file = readTextSafe(path, { maxBytes: 2 * 1024 * 1024 })
   return file.ok ? file.text.length : 0
 }
 
-function renderFileBlock({ label, path, limit, sanitize, t }) {
-  if (!path) return ''
-  const file = readTextSafe(path, { maxBytes: 1024 * 1024 })
-  if (!file.ok || !file.text.trim()) return ''
-
-  const body = file.text.trim()
-  const kept = truncateChars(body, limit)
-  const note = kept.length < body.length ? `\n\n_${t('truncated', { limit })}_` : ''
-  return `### ${label}\n\n${sanitize(kept)}${note}`
-}
-
-/**
- * Replace the WorkBuddy home prefix with `~`.
- *
- * Only the home directory itself: replacing every absolute path would make
- * genuinely useful references (a repo path recorded in a note) useless.
- */
 export function redact(text, home) {
   if (!home || !text) return text
   const variants = new Set([home, home.replace(/\\/g, '/'), home.replace(/\//g, '\\')])
   let output = text
-  for (const variant of variants) {
-    if (variant) output = output.split(variant).join('~')
-  }
+  for (const variant of variants) if (variant) output = output.split(variant).join('~')
   return output
 }

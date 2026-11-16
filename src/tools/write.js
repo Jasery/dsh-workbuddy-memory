@@ -10,7 +10,7 @@ import { TARGETS, resolveTarget } from '../write/store.js'
  * @param {object} deps.cfg
  * @param {object} deps.store
  */
-export function appendTool({ cfg, store }) {
+export function appendTool({ cfg, store, ctx }) {
   return defineTool({
     name: 'memory_append',
     description:
@@ -28,7 +28,7 @@ export function appendTool({ cfg, store }) {
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
     },
     async execute(args, exec) {
-      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }) ?? null, detail: false })
+      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }, ctx) ?? null, detail: false })
       return store.append(
         {
           target: String(args.target ?? ''),
@@ -45,7 +45,7 @@ export function appendTool({ cfg, store }) {
 }
 
 /** `memory_edit`: replace or remove one entry. */
-export function editTool({ cfg, store }) {
+export function editTool({ cfg, store, ctx }) {
   return defineTool({
     name: 'memory_edit',
     description:
@@ -64,7 +64,7 @@ export function editTool({ cfg, store }) {
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
     },
     async execute(args, exec) {
-      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }) ?? null, detail: false })
+      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }, ctx) ?? null, detail: false })
       return store.edit(
         {
           target: String(args.target ?? ''),
@@ -89,7 +89,7 @@ export function editTool({ cfg, store }) {
  * `memory_append` calls — slow, and each one burned a backup slot. The store
  * method, its validation and its lock/CAS/backup chain already existed.
  */
-export function replaceSectionTool({ cfg, store }) {
+export function replaceSectionTool({ cfg, store, ctx }) {
   return defineTool({
     name: 'memory_replace_section',
     description:
@@ -106,7 +106,7 @@ export function replaceSectionTool({ cfg, store }) {
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
     },
     async execute(args, exec) {
-      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }) ?? null, detail: false })
+      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }, ctx) ?? null, detail: false })
       return store.replaceSection(
         {
           target: String(args.target ?? ''),
@@ -129,7 +129,7 @@ export function replaceSectionTool({ cfg, store }) {
  * not silently discard writes made after the caller looked at the file. The file
  * as it stands is backed up first, so the restore itself is undoable.
  */
-export function restoreTool({ cfg, store }) {
+export function restoreTool({ cfg, store, ctx }) {
   return defineTool({
     name: 'memory_restore',
     description:
@@ -145,7 +145,7 @@ export function restoreTool({ cfg, store }) {
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
     },
     async execute(args, exec) {
-      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }) ?? null, detail: false })
+      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }, ctx) ?? null, detail: false })
       return store.restore(
         {
           target: String(args.target ?? ''),
@@ -166,7 +166,7 @@ export function restoreTool({ cfg, store }) {
  * panel already had this list over `/revisions`; without it the tool pair would
  * be unusable from the model side.
  */
-export function listRevisionsTool({ cfg, store }) {
+export function listRevisionsTool({ cfg, store, ctx }) {
   return defineTool({
     name: 'memory_list_revisions',
     description:
@@ -179,7 +179,7 @@ export function listRevisionsTool({ cfg, store }) {
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
     },
     async execute(args, exec) {
-      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }) ?? null, detail: false })
+      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }, ctx) ?? null, detail: false })
       const resolved = resolveTarget(String(args.target ?? ''), probe)
       if (!resolved.path || resolved.mode !== 'rewrite') return { ok: false, code: 'bad_target', target: String(args.target ?? '') }
       const revisions = store.listRevisions(resolved.path)
@@ -196,7 +196,7 @@ export function listRevisionsTool({ cfg, store }) {
  * logs into `memory/archive/`. It never writes MEMORY.md, so it cannot bloat
  * the injected long-term store. `dryRun` defaults to true.
  */
-export function pruneTool({ cfg, store }) {
+export function pruneTool({ cfg, store, ctx }) {
   return defineTool({
     name: 'memory_prune',
     description:
@@ -212,7 +212,7 @@ export function pruneTool({ cfg, store }) {
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
     },
     async execute(args, exec) {
-      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }) ?? null, detail: false })
+      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }, ctx) ?? null, detail: false })
       const dates =
         typeof args.dates === 'string' && args.dates.trim()
           ? args.dates.split(',').map((value) => value.trim()).filter(Boolean)

@@ -209,16 +209,21 @@ test('a tool write reaches the prompt even with a frozen snapshot', async () => 
   apply(ctx, { ...config, inject: { refresh: 'first-turn' } })
 
   const projectSection = record.sectionDefs.find((definition) => definition.name === 'workbuddy-memory:project')
-  const context = { agent: { session: { header: { cwd } } } }
+  const session = { header: { cwd } }
+  const context = { agent: { session } }
   const before = projectSection.text(context)
   assert.match(before, /- a/)
 
   const append = record.toolDefs.find((tool) => tool.name === 'memory_append')
-  const result = await append.execute({ target: 'project-memory', section: '偏好', text: 'b' }, { agent: { session: { header: { cwd } } } })
+  const result = await append.execute({ target: 'project-memory', section: '偏好', text: 'b' }, { agent: { session } })
   assert.equal(result.ok, true)
 
   const after = projectSection.text(context)
   assert.match(after, /- b/)
+  const status = record.toolDefs.find((tool) => tool.name === 'memory_status')
+  const report = await status.execute({}, { agent: { session } })
+  assert.equal(report.lastAssembly.measuredAs, 'plugin-contribution')
+  assert.equal(report.lastAssembly.totalChars, report.lastAssembly.blocks.reduce((sum, block) => sum + block.chars, 0))
   void home
   void root
 })
@@ -229,11 +234,12 @@ test('a read does not invalidate the frozen snapshot', async () => {
   apply(ctx, { ...config, inject: { refresh: 'first-turn' } })
 
   const projectSection = record.sectionDefs.find((definition) => definition.name === 'workbuddy-memory:project')
-  const context = { agent: { session: { header: { cwd } } } }
+  const session = { header: { cwd } }
+  const context = { agent: { session } }
   const before = projectSection.text(context)
 
   const read = record.toolDefs.find((tool) => tool.name === 'memory_read')
-  await read.execute({ target: 'project-memory' }, { agent: { session: { header: { cwd } } } })
+  await read.execute({ target: 'project-memory' }, { agent: { session } })
 
   // Reading changes nothing on disk, so the frozen text is still the same object.
   assert.equal(projectSection.text(context), before)
@@ -255,9 +261,10 @@ test('values validated by the real schema reach the tools and the probe', async 
 
   const status = record.toolDefs.find((tool) => tool.name === 'memory_status')
   const state = await status.execute({}, exec)
-  assert.equal(state.readOnly, true)
-  assert.equal(state.home.path, home, 'workbuddyHome was ignored, so the probe fell back')
-  assert.equal(state.config.search.enabled, false)
+  assert.equal(state.writable, false)
+  assert.equal(state.paths.source, 'config')
+  assert.equal(state.paths.user.includes(home), true, 'workbuddyHome was ignored, so the probe fell back')
+  assert.equal('config' in state, false)
 
   const append = record.toolDefs.find((tool) => tool.name === 'memory_append')
   const refused = await append.execute({ target: 'user-memory', text: 'no' }, exec)

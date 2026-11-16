@@ -12,7 +12,7 @@ import { parseSections } from '../markdown.js'
  * @param {object} deps
  * @param {object} deps.cfg
  */
-export function searchTool({ cfg }) {
+export function searchTool({ cfg, ctx }) {
   return defineTool({
     name: 'memory_search',
     description:
@@ -32,7 +32,7 @@ export function searchTool({ cfg }) {
       // it has to be read here: a key that changes nothing is worse than no key.
       if (!cfg.search.enabled) return { ok: false, code: 'search_disabled' }
 
-      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }) ?? null, detail: true })
+      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }, ctx) ?? null, detail: true })
       const query = String(args.query ?? '').trim()
       if (!query) return { ok: false, code: 'empty_query' }
 

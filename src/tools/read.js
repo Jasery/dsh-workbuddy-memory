@@ -103,7 +103,7 @@ function pageText(text, requested, limitValue, t) {
  * @param {object} deps.cfg
  * @param {(key: string, vars?: Record<string, string|number>) => string} deps.t
  */
-export function readTool({ cfg, t }) {
+export function readTool({ cfg, t, ctx }) {
   return defineTool({
     name: 'memory_read',
     description:
@@ -121,7 +121,7 @@ export function readTool({ cfg, t }) {
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
     },
     async execute(args, exec) {
-      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }) ?? null, detail: true })
+      const probe = probeEnvironment({ cfg, cwd: resolveCwd({ agent: exec?.agent }, ctx) ?? null, detail: true })
       const resolved = resolveReadTarget(String(args.target ?? ''), probe, args.date)
       if (!resolved.path) {
         return {

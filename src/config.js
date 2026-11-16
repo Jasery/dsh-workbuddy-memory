@@ -11,6 +11,7 @@
 import z from '@deepseek-ai/schemastery'
 
 const REFRESH_MODES = ['first-turn', 'on-change']
+const INJECT_MODES = ['layered', 'full']
 
 export const Config = z.object({
   readOnly: z
@@ -39,6 +40,8 @@ export const Config = z.object({
   inject: z
     .object({
       enabled: z.boolean().default(true).volatile(),
+      mode: z.union(INJECT_MODES).default('layered').volatile(),
+      coreBudget: z.number().default(4000).description('Layered injection budget in UTF-16 code units (4000..20000).').volatile(),
       refresh: z.union(REFRESH_MODES).default('on-change').volatile(),
       project: z.boolean().default(true).volatile(),
       rules: z.boolean().default(true).volatile(),
@@ -84,8 +87,8 @@ export const Config = z.object({
       operationLog: z.boolean().default(true).volatile(),
       ensureLayout: z
         .boolean()
-        .default(false)
-        .description('Create <cwd>/<dataFolder>/memory on first write. Off by default: inventing a hidden folder can race WorkBuddy workspace setup.')
+        .default(true)
+        .description('Create <cwd>/<dataFolder>/memory after a valid first write.')
         .volatile(),
     }),
 
@@ -238,6 +241,8 @@ export function normalizeConfig(raw) {
 
     inject: {
       enabled: bool(inject.enabled, true),
+      mode: pick(inject.mode, INJECT_MODES, 'layered'),
+      coreBudget: num(inject.coreBudget, 4000, 4000, 20000),
       refresh: pick(inject.refresh, REFRESH_MODES, 'on-change'),
       project: bool(inject.project, true),
       rules: bool(inject.rules, true),
@@ -259,7 +264,7 @@ export function normalizeConfig(raw) {
       backupKeep: num(write.backupKeep, 20, 0, 100),
       fsync: bool(write.fsync, true),
       operationLog: bool(write.operationLog, true),
-      ensureLayout: bool(write.ensureLayout, false),
+      ensureLayout: bool(write.ensureLayout, true),
     },
 
     guard: {

@@ -207,14 +207,69 @@ test('edit removes exactly one entry', async () => {
   assert.equal(readFileSync(file, 'utf8'), '## A\n- two\n')
 })
 
-test('a missing memory directory is reported, not created', async () => {
-  const s = setup()
+test('ensureLayout false keeps a missing memory directory untouched', async () => {
+  const s = setup({ write: { ensureLayout: false } })
   const empty = join(s.root, 'norepo')
   mkdirSync(empty, { recursive: true })
   const probe = probeEnvironment({ cfg: s.cfg, cwd: empty, env: { WORKBUDDY_CONFIG_DIR: s.home }, home: s.root })
   const result = await s.store.append({ target: 'project-memory', section: 'A', text: 'x' }, probe)
   assert.equal(result.ok, false)
   assert.equal(result.code, 'no_store')
+})
+
+test('a valid first append creates a localized template with one core heading', async () => {
+  const s = setup({ locale: 'en' })
+  fs.rmSync(s.memoryDir, { recursive: true, force: true })
+  const result = await s.store.append({ target: 'project-memory', section: 'Core Memory', text: 'remembered' }, s.probe)
+  assert.equal(result.ok, true)
+  const text = readFileSync(join(s.memoryDir, 'MEMORY.md'), 'utf8')
+  assert.equal((text.match(/^## Core Memory$/gm) ?? []).length, 1)
+  assert.match(text, /^# Memory\n\n## Core Memory\n/)
+  assert.match(text, /- remembered/)
+
+  const zh = setup({ locale: 'zh' })
+  fs.rmSync(zh.memoryDir, { recursive: true, force: true })
+  const localized = await zh.store.append({ target: 'project-memory', section: 'Core Memory', text: '一条' }, zh.probe)
+  assert.equal(localized.ok, true)
+  const localizedText = readFileSync(join(zh.memoryDir, 'MEMORY.md'), 'utf8')
+  assert.equal((localizedText.match(/^## 常驻记忆$/gm) ?? []).length, 1)
+  assert.doesNotMatch(localizedText, /^## Core Memory$/m)
+})
+
+test('invalid first writes do not create any part of the memory layout', async () => {
+  const s = setup()
+  fs.rmSync(s.memoryDir, { recursive: true, force: true })
+  for (const input of [
+    { target: 'project-memory', section: 'A', text: '  ' },
+    { target: 'project-memory', section: 'A', text: 'one\n- two' },
+    { target: 'project-memory', section: 'A\n## forged', text: 'one' },
+    { target: 'project-memory', section: '   ', text: 'one' },
+    { target: 'project-daily', date: '2026-02-31', text: 'one' },
+  ]) assert.equal((await s.store.append(input, s.probe)).ok, false)
+  assert.equal(existsSync(s.memoryDir), false)
+})
+
+test('ordinary append cannot silently turn a legacy document into layered format', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  const before = '# Old\n\n## Notes\n- existing\n'
+  writeFileSync(file, before, 'utf8')
+  const result = await s.store.append({ target: 'project-memory', section: 'Core Memory', text: 'new' }, s.probe)
+  assert.equal(result.code, 'layering_confirmation_required')
+  assert.equal(readFileSync(file, 'utf8'), before)
+  const topic = await s.store.append({ target: 'project-memory', section: 'Notes', text: 'topic update' }, s.probe)
+  assert.equal(topic.ok, true)
+})
+
+test('trusted replaceDocument is the explicit legacy-to-layered migration path', async () => {
+  const s = setup()
+  const file = join(s.memoryDir, 'MEMORY.md')
+  const before = '# Old\n\n## Notes\n- legacy\n'
+  writeFileSync(file, before, 'utf8')
+  const migrated = '# Memory\n\n## Core Memory\n- curated\n\n## Notes\n- retained\n'
+  const result = await s.store.replaceDocument({ target: 'project-memory', text: migrated, expectedRevision: contentRevision(before) }, s.probe)
+  assert.equal(result.ok, true)
+  assert.equal(readFileSync(file, 'utf8'), migrated)
 })
 
 test('the daily file follows the local calendar day, not UTC', async () => {

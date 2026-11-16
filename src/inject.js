@@ -1,126 +1,98 @@
-/**
- * System-prompt injection.
- *
- * Four sections, registered once and always present at their `order`. Each
- * provider decides per assembly whether it has text: returning `''` makes the
- * host drop that section, which is how turning a block off takes effect
- * without reloading the plugin.
- *
- * The working directory comes from `context.agent.session.header.cwd`. That
- * field is not in the public `AssembleContext` type — the agent loop extends it,
- * and the loop's own prompt variables read it the same way. If it is missing,
- * the project block is skipped rather than falling back to `process.cwd()`:
- * injecting another project's memory is worse than injecting none.
- */
-
-import { createAssemblyCache, createFrozenStore } from './cache.js'
+import { createAssemblyCache, createFileCache } from './cache.js'
 import { probeEnvironment } from './env.js'
 import { renderSections, SECTION_ORDER } from './render.js'
 
-const SECTION_NAMES = {
-  project: 'workbuddy-memory:project',
-  rules: 'workbuddy-memory:rules',
-  user: 'workbuddy-memory:user',
-  profile: 'workbuddy-memory:profile',
-}
+const SECTION_NAMES = { project: 'workbuddy-memory:project', rules: 'workbuddy-memory:rules', user: 'workbuddy-memory:user', profile: 'workbuddy-memory:profile' }
 
-/**
- * Read the session working directory out of the assemble context.
- *
- * @param {object} context
- * @returns {string|null}
- */
-export function resolveCwd(context) {
-  const cwd = context?.agent?.session?.header?.cwd
+export function resolveCwd(context, ctx) {
+  const session = context?.agent?.session
+  try {
+    const workingDirectory = ctx?.get?.('workingDirectory')?.get?.(session)
+    if (typeof workingDirectory === 'string' && workingDirectory.length > 0) return workingDirectory
+  } catch {}
+  const cwd = session?.header?.cwd
   return typeof cwd === 'string' && cwd.length > 0 ? cwd : null
 }
 
-/**
- * Register the four memory sections.
- *
- * @param {import('@deepseek-ai/cordis').Context} ctx
- * @param {object} deps
- * @param {object} deps.cfg
- * @param {(key: string, vars?: Record<string, string|number>) => string} deps.t
- * @param {(probe: object, cwd: string|null) => void} [deps.onProbe]
- * @returns {{ invalidate: () => void, dispose: () => void }}
- */
 export function registerSections(ctx, deps) {
-  const { cfg, t, onProbe } = deps
-  const perAssembly = createAssemblyCache()
-  const frozen = createFrozenStore()
+  const { cfg, t, onProbe, onCommit } = deps
+  let perAssembly = createAssemblyCache()
+  const fileCache = createFileCache()
+  const firstTurn = new WeakMap()
+  const assembled = new WeakMap()
   const disposers = []
+  let generation = 0
+  const signature = () => JSON.stringify(cfg)
+  const dispose = () => { while (disposers.length) { try { disposers.pop()?.() } catch {} } }
 
-  /** Drop every section this call registered. */
-  const dispose = () => {
-    while (disposers.length > 0) {
-      const off = disposers.pop()
-      try {
-        off()
-      } catch {
-        // A failed unregister must not leave the remaining sections mounted.
-      }
-    }
-  }
-
-  /**
-   * Probe + render for one assembly.
-   * @param {object} context
-   */
   const build = (context) => {
-    const cwd = resolveCwd(context)
+    const cwd = resolveCwd(context, ctx)
     const probe = probeEnvironment({ cfg, cwd, detail: false })
     if (typeof onProbe === 'function') onProbe(probe, cwd)
-    return { cwd, probe, sections: renderSections({ cfg, probe, t }) }
+    const sections = cfg.inject.enabled ? renderSections({ cfg, probe, t, readFile: (path) => fileCache.read(path) }) : []
+    const blocks = sections.map(({ name, text }) => ({ name, chars: text.length, state: (name === 'workbuddy-memory:profile' ? sections.states?.directory : sections.states?.[name.slice('workbuddy-memory:'.length)]) ?? (text ? 'enabled' : 'disabled') }))
+    const session = context?.agent?.session
+    if (session && typeof session === 'object') {
+      assembled.set(session, {
+        cwd,
+        blocks,
+        totalChars: blocks.reduce((sum, block) => sum + block.chars, 0),
+        states: sections.states ?? {},
+        mode: sections.mode ?? cfg.inject.mode,
+        generation,
+        configSignature: signature(),
+      })
+    }
+    return { cwd, probe, sections }
   }
 
-  /**
-   * The state for this assembly, honouring the refresh mode.
-   * @param {object} context
-   */
   const stateFor = (context) => {
     if (!cfg.inject.enabled) return { sections: [] }
-
-    if (cfg.inject.refresh === 'first-turn') {
-      const key = `${resolveCwd(context) ?? '(no-cwd)'}`
-      return /** @type {{ sections: {name: string, text: string}[] }} */ (frozen.get(key, () => build(context)))
+    const session = context?.agent?.session
+    const cwd = resolveCwd(context, ctx)
+    const configSignature = signature()
+    if (cfg.inject.refresh === 'first-turn' && session && typeof session === 'object') {
+      const previous = firstTurn.get(session)
+      if (previous && previous.cwd === cwd && previous.generation === generation && previous.configSignature === configSignature) return previous.state
+      const state = build(context)
+      firstTurn.set(session, { cwd, generation, configSignature, state })
+      return state
     }
-
-    return /** @type {{ sections: {name: string, text: string}[] }} */ (perAssembly.get(context, () => build(context)))
+    return perAssembly.get(context, () => build(context))
   }
 
   try {
     for (const [key, name] of Object.entries(SECTION_NAMES)) {
-      const off = ctx.effect(() =>
-        ctx.systemPrompt.section({
-          name,
-          order: SECTION_ORDER[key],
-          interpolate: false,
-          text: (context) => {
-            try {
-              const state = stateFor(context)
-              const hit = state.sections.find((section) => section.name === name)
-              return hit?.text ?? ''
-            } catch (error) {
-              // Never break a turn because memory could not be read.
-              ctx.logger?.warn?.(`[workbuddy-memory] section ${name} failed: ${error?.message ?? error}`)
-              return ''
-            }
-          },
-        }),
-      )
+      const off = ctx.effect(() => ctx.systemPrompt.section({
+        name,
+        order: SECTION_ORDER[key],
+        interpolate: false,
+        text: (context) => {
+          try { return stateFor(context).sections.find((section) => section.name === name)?.text ?? '' }
+          catch (error) {
+            ctx.logger?.warn?.(`[workbuddy-memory] section ${name} failed: ${error?.message ?? error}`)
+            return ''
+          }
+        },
+      }))
       if (typeof off === 'function') disposers.push(off)
     }
-  } catch (error) {
-    dispose()
-    throw error
-  }
+  } catch (error) { dispose(); throw error }
+
+  const unsubscribe = typeof onCommit === 'function' ? onCommit((event) => {
+    fileCache.invalidate(event?.path)
+    generation += 1
+    perAssembly = createAssemblyCache()
+  }) : null
 
   return {
-    /** Drop the frozen snapshot, e.g. after this plugin writes a memory file. */
-    invalidate() {
-      frozen.clear()
+    invalidate() { generation += 1; perAssembly = createAssemblyCache() },
+    lastAssembly(session) {
+      if (!session || typeof session !== 'object') return null
+      const value = assembled.get(session)
+      if (!value || value.generation !== generation || value.configSignature !== signature()) return null
+      return { cwd: value.cwd, blocks: value.blocks, totalChars: value.totalChars, states: value.states, mode: value.mode, measuredAs: 'plugin-contribution' }
     },
-    dispose,
+    dispose() { try { unsubscribe?.() } catch {}; dispose() },
   }
 }

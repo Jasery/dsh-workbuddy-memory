@@ -122,14 +122,13 @@ export function apply(ctx, config) {
         cfg,
         t,
         onProbe: (_probe, cwd) => recent.note(cwd),
+        onCommit: (listener) => store?.subscribe?.((event) => { listener(event); catalog.invalidate() }),
       })
     } catch (error) {
       // A broken injection path must not stop the tools from working.
       ctx.logger?.warn?.(`[workbuddy-memory] section registration failed: ${error?.message ?? error}`)
     }
   }
-  mountSections()
-
   // The panel's project list prefers DSH's durable workspace registry. It is
   // read without declaring a dependency: the service may activate after this
   // plugin, and the catalog degrades to `recent.seen` when a profile does not
@@ -149,13 +148,15 @@ export function apply(ctx, config) {
     ctx.logger?.warn?.(`[workbuddy-memory] store creation failed: ${error?.message ?? error}`)
   }
 
+  mountSections()
+
   let tools = null
   const mountTools = () => {
     tools?.dispose?.()
     tools = null
     if (!store) return
     try {
-      tools = registerTools(ctx, { cfg, t, store, onWrite: () => sections?.invalidate?.() })
+      tools = registerTools(ctx, { cfg, t, store, lastAssembly: (session) => sections?.lastAssembly?.(session) ?? null })
     } catch (error) {
       ctx.logger?.warn?.(`[workbuddy-memory] tool registration failed: ${error?.message ?? error}`)
     }

@@ -5,9 +5,6 @@ import { readTool } from './read.js'
 import { appendTool, editTool, listRevisionsTool, pruneTool, replaceSectionTool, restoreTool } from './write.js'
 import { searchTool } from './search.js'
 
-/** Store methods that change a file, and so invalidate what was injected. */
-const MUTATORS = ['append', 'edit', 'editAt', 'remove', 'replaceSection', 'replaceDocument', 'removeSection', 'restore', 'prune']
-
 /**
  * Make a tool result survive the host's lossless-JSON gate.
  *
@@ -44,37 +41,6 @@ export function lossless(value, seen = new WeakSet()) {
   for (const [key, entry] of Object.entries(value)) out[key] = lossless(entry, seen)
   seen.delete(value)
   return out
-}
-
-/**
- * Wrap the store so every committed write announces itself.
- *
- * The injected prefix is frozen for `inject.refresh: 'first-turn'`, and even
- * `on-change` caches per assembly. Without this notification the model writes
- * memory and then keeps reading the version from before its own write.
- *
- * @param {object} store
- * @param {() => void} onWrite
- */
-function withWriteNotice(store, onWrite) {
-  if (!store || typeof onWrite !== 'function') return store
-  const wrapped = { ...store }
-  for (const name of MUTATORS) {
-    const original = store[name]
-    if (typeof original !== 'function') continue
-    wrapped[name] = async (...args) => {
-      const result = await original.apply(store, args)
-      if (result?.ok) {
-        try {
-          onWrite()
-        } catch {
-          // A cache miss is cheaper than a failed write.
-        }
-      }
-      return result
-    }
-  }
-  return wrapped
 }
 
 /**
@@ -118,11 +84,10 @@ function harden(tool) {
  * @param {object} deps.cfg
  * @param {(key: string, vars?: Record<string, string|number>) => string} deps.t
  * @param {object} deps.store
- * @param {() => void} [deps.onWrite] - called after a committed write.
  * @returns {{ names: string[], dispose: () => void }}
  */
 export function registerTools(ctx, deps) {
-  const scoped = { ...deps, store: withWriteNotice(deps.store, deps.onWrite) }
+  const scoped = { ...deps, ctx }
   const tools = [statusTool(scoped), readTool(scoped)]
   if (scoped.cfg.search.enabled) tools.push(searchTool(scoped))
   tools.push(appendTool(scoped), editTool(scoped), pruneTool(scoped))

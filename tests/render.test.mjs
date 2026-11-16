@@ -33,7 +33,7 @@ function fixture(options = {}) {
   if (project !== undefined) writeFileSync(join(cwd, '.workbuddy', 'memory', 'MEMORY.md'), project, 'utf8')
   if (user !== undefined) writeFileSync(join(home, 'MEMORY.md'), user, 'utf8')
 
-  const cfg = normalizeConfig({ workbuddyHome: home, stateDir: join(root, 'state'), ...config })
+  const cfg = normalizeConfig({ workbuddyHome: home, stateDir: join(root, 'state'), ...config, inject: { mode: 'full', ...(config.inject ?? {}) } })
   const probe = probeEnvironment({ cfg, cwd, detail: true })
   return { root, home, cwd, cfg, probe }
 }
@@ -76,13 +76,13 @@ test('a missing or empty file contributes nothing', () => {
 test('per-block switches remove exactly one block', () => {
   const { cfg, probe } = fixture({ project: '## 偏好\n- a\n' })
 
-  const noProject = normalizeConfig({ workbuddyHome: probe.home.path, inject: { project: false } })
+  const noProject = normalizeConfig({ workbuddyHome: probe.home.path, inject: { mode: 'full', project: false } })
   assert.deepEqual(names(renderSections({ cfg: noProject, probe, t })), ['workbuddy-memory:rules', 'workbuddy-memory:user'])
 
-  const noRules = normalizeConfig({ workbuddyHome: probe.home.path, inject: { rules: false } })
+  const noRules = normalizeConfig({ workbuddyHome: probe.home.path, inject: { mode: 'full', rules: false } })
   assert.deepEqual(names(renderSections({ cfg: noRules, probe, t })), ['workbuddy-memory:project', 'workbuddy-memory:user'])
 
-  const noUser = normalizeConfig({ workbuddyHome: probe.home.path, inject: { user: false } })
+  const noUser = normalizeConfig({ workbuddyHome: probe.home.path, inject: { mode: 'full', user: false } })
   assert.deepEqual(names(renderSections({ cfg: noUser, probe, t })), ['workbuddy-memory:project', 'workbuddy-memory:rules'])
   void cfg
 })
@@ -107,6 +107,12 @@ test('an oversized block is trimmed and says so', () => {
 
   assert.equal(project.text.length < body.length, true)
   assert.match(project.text, /截断|truncated|120/)
+})
+
+test('legacy wrapper and truncation note stay inside a very small old limit', () => {
+  const { cfg, probe } = fixture({ project: `## Notes\n- ${'x'.repeat(200)}\n`, config: { inject: { limits: { project: 40 } } } })
+  const project = renderSections({ cfg, probe, t }).find((section) => section.name === 'workbuddy-memory:project')
+  assert.ok(project.text.length <= 40, `legacy wrapper is ${project.text.length} chars`)
 })
 
 test('truncation never halves a surrogate pair', () => {
@@ -171,7 +177,7 @@ test('a chosen profile file is rendered', () => {
   mkdirSync(dir, { recursive: true })
   writeFileSync(join(dir, 'USER.md'), '## 画像\n- 关注 AI\n', 'utf8')
 
-  const withUid = normalizeConfig({ workbuddyHome: home, inject: { profileUid: 'abc' } })
+  const withUid = normalizeConfig({ workbuddyHome: home, inject: { mode: 'full', profileUid: 'abc' } })
   const probe = probeEnvironment({ cfg: withUid, cwd: join(cwd), detail: true })
   const profile = renderSections({ cfg: withUid, probe, t }).find((section) => section.name === 'workbuddy-memory:profile')
   assert.ok(profile, 'a resolved profile file should be injected')
@@ -272,6 +278,61 @@ test('a removed conflictPolicy key is ignored, not resurrected', () => {
   // `overwrite` still got `fail`. It is gone from the config entirely now.
   const cfg = normalizeConfig({ write: { conflictPolicy: 'overwrite' } })
   assert.equal('conflictPolicy' in cfg.write, false)
+})
+
+test('layered mode injects complete core entries within the per-source budget and exposes topic directory', () => {
+  const core = `# Memory\n\n## Core Memory\n- ${'😀'.repeat(800)}\n- short core\n\n## Network\n- provider note\n`
+  const { cfg, probe } = fixture({ project: core, user: '# User\n\n## 常驻记忆\n- user core\n\n## Accounts\n- acct\n', config: { inject: { mode: 'layered', coreBudget: 4000 } } })
+  const sections = renderSections({ cfg, probe, t })
+  const project = sections.find((item) => item.name === 'workbuddy-memory:project')
+  assert.ok(project.text.length <= 1500)
+  assert.doesNotMatch(project.text, /😀{2,}$/u, 'oversized entry is omitted whole')
+  assert.match(project.text, /short core/)
+  const user = sections.find((item) => item.name === 'workbuddy-memory:user')
+  const rules = sections.find((item) => item.name === 'workbuddy-memory:rules')
+  const directory = sections.find((item) => item.name === 'workbuddy-memory:profile')
+  assert.ok(user.text.length <= 1500)
+  assert.ok(rules.text.length <= 500)
+  assert.ok(directory.text.length <= 500)
+  assert.match(directory.text, /Network/)
+  assert.ok(sections.reduce((sum, section) => sum + section.text.length, 0) <= 4000)
+  assert.equal(sections.mode, 'layered')
+})
+
+test('compact rules are complete in both locales and remain under 500 UTF-16 units', () => {
+  const en = createTranslator('en')
+  const { cfg, probe } = fixture({ config: { inject: { mode: 'layered' } } })
+  const english = renderSections({ cfg, probe, t: en }).find((item) => item.name === 'workbuddy-memory:rules').text
+  const chinese = renderSections({ cfg, probe, t }).find((item) => item.name === 'workbuddy-memory:rules').text
+  assert.ok(english.length <= 500, `English rules are ${english.length} chars`)
+  assert.ok(chinese.length <= 500, `Chinese rules are ${chinese.length} chars`)
+  assert.match(english, /task-shaped work/)
+  assert.match(english, /memory_read/)
+  assert.match(english, /panel/)
+  assert.match(chinese, /收尾前检查/)
+  assert.match(chinese, /memory_read/)
+  assert.match(chinese, /面板操作/)
+})
+
+test('mixed files retain legacy block while layered source remains layered', () => {
+  const { root, cwd, home } = fixture({ project: '## Old\n- legacy\n', user: '# User\n\n## Core Memory\n- core\n' })
+  const cfg = normalizeConfig({ workbuddyHome: home, inject: { mode: 'layered' } })
+  const probe = probeEnvironment({ cfg, cwd, detail: false })
+  const sections = renderSections({ cfg, probe, t })
+  assert.match(sections.find((item) => item.name === 'workbuddy-memory:project').text, /legacy/)
+  assert.match(sections.find((item) => item.name === 'workbuddy-memory:user').text, /core/)
+  assert.equal(sections.mode, 'mixed')
+  assert.match(sections.find((item) => item.name === 'workbuddy-memory:profile').text, /legacy/)
+  void root
+})
+
+test('zero limit disables a source and its entries in every mode', () => {
+  const { cwd, home } = fixture({ project: '# Memory\n\n## Core Memory\n- core\n', user: '# User\n\n## Core Memory\n- user\n' })
+  const cfg = normalizeConfig({ workbuddyHome: home, inject: { mode: 'layered', limits: { project: 0, user: 0, profile: 0 } } })
+  const sections = renderSections({ cfg, probe: probeEnvironment({ cfg, cwd }), t })
+  assert.equal(sections.some((item) => item.name === 'workbuddy-memory:project'), false)
+  assert.equal(sections.some((item) => item.name === 'workbuddy-memory:user'), false)
+  assert.equal(sections.some((item) => item.name === 'workbuddy-memory:profile'), false)
 })
 
 test('backupKeep defaults to a tidy-up-sized window', () => {

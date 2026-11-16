@@ -43,7 +43,7 @@ function fixture(config = {}) {
   writeFileSync(join(dir, 'MEMORY.md'), '## 偏好\n- 第一版\n', 'utf8')
   writeFileSync(join(home, 'MEMORY.md'), '- 全局\n', 'utf8')
 
-  const cfg = normalizeConfig({ workbuddyHome: home, stateDir: join(root, 'state'), ...config })
+  const cfg = normalizeConfig({ workbuddyHome: home, stateDir: join(root, 'state'), ...config, inject: { mode: 'full', ...(config.inject ?? {}) } })
   return { root, home, cwd, dir, cfg }
 }
 
@@ -123,12 +123,14 @@ test('first-turn freezes the text for the same workspace', () => {
   const injected = registerSections(ctx, { cfg, t })
   const project = sections.get('workbuddy-memory:project')
 
-  assert.match(textOf(project, contextFor(cwd)), /第一版/)
+  const session = { header: { cwd } }
+  const context = { agent: { session }, scope: {} }
+  assert.match(textOf(project, context), /第一版/)
   writeFileSync(join(dir, 'MEMORY.md'), '## 偏好\n- 第二版\n', 'utf8')
-  assert.match(textOf(project, contextFor(cwd)), /第一版/, 'a frozen block must not change mid-session')
+  assert.match(textOf(project, context), /第一版/, 'a frozen block must not change mid-session')
 
   injected.invalidate()
-  assert.match(textOf(project, contextFor(cwd)), /第二版/, 'invalidate() is the escape hatch')
+  assert.match(textOf(project, context), /第二版/, 'invalidate() is the escape hatch')
 })
 
 test('turning injection off yields empty blocks without unregistering', () => {
@@ -138,6 +140,15 @@ test('turning injection off yields empty blocks without unregistering', () => {
   const context = contextFor(cwd)
 
   for (const name of sections.keys()) assert.equal(textOf(sections.get(name), context), '', `${name} should stay empty`)
+})
+
+test('disabled injection reports no fabricated assembly', () => {
+  const { cfg, cwd } = fixture({ inject: { enabled: false } })
+  const { ctx, sections } = fakeCtx()
+  const controller = registerSections(ctx, { cfg, t })
+  const session = { header: { cwd } }
+  assert.equal(sections.get('workbuddy-memory:project').text({ agent: { session } }), '')
+  assert.equal(controller.lastAssembly(session), null)
 })
 
 test('a failing provider never breaks the turn', () => {
@@ -165,6 +176,37 @@ test('onProbe reports the working directory it saw', () => {
   assert.deepEqual(seen.at(-1), [true, cwd])
 })
 
+test('first-turn snapshots are session-scoped, follow cwd/config changes and expose actual contribution', () => {
+  const { cfg, cwd, dir } = fixture({ inject: { mode: 'full', refresh: 'first-turn' } })
+  const { ctx, sections } = fakeCtx()
+  const controller = registerSections(ctx, { cfg, t })
+  const project = sections.get('workbuddy-memory:project')
+  const one = { header: { cwd } }
+  const two = { header: { cwd } }
+  assert.equal(controller.lastAssembly(one), null)
+  assert.match(project.text({ agent: { session: one } }), /第一版/)
+  assert.match(project.text({ agent: { session: two } }), /第一版/)
+  assert.equal(controller.lastAssembly(one).measuredAs, 'plugin-contribution')
+  assert.equal(controller.lastAssembly(one).totalChars, controller.lastAssembly(one).blocks.reduce((sum, block) => sum + block.chars, 0))
+  writeFileSync(join(dir, 'MEMORY.md'), '## 偏好\n- changed\n', 'utf8')
+  assert.match(project.text({ agent: { session: one } }), /第一版/)
+  assert.match(project.text({ agent: { session: two } }), /第一版/)
+  one.header.cwd = join(cwd, 'elsewhere')
+  assert.equal(project.text({ agent: { session: one } }), '')
+  one.header.cwd = cwd
+  cfg.inject.project = false
+  assert.equal(controller.lastAssembly(one), null, 'stale configuration snapshots are not reported')
+  assert.equal(project.text({ agent: { session: one } }), '', 'config signature change rebuilds snapshot')
+  assert.equal(controller.lastAssembly(one).states.project, 'disabled')
+})
+
+test('workingDirectory service overrides header cwd for injection and tools', () => {
+  const selected = 'C:\\selected'
+  const service = { get: (session) => session?.id === 's' ? selected : null }
+  const context = { agent: { session: { id: 's', header: { cwd: 'C:\\header' } } } }
+  assert.equal(resolveCwd(context, { get: (name) => name === 'workingDirectory' ? service : null }), selected)
+})
+
 test('the file cache reuses text until the stat changes', () => {
   const { dir } = fixture()
   const path = join(dir, 'MEMORY.md')
@@ -181,6 +223,22 @@ test('the file cache reuses text until the stat changes', () => {
   assert.equal(cache.size, 0)
   assert.equal(cache.read(join(dir, 'nope.md')), '')
   assert.equal(cache.read(''), '')
+})
+
+test('the file cache enforces per-file, file-count and aggregate byte caps', () => {
+  const { dir } = fixture()
+  const cache = createFileCache()
+  for (let index = 0; index < 65; index += 1) {
+    const path = join(dir, `cache-${index}.md`)
+    writeFileSync(path, `file-${index}`)
+    assert.match(cache.read(path), /file-/)
+  }
+  assert.equal(cache.size, 64)
+  assert.ok(cache.bytes <= 8 * 1024 * 1024)
+  const oversized = join(dir, 'oversized.md')
+  writeFileSync(oversized, 'x'.repeat(2 * 1024 * 1024 + 1))
+  assert.equal(cache.read(oversized), '')
+  assert.equal(cache.size, 64)
 })
 
 test('the assembly cache keys on the context object', () => {
@@ -230,13 +288,13 @@ test('profileUid matches the account uid exactly, never a substring', () => {
   writeFileSync(join(home, 'user-abc-personal', 'USER.md'), '# 画像 abc\n', 'utf8')
   writeFileSync(join(home, 'user-xyz-personal', 'USER.md'), '# 画像 xyz\n', 'utf8')
 
-  const ambiguous = normalizeConfig({ workbuddyHome: home, stateDir: join(root, 'state') })
+  const ambiguous = normalizeConfig({ workbuddyHome: home, stateDir: join(root, 'state'), inject: { mode: 'full' } })
   const first = fakeCtx()
   registerSections(first.ctx, { cfg: ambiguous, t })
   // No uid: two candidates are ambiguity, not a guess.
   assert.match(textOf(first.sections.get('workbuddy-memory:profile'), contextFor(cwd)), /多个候选|未指定/)
 
-  const partial = normalizeConfig({ workbuddyHome: home, stateDir: join(root, 'state'), inject: { profileUid: 'a' } })
+  const partial = normalizeConfig({ workbuddyHome: home, stateDir: join(root, 'state'), inject: { mode: 'full', profileUid: 'a' } })
   const second = fakeCtx()
   registerSections(second.ctx, { cfg: partial, t })
   const prefixText = textOf(second.sections.get('workbuddy-memory:profile'), contextFor(cwd))
@@ -246,7 +304,7 @@ test('profileUid matches the account uid exactly, never a substring', () => {
   assert.doesNotMatch(prefixText, /画像 abc/)
   assert.doesNotMatch(prefixText, /画像 xyz/)
 
-  const exact = normalizeConfig({ workbuddyHome: home, stateDir: join(root, 'state'), inject: { profileUid: 'xyz' } })
+  const exact = normalizeConfig({ workbuddyHome: home, stateDir: join(root, 'state'), inject: { mode: 'full', profileUid: 'xyz' } })
   const third = fakeCtx()
   registerSections(third.ctx, { cfg: exact, t })
   const text = textOf(third.sections.get('workbuddy-memory:profile'), contextFor(cwd))

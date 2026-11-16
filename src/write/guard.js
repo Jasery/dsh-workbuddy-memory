@@ -127,9 +127,10 @@ export function registerWriteGuard(ctx, { cfg, t }) {
       const raw = writeTargets(name, exec?.arguments)
       if (raw.length === 0) return undefined
 
-      const cwd = resolveCwd({ agent: exec?.agent }) ?? process.cwd()
+      const cwd = resolveCwd({ agent: exec?.agent }, ctx)
       const probe = probeEnvironment({ cfg, cwd, detail: false })
       for (const candidate of raw) {
+        if (!isAbsolute(candidate) && !cwd) continue
         const target = isAbsolute(candidate) ? candidate : resolve(cwd, candidate)
         if (isMemoryTarget(target, probe)) return t('guard.refused', { path: candidate })
       }

@@ -1,79 +1,60 @@
-/**
- * Caches that keep the injected prefix stable without re-reading the disk.
- *
- * Two levels:
- *  - per-assembly: the same `AssembleContext` object reaches every section
- *    provider, so one probe serves all four blocks instead of four stats.
- *  - across assemblies: file text is reused while `mtime + size` are unchanged,
- *    which is what makes `refresh: on-change` cheap and `first-turn` free.
- */
+import { readTextSafe, statSafe } from './fsx.js'
+import { resolve } from 'node:path'
 
-import { statSafe } from './fsx.js'
-import { readFileSync } from 'node:fs'
+const MAX_FILES = 64
+const MAX_TOTAL_BYTES = 8 * 1024 * 1024
+const MAX_FILE_BYTES = 2 * 1024 * 1024
 
-/** File text keyed by path, invalidated by `mtime + size`. */
+/** Bounded file snapshots; metadata changes invalidate the cached text. */
 export function createFileCache() {
-  /** @type {Map<string, { mtimeMs: number, size: number, text: string }>} */
   const files = new Map()
-
+  let totalBytes = 0
+  const drop = (key) => {
+    const old = files.get(key)
+    if (old) totalBytes -= old.bytes
+    files.delete(key)
+  }
   return {
-    /**
-     * Read a file, reusing the previous text when the stat is unchanged.
-     *
-     * @param {string} path
-     * @returns {string} the file text, or `''` when unreadable.
-     */
     read(path) {
       if (!path) return ''
-      const stat = statSafe(path)
-      if (!stat || !stat.isFile) return ''
-      const hit = files.get(path)
-      if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) return hit.text
-      let text = ''
-      try {
-        text = readFileSync(path, 'utf8')
-      } catch {
+      const key = resolve(path)
+      const stat = statSafe(key)
+      if (!stat?.isFile || stat.size > MAX_FILE_BYTES) {
+        drop(key)
         return ''
       }
-      files.set(path, { mtimeMs: stat.mtimeMs, size: stat.size, text })
+      const hit = files.get(key)
+      if (hit && hit.mtimeMs === stat.mtimeMs && hit.ctimeMs === stat.ctimeMs && hit.size === stat.size) {
+        files.delete(key)
+        files.set(key, hit)
+        return hit.text
+      }
+      drop(key)
+      const snapshot = readTextSafe(key, { maxBytes: MAX_FILE_BYTES })
+      if (!snapshot.ok || snapshot.truncated) return ''
+      const after = statSafe(key)
+      if (!after?.isFile || after.mtimeMs !== stat.mtimeMs || after.ctimeMs !== stat.ctimeMs || after.size !== stat.size) return ''
+      const text = snapshot.text
+      const bytes = snapshot.bytes
+      if (bytes > MAX_FILE_BYTES || bytes > MAX_TOTAL_BYTES) return ''
+      while (files.size >= MAX_FILES || totalBytes + bytes > MAX_TOTAL_BYTES) drop(files.keys().next().value)
+      files.set(key, { mtimeMs: after.mtimeMs, ctimeMs: after.ctimeMs, size: after.size, bytes, text })
+      totalBytes += bytes
       return text
     },
-
-    /** Drop one path (after this plugin writes it). */
-    invalidate(path) {
-      if (path) files.delete(path)
-    },
-
-    clear() {
-      files.clear()
-    },
-
-    get size() {
-      return files.size
-    },
+    invalidate(path) { if (path) drop(resolve(path)) },
+    clear() { files.clear(); totalBytes = 0 },
+    get size() { return files.size },
+    get bytes() { return totalBytes },
   }
 }
 
-/**
- * Cache one computed value per assembly context object.
- *
- * The context object lives for exactly one assembly, so entries are collected
- * with it; a provider that runs twice in the same assembly reuses the probe.
- */
 export function createAssemblyCache() {
-  /** @type {WeakMap<object, unknown>} */
   const entries = new WeakMap()
-
   return {
-    /**
-     * @template T
-     * @param {object} context - the assemble context.
-     * @param {() => T} compute
-     * @returns {T}
-     */
     get(context, compute) {
       if (!context || typeof context !== 'object') return compute()
-      if (entries.has(context)) return /** @type {T} */ (entries.get(context))
+      if (entries.has(context)) return entries.get(context)
       const value = compute()
       entries.set(context, value)
       return value
@@ -81,26 +62,11 @@ export function createAssemblyCache() {
   }
 }
 
-/**
- * Freeze the rendered sections once, for `refresh: first-turn`.
- *
- * Keyed by workspace so two sessions in different projects do not share text.
- */
 export function createFrozenStore() {
-  /** @type {Map<string, unknown>} */
   const entries = new Map()
   return {
-    get(key, compute) {
-      if (entries.has(key)) return entries.get(key)
-      const value = compute()
-      entries.set(key, value)
-      return value
-    },
-    invalidate(key) {
-      entries.delete(key)
-    },
-    clear() {
-      entries.clear()
-    },
+    get(key, compute) { if (entries.has(key)) return entries.get(key); const value = compute(); entries.set(key, value); return value },
+    invalidate(key) { entries.delete(key) },
+    clear() { entries.clear() },
   }
 }

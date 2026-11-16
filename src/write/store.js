@@ -20,10 +20,12 @@
 
 import { randomUUID } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
-import { readTextSafe } from '../fsx.js'
+import { isWritable, readTextSafe } from '../fsx.js'
 import { appendToSection, editEntry, editEntryAt, removeSection, replaceSectionBody, validateDocument } from '../markdown.js'
+import { analyzeMemory } from '../layers.js'
+import { resolveLanguage } from '../locale.js'
 import { PLAN_LIMITS, createPlanStore, newPlanId, nextArchivePath, readMoveSource, scanCandidates } from './archive.js'
 import {
   appendFileDurable,
@@ -85,13 +87,21 @@ export function localDateStamp(now = new Date()) {
  * @param {object} probe - result of `probeEnvironment`.
  * @param {string} [date] - `YYYY-MM-DD` for `project-daily`.
  */
+function isDateStamp(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? ''))
+  if (!match) return false
+  const year = Number(match[1]), month = Number(match[2]), day = Number(match[3])
+  const date = new Date(year, month - 1, day)
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
+}
+
 export function resolveTarget(target, probe, date) {
   switch (target) {
     case 'project-memory':
       return { path: probe.project.memoryPath, mode: 'rewrite', dir: probe.project.dir, exists: probe.project.exists }
     case 'project-daily': {
       const stamp = date ?? localDateStamp()
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(stamp)) return { path: null, mode: 'append', dir: probe.project.dir, error: 'bad_date' }
+      if (!isDateStamp(stamp)) return { path: null, mode: 'append', dir: probe.project.dir, error: 'bad_date' }
       return { path: probe.project.dir ? join(probe.project.dir, `${stamp}.md`) : null, mode: 'append', dir: probe.project.dir }
     }
     case 'user-memory':
@@ -113,6 +123,17 @@ export function resolveTarget(target, probe, date) {
  * @param {string} deps.stateDir - where locks, backups, receipts and the log live.
  * @param {(event: object) => void} [deps.onCommit] - host-wide commit hook.
  */
+function canWriteDirectory(path) {
+  let current = resolve(path)
+  while (true) {
+    const stat = statSafe(current)
+    if (stat?.isDirectory?.()) return isWritable(current)
+    const parent = dirname(current)
+    if (parent === current) return false
+    current = parent
+  }
+}
+
 export function createStore({ cfg, stateDir, onCommit }) {
   const lockDir = join(stateDir, 'locks')
   const backupDir = join(stateDir, 'backups')
@@ -330,6 +351,9 @@ export function createStore({ cfg, stateDir, onCommit }) {
       }
 
       const afterText = String(output.text ?? '')
+      if (current.exists && !['replace-document', 'restore'].includes(action) && analyzeMemory(current.text).mode === 'legacy' && analyzeMemory(afterText).mode === 'layered') {
+        return fail('layering_confirmation_required', { path, revision: before })
+      }
       const afterRevision = contentRevision(afterText)
       const extra = pickExtra(output)
       const planned = {
@@ -1196,28 +1220,21 @@ export function createStore({ cfg, stateDir, onCommit }) {
     const resolved = resolveTarget(input.target, probe, input.date)
     if (!resolved.path) return fail(resolved.error ?? 'no_store', { target: input.target })
     if (!resolved.dir) return fail('no_store', { target: input.target })
-    if (!existsSync(resolved.dir)) {
-      // `write.ensureLayout` is off by default: inventing a hidden `.workbuddy`
-      // in someone's workspace can race WorkBuddy's own setup, so the refusal is
-      // the default. When it is on, the first write bootstraps the folder.
-      if (!cfg.write.ensureLayout) return fail('no_store', { target: input.target, dir: resolved.dir })
-      try {
-        mkdirSync(resolved.dir, { recursive: true })
-      } catch (error) {
-        return fail('no_store', { target: input.target, dir: resolved.dir, error: String(error?.message ?? error) })
-      }
-    }
-
     const op = operationOf(input.operationId)
     if (!op.ok) return fail(op.code)
-
     const text = String(input.text ?? '').trim()
     if (!text) return fail('empty_text')
-    // One call, one entry. A newline inside `text` used to be written verbatim:
-    // a `- ` in it became a bullet the caller never declared, and an unindented
-    // `## ` became a section. On the daily path that is the worse of the two
-    // targets, because a daily file is pure append and nothing can undo it.
     if (/\r?\n/.test(text)) return fail('multiline_text', { target: input.target, hint: 'pass one line per call; call again for another entry' })
+    if (input.section !== undefined && typeof input.section !== 'string') return fail('bad_section')
+    if (input.section !== undefined && !String(input.section).trim()) return fail('empty_heading')
+    if (input.section && /[\r\n]/.test(String(input.section))) return fail('bad_section')
+
+    if (!canWriteDirectory(resolved.dir)) return fail('no_store', { target: input.target, dir: resolved.dir, reason: 'not_writable' })
+    if (!existsSync(resolved.dir)) {
+      if (!cfg.write.ensureLayout) return fail('no_store', { target: input.target, dir: resolved.dir })
+      try { mkdirSync(resolved.dir, { recursive: true }) }
+      catch (error) { return fail('no_store', { target: input.target, dir: resolved.dir, error: String(error?.message ?? error) }) }
+    }
 
     if (resolved.mode === 'append') {
       return appendDaily({
@@ -1252,10 +1269,17 @@ export function createStore({ cfg, stateDir, onCommit }) {
         expectedRevision: input.expectedRevision ? String(input.expectedRevision) : null,
       },
       transform: (current) => {
-        const section = input.section ? String(input.section).trim() : DEFAULT_SECTION
-        const result = appendToSection(current, section, text)
+        let section = input.section ? String(input.section).trim() : DEFAULT_SECTION
+        const language = resolveLanguage(cfg.locale)
+        const coreHeading = language === 'zh' ? '常驻记忆' : 'Core Memory'
+        const initial = current || (language === 'zh' ? '# 记忆\n\n## 常驻记忆\n\n' : '# Memory\n\n## Core Memory\n\n')
+        if (/^(常驻记忆|core memory)$/i.test(section)) {
+          const parsed = analyzeMemory(current)
+          if (!current || parsed.mode === 'layered') section = parsed.coreHeading ?? coreHeading
+        }
+        const result = appendToSection(initial, section, text)
         if (!result.ok) return { text: current, replaced: 0, reason: result.reason, hits: result.lines ?? [] }
-        return { text: result.text, replaced: 1, created: result.created, section }
+        return { text: result.text, replaced: 1, created: !current || result.created, section }
       },
     })
   }

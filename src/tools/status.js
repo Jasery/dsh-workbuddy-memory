@@ -18,25 +18,45 @@ function userMemoryChars(probe) {
  * @param {(key: string, vars?: Record<string, string|number>) => string} deps.t
  * @returns {object} a tool definition.
  */
-export function statusTool({ cfg, t }) {
+export function statusTool({ cfg, t, ctx, lastAssembly }) {
   return defineTool({
     name: 'memory_status',
     description:
-      'Report the WorkBuddy memory stores this session sees: resolved home, project and user files, sizes, writability, profile resolution and the effective config. Read-only.',
+      'Report concise memory status for this session: path sources, active mode and compatibility, writability, and the latest plugin contribution when assembled. Does not estimate tokens or injected characters. Read-only.',
     parameters: {},
     output: {
       schema: { type: 'object', additionalProperties: true },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
     },
     async execute(_args, exec) {
-      const cwd = resolveCwd({ agent: exec?.agent }) ?? null
-      const probe = probeEnvironment({ cfg, cwd, detail: true })
-      return describe(probe, cfg, t)
+      const cwd = resolveCwd({ agent: exec?.agent }, ctx) ?? null
+      const probe = probeEnvironment({ cfg, cwd, detail: false })
+      const session = exec?.agent?.session
+      return describeBrief(probe, cfg, lastAssembly?.(session) ?? null, t)
     },
   })
 }
 
-/** Shape the probe as the tool's answer. */
+export function describeBrief(probe, cfg, lastAssembly, t) {
+  const warnings = []
+  if (cfg.readOnly) warnings.push(t('status.readOnly'))
+  if (!probe.hasAnyMemory) warnings.push(t('noProject'))
+  if (probe.profile.ambiguous) warnings.push(t('ambiguousProfile'))
+  const mode = lastAssembly?.mode ?? cfg.inject.mode
+  const compatibility = Object.entries(lastAssembly?.states ?? {}).filter(([, state]) => String(state).startsWith('legacy:')).map(([key, state]) => `${key}:${state}`)
+  return {
+    ok: probe.hasAnyMemory,
+    status: probe.status,
+    paths: { source: probe.home.source, project: probe.project.memoryPath, user: probe.user.memoryPath },
+    mode,
+    compatibility,
+    writable: probe.writable,
+    lastAssembly,
+    warnings: warnings.slice(0, 4),
+  }
+}
+
+/** Detailed probe retained for the panel. */
 export function describe(probe, cfg, t) {
   const warnings = []
   if (cfg.readOnly) warnings.push(t('status.readOnly'))
