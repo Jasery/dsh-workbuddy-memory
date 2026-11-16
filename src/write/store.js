@@ -6,20 +6,36 @@
  * back door, and a back door makes the fence decorative.
  *
  * Guarantees, stated honestly:
- *  - DSH against DSH: the lock serializes writers, so no lost update.
+ *  - DSH against DSH: the operation lock and the file lock serialize writers,
+ *    so no lost update and no duplicate operation.
  *  - DSH against a non-locking editor (WorkBuddy `Edit`): only detected
  *    conflicts are refused. A write landing inside the same few milliseconds
  *    can still be overwritten; the backup and the post-write revision are what
  *    make it recoverable rather than silent.
  *  - Append-only daily files: `O_APPEND` cannot truncate existing bytes.
+ *  - A destructive write to a file that already has content requires an
+ *    explicit `expectedRevision`. There is no "rewrite the current text" mode
+ *    that skips the check.
  */
 
-import { appendFileDurable, contentRevision, pathKey, withLock, writeFileAtomic } from './fslock.js'
-import { allEntries, appendToSection, editEntry, editEntryAt, removeSection, replaceSectionBody, validateDocument } from '../markdown.js'
-import { ageInDays } from '../env.js'
-import { readTextSafe } from '../fsx.js'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, readdirSync, statSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+
+import { readTextSafe } from '../fsx.js'
+import { appendToSection, editEntry, editEntryAt, removeSection, replaceSectionBody, validateDocument } from '../markdown.js'
+import { PLAN_LIMITS, createPlanStore, newPlanId, nextArchivePath, readMoveSource, scanCandidates } from './archive.js'
+import {
+  appendFileDurable,
+  contentRevision,
+  identity,
+  pathKey,
+  resolveLink,
+  withLock,
+  writeFileAtomic,
+  writeFileExclusive,
+} from './fslock.js'
+import { createReceiptStore } from './receipts.js'
 
 export const TARGETS = ['project-memory', 'project-daily', 'user-memory']
 
@@ -28,6 +44,12 @@ export const ACTIONS = ['add', 'edit', 'remove', 'replace-section', 'replace-doc
 
 /** The ledger is append-only and read per write; rotate it at this size. */
 const LEDGER_ROTATE_BYTES = 2 * 1024 * 1024
+
+/** A memory file larger than this cannot be rewritten from a verified source. */
+const MAX_SOURCE_BYTES = 2 * 1024 * 1024
+
+/** Operation ids are bounded so a receipt name and a fingerprint stay sane. */
+const MAX_OPERATION_ID = 200
 
 /**
  * Section used when an append names none.
@@ -88,12 +110,335 @@ export function resolveTarget(target, probe, date) {
  *
  * @param {object} deps
  * @param {object} deps.cfg - normalized config.
- * @param {string} deps.stateDir - where locks, backups and the log live.
+ * @param {string} deps.stateDir - where locks, backups, receipts and the log live.
+ * @param {(event: object) => void} [deps.onCommit] - host-wide commit hook.
  */
-export function createStore({ cfg, stateDir }) {
+export function createStore({ cfg, stateDir, onCommit }) {
   const lockDir = join(stateDir, 'locks')
   const backupDir = join(stateDir, 'backups')
   const logDir = join(stateDir, 'log')
+  const receipts = createReceiptStore({ stateDir })
+  const plans = createPlanStore()
+  const listeners = new Set()
+  if (typeof onCommit === 'function') listeners.add(onCommit)
+
+  /**
+   * Subscribe to commits that actually changed bytes.
+   *
+   * The event is emitted after every lock is released, so a listener may read
+   * the file without deadlocking against the writer. Listeners are isolated:
+   * a synchronous throw or a rejected promise from one cannot change the
+   * result of the write or stop the other listeners.
+   *
+   * @param {(event: {path: string, target: string, operation: string, revision: string, operationId: string|null}) => unknown} listener
+   * @returns {() => void} disposer
+   */
+  function subscribe(listener) {
+    if (typeof listener !== 'function') return () => {}
+    listeners.add(listener)
+    return () => listeners.delete(listener)
+  }
+
+  function emit(events) {
+    for (const event of events) {
+      for (const listener of [...listeners]) {
+        try {
+          const result = listener(event)
+          if (result && typeof result.then === 'function') result.catch(() => {})
+        } catch {
+          // A listener is an observer, never a gate.
+        }
+      }
+    }
+  }
+
+  /** One operation id, bounded; `null` means the caller did not ask for replay. */
+  function operationOf(value) {
+    if (value === undefined || value === null) return { ok: true, id: null }
+    const id = String(value).trim()
+    if (!id) return { ok: true, id: null }
+    if (id.length > MAX_OPERATION_ID) return { ok: false, code: 'operation_id_too_long' }
+    return { ok: true, id }
+  }
+
+  function opLockPath(operationId) {
+    return join(lockDir, `op-${pathKey(`operation:${operationId}`)}.lock`)
+  }
+
+  function canonicalPath(path) {
+    return identity(resolveLink(path))
+  }
+
+  /**
+   * Bind one operationId to the exact targets, action and semantic request.
+   * Two different requests may not share an id, even if both are writes.
+   */
+  function fingerprintFor({ action, paths, request }) {
+    const payload = {
+      action,
+      paths: [...new Set(paths.filter(Boolean).map(canonicalPath))].sort(),
+      request: stable(request),
+    }
+    return contentRevision(JSON.stringify(payload))
+  }
+
+  /** Read a rewrite source, refusing a raced, partial or oversized snapshot. */
+  function readForWrite(path) {
+    if (!existsSync(path)) return { ok: true, exists: false, text: '', bytes: 0 }
+    const file = readTextSafe(path, { maxBytes: MAX_SOURCE_BYTES })
+    if (!file.ok) return { ok: false, code: 'unreadable', error: file.error, path }
+    if (file.truncated) return { ok: false, code: 'too_large', bytes: file.bytes, path }
+    return { ok: true, exists: true, text: file.text, bytes: file.bytes }
+  }
+
+  function markReceipt(record, patch) {
+    if (!record) return null
+    const next = { ...record, ...patch }
+    receipts.update(next)
+    return next
+  }
+
+  /**
+   * Shared operation lock → receipt lookup → file lock → CAS → transform →
+   * backup → receipt applying → atomic replace → verified post-read.
+   *
+   * Everything that can change source bytes happens inside both locks. The
+   * receipt is written before the destructive step, so a crash leaves evidence
+   * a retry can interpret.
+   */
+  async function commitRewrite({
+    action,
+    target,
+    path,
+    operationId,
+    expectedRevision,
+    request,
+    requireCas,
+    allowNoBackup = false,
+    transform,
+    prepare,
+  }) {
+    const op = operationOf(operationId)
+    if (!op.ok) return fail(op.code)
+    const fingerprint = fingerprintFor({ action, paths: [path], request })
+
+    const exec = async (id) =>
+      withLock(join(lockDir, `${pathKey(path)}.lock`), cfg.write.lockWaitMs, () => {
+        const prior = id ? receipts.read(id) : { ok: true, record: null }
+        if (!prior.ok) return fail(prior.code, { reason: prior.reason, operationId: id })
+        let record = prior.record
+        if (record) {
+          if (record.fingerprint !== fingerprint) return fail('operation_mismatch', { operationId: id, path })
+          if (record.status === 'committed') return { result: { ...record.result, duplicate: true }, event: null }
+          if (record.status === 'partial' || record.status === 'outcome_unknown') {
+            return fail('outcome_unknown', { operationId: id, path, reason: record.status })
+          }
+        }
+
+        const current = readForWrite(path)
+        if (!current.ok) return fail(current.code, { path, error: current.error, bytes: current.bytes })
+        const before = contentRevision(current.text)
+
+        if (record?.status === 'applying') {
+          if (before === record.after) {
+            const done = markReceipt(record, { status: 'committed' })
+            return { result: { ...(done?.result ?? record.result), duplicate: true }, event: null }
+          }
+          if (before !== record.before) {
+            markReceipt(record, { status: 'outcome_unknown', result: { ...record.result, ok: false, code: 'outcome_unknown' } })
+            return fail('outcome_unknown', { operationId: id, path })
+          }
+        }
+
+        // Every destructive action on existing content must name what it saw.
+        if (requireCas && current.exists && !expectedRevision) {
+          return fail('revision_required', { path, revision: before })
+        }
+        if (expectedRevision && String(expectedRevision) !== before) {
+          recordOperation({
+            id,
+            at: Date.now(),
+            target,
+            path,
+            status: 'conflict',
+            expectedRevision: String(expectedRevision),
+            revision: before,
+          })
+          return {
+            result: {
+              ok: false,
+              code: 'conflict',
+              expectedRevision: String(expectedRevision),
+              revision: before,
+              path,
+              hint: 'the file changed since it was read; read again before writing',
+            },
+            event: null,
+          }
+        }
+
+        let output
+        try {
+          output = prepare ? prepare() : transform(current.text)
+        } catch (error) {
+          return fail('write_failed', { path, message: String(error?.message ?? error) })
+        }
+        if (!output || output.ok === false) {
+          return fail(output?.reason ?? 'no_match', { path, hits: output?.hits ?? [], issues: output?.issues ?? [] })
+        }
+        if (output.replaced === 0) {
+          const extra = { path, hits: output.hits ?? [], issues: output.issues ?? [] }
+          if (output.duplicates) extra.duplicates = output.duplicates
+          return fail(output.reason ?? 'no_match', extra)
+        }
+
+        const afterText = String(output.text ?? '')
+        const afterRevision = contentRevision(afterText)
+        const extra = pickExtra(output)
+        const planned = {
+          ok: true,
+          revision: afterRevision,
+          previous: before,
+          path,
+          bytes: Buffer.byteLength(afterText, 'utf8'),
+          backup: null,
+          created: Boolean(output.created),
+          section: output.section ?? null,
+          ...extra,
+        }
+
+        // No byte changed (a restore that restores the current text): report it
+        // without taking a backup or replacing the file for no reason.
+        if (afterRevision === before) {
+          planned.changed = false
+          planned.created = Boolean(output.created)
+          if (id) {
+            const seeded = record ?? {
+              version: 1,
+              id,
+              fingerprint,
+              action,
+              target,
+              path,
+              before,
+              after: before,
+              status: 'committed',
+              result: planned,
+              createdAt: Date.now(),
+            }
+            if (record) {
+              markReceipt(record, { status: 'committed', result: planned })
+            } else {
+              const begun = receipts.begin(seeded)
+              if (!begun.ok) return fail(begun.code, { reason: begun.reason, path })
+            }
+          }
+          return { result: planned, event: null }
+        }
+
+        if (!allowNoBackup && current.exists && cfg.write.backupKeep <= 0) {
+          if (id && !record) receipts.drop(id)
+          return fail('backup_required', { path, backupKeep: cfg.write.backupKeep })
+        }
+
+        if (id) {
+          if (!record) {
+            const begun = receipts.begin({
+              version: 1,
+              id,
+              fingerprint,
+              action,
+              target,
+              path,
+              before,
+              after: afterRevision,
+              status: 'applying',
+              result: planned,
+              createdAt: Date.now(),
+            })
+            if (!begun.ok) return fail(begun.code, { reason: begun.reason, path })
+            record = begun.record ?? null
+          } else {
+            const updated = markReceipt(record, {
+              status: 'applying',
+              before,
+              after: afterRevision,
+              result: planned,
+            })
+            if (!updated) return fail('receipt_capacity', { reason: 'update_failed', path })
+            record = updated
+          }
+        }
+
+        let snapshot = { ok: true, path: null }
+        if (cfg.write.backupKeep > 0 && current.exists) {
+          snapshot = backup(path)
+          if (!snapshot.ok) {
+            // Nothing changed yet; a retry of the same id may proceed.
+            if (id && !prior.record) receipts.drop(id)
+            return fail('backup_failed', { path, error: snapshot.error })
+          }
+          planned.backup = snapshot.path ?? null
+        }
+
+        try {
+          writeFileAtomic(path, afterText, { fsync: cfg.write.fsync })
+        } catch (error) {
+          return fail('write_failed', { path, message: String(error?.message ?? error) })
+        }
+
+        const after = readForWrite(path)
+        if (!after.ok) {
+          if (id) markReceipt(record, { status: 'outcome_unknown', result: { ...planned, ok: false, code: 'outcome_unknown' } })
+          return fail('outcome_unknown', {
+            path,
+            committed: true,
+            error: after.error,
+            revision: null,
+          })
+        }
+        const actual = contentRevision(after.text)
+        if (actual !== afterRevision) {
+          if (id) markReceipt(record, { status: 'outcome_unknown', result: { ...planned, ok: false, code: 'outcome_unknown' } })
+          return fail('outcome_unknown', { path, committed: true, expectedRevision: afterRevision, revision: actual })
+        }
+
+        planned.bytes = after.bytes
+        const result = { ...planned, revision: actual }
+        if (id && record) markReceipt(record, { status: 'committed', after: actual, result })
+        recordOperation({ id, at: Date.now(), target, path, status: 'committed', before, after: actual, backup: snapshot.path ?? null })
+        return {
+          result,
+          event: {
+            path,
+            target,
+            operation: action,
+            revision: actual,
+            operationId: id ?? null,
+          },
+        }
+      })
+
+    return runOperation({ op, action, exec })
+  }
+
+  /** Wrap an exec with the operation lock and emit its event after release. */
+  async function runOperation({ op, exec }) {
+    let outcome
+    try {
+      outcome = op.id
+        ? await withLock(opLockPath(op.id), cfg.write.lockWaitMs, () => exec(op.id))
+        : await exec(null)
+    } catch (error) {
+      if (error?.code === 'lock_timeout') return fail('lock_timeout', { owner: error.owner })
+      return fail('write_failed', { message: error?.message ?? String(error) })
+    }
+    if (outcome?.event) emit([outcome.event])
+    // Early refusals return the result directly; commits return a pair so the
+    // event can be emitted after both locks are gone.
+    if (outcome && typeof outcome === 'object' && 'result' in outcome) return outcome.result
+    return outcome
+  }
 
   /**
    * Replace or remove one entry, addressed by line number.
@@ -111,15 +456,28 @@ export function createStore({ cfg, stateDir }) {
     const resolved = resolveTarget(input.target, probe)
     if (!resolved.path || resolved.mode !== 'rewrite') return fail('bad_target', { target: input.target })
 
-    const replay = seenOperation(input.operationId)
-    if (replay?.status === 'committed') return { ok: true, duplicate: true, revision: replay.after, path: resolved.path }
-
-    return writeEverywhere(resolved.path, input.target, input.expectedRevision, input.operationId, (current) => {
-      const result = editEntryAt(current, input.section, input.line, {
-        replacement: input.replacement,
+    return commitRewrite({
+      action: input.mode === 'remove' ? 'remove' : 'edit',
+      target: input.target,
+      path: resolved.path,
+      operationId: input.operationId,
+      expectedRevision: input.expectedRevision,
+      requireCas: true,
+      request: {
+        target: input.target,
+        section: String(input.section ?? ''),
+        line: Number(input.line),
+        replacement: input.replacement === undefined ? null : String(input.replacement),
         mode: input.mode ?? 'replace',
-      })
-      return { text: result.text, replaced: result.replaced, reason: result.reason, hits: result.lines }
+        expectedRevision: input.expectedRevision ? String(input.expectedRevision) : null,
+      },
+      transform: (current) => {
+        const result = editEntryAt(current, input.section, input.line, {
+          replacement: input.replacement,
+          mode: input.mode ?? 'replace',
+        })
+        return { text: result.text, replaced: result.replaced, reason: result.reason, hits: result.lines }
+      },
     })
   }
 
@@ -144,13 +502,24 @@ export function createStore({ cfg, stateDir }) {
     const resolved = resolveTarget(input.target, probe)
     if (!resolved.path || resolved.mode !== 'rewrite') return fail('bad_target', { target: input.target })
 
-    const replay = seenOperation(input.operationId)
-    if (replay?.status === 'committed') return { ok: true, duplicate: true, revision: replay.after, path: resolved.path }
-
-    return writeEverywhere(resolved.path, input.target, input.expectedRevision, input.operationId, (current) => {
-      const result = replaceSectionBody(current, String(input.section ?? ''), String(input.body ?? ''))
-      if (!result.ok) return { text: current, replaced: 0, reason: result.reason, issues: result.issues }
-      return { text: result.text, replaced: 1, entries: result.entries }
+    return commitRewrite({
+      action: 'replace-section',
+      target: input.target,
+      path: resolved.path,
+      operationId: input.operationId,
+      expectedRevision: input.expectedRevision,
+      requireCas: true,
+      request: {
+        target: input.target,
+        section: String(input.section ?? ''),
+        body: String(input.body ?? ''),
+        expectedRevision: input.expectedRevision ? String(input.expectedRevision) : null,
+      },
+      transform: (current) => {
+        const result = replaceSectionBody(current, String(input.section ?? ''), String(input.body ?? ''))
+        if (!result.ok) return { text: current, replaced: 0, reason: result.reason, issues: result.issues }
+        return { text: result.text, replaced: 1, entries: result.entries }
+      },
     })
   }
 
@@ -159,7 +528,7 @@ export function createStore({ cfg, stateDir }) {
    *
    * Off unless `ui.allowFullTextEdit` is on: this bypasses the entry model, so
    * the only structural guarantees left are the checks in `validateDocument`.
-   * The writer still runs the same lock, CAS, backup and ledger chain.
+   * The writer still runs the same lock, CAS, backup and receipt chain.
    *
    * @param {{ target: string, text: string, expectedRevision?: string, operationId?: string }} input
    */
@@ -175,13 +544,20 @@ export function createStore({ cfg, stateDir }) {
     const validation = validateDocument(text)
     if (!validation.ok) return fail('invalid_structure', { issues: validation.issues })
 
-    const replay = seenOperation(input.operationId)
-    if (replay?.status === 'committed') return { ok: true, duplicate: true, revision: replay.after, path: resolved.path }
-
-    return writeEverywhere(resolved.path, input.target, input.expectedRevision, input.operationId, () => ({
-      text,
-      replaced: 1,
-    }))
+    return commitRewrite({
+      action: 'replace-document',
+      target: input.target,
+      path: resolved.path,
+      operationId: input.operationId,
+      expectedRevision: input.expectedRevision,
+      requireCas: true,
+      request: {
+        target: input.target,
+        text,
+        expectedRevision: input.expectedRevision ? String(input.expectedRevision) : null,
+      },
+      transform: () => ({ text, replaced: 1 }),
+    })
   }
 
   /** Delete one whole section (heading and body) with the usual backup chain. */
@@ -192,13 +568,23 @@ export function createStore({ cfg, stateDir }) {
     const resolved = resolveTarget(input.target, probe)
     if (!resolved.path || resolved.mode !== 'rewrite') return fail('bad_target', { target: input.target })
 
-    const replay = seenOperation(input.operationId)
-    if (replay?.status === 'committed') return { ok: true, duplicate: true, revision: replay.after, path: resolved.path }
-
-    return writeEverywhere(resolved.path, input.target, input.expectedRevision, input.operationId, (current) => {
-      const result = removeSection(current, String(input.section ?? ''))
-      if (!result.ok) return { text: current, replaced: 0, reason: result.reason }
-      return { text: result.text, replaced: result.removed, removed: result.removed }
+    return commitRewrite({
+      action: 'remove-section',
+      target: input.target,
+      path: resolved.path,
+      operationId: input.operationId,
+      expectedRevision: input.expectedRevision,
+      requireCas: true,
+      request: {
+        target: input.target,
+        section: String(input.section ?? ''),
+        expectedRevision: input.expectedRevision ? String(input.expectedRevision) : null,
+      },
+      transform: (current) => {
+        const result = removeSection(current, String(input.section ?? ''))
+        if (!result.ok) return { text: current, replaced: 0, reason: result.reason }
+        return { text: result.text, replaced: result.removed, removed: result.removed }
+      },
     })
   }
 
@@ -219,14 +605,24 @@ export function createStore({ cfg, stateDir }) {
     if (!resolved.path || resolved.mode !== 'rewrite') return fail('bad_target', { target: input.target })
     if (!input.expectedRevision) return fail('revision_required')
 
-    const snapshot = readRevision(resolved.path, String(input.name ?? ''))
-    if (!snapshot.ok) return fail(snapshot.code, { target: input.target })
-
-    return writeEverywhere(resolved.path, input.target, input.expectedRevision, input.operationId, () => ({
-      text: snapshot.text,
-      replaced: 1,
-      restoredFrom: snapshot.name,
-    }))
+    return commitRewrite({
+      action: 'restore',
+      target: input.target,
+      path: resolved.path,
+      operationId: input.operationId,
+      expectedRevision: input.expectedRevision,
+      requireCas: true,
+      request: {
+        target: input.target,
+        name: String(input.name ?? ''),
+        expectedRevision: String(input.expectedRevision),
+      },
+      prepare: () => {
+        const snapshot = readRevision(resolved.path, String(input.name ?? ''))
+        if (!snapshot.ok) return { ok: false, reason: snapshot.code }
+        return { text: snapshot.text, replaced: 1, restoredFrom: snapshot.name }
+      },
+    })
   }
 
   /**
@@ -235,10 +631,11 @@ export function createStore({ cfg, stateDir }) {
    * the raw daily logs out of the active memory dir into `archive/`. It never
    * writes MEMORY.md, so it cannot bloat the injected long-term store.
    *
-   * `dryRun` is the default: the caller sees the plan before anything moves.
-   * Moving (not deleting) keeps the raw logs recoverable.
+   * A preview is pure memory: it creates no state directory, no archive
+   * directory and no receipt. An apply is bound to the preview's exact set and
+   * to the revision of each selected source.
    *
-   * @param {{ beforeDays?: number, dates?: string[], dryRun?: boolean, operationId?: string }} input
+   * @param {{ beforeDays?: number, dates?: string[], dryRun?: boolean, planId?: string, operationId?: string }} input
    */
   async function prune(input, probe) {
     if (cfg.readOnly) return fail('read_only')
@@ -248,57 +645,271 @@ export function createStore({ cfg, stateDir }) {
     if (!dir || !existsSync(dir)) return fail('no_store', { dir })
 
     const beforeDays = Math.min(Math.max(Number(input.beforeDays ?? 30) || 0, 1), 3650)
-    const wanted = Array.isArray(input.dates) && input.dates.length > 0 ? new Set(input.dates.map(String)) : null
+    const dates = normalizeDates(input.dates)
+    if (!dates.ok) return fail('bad_date', { dates: input.dates })
 
-    let names = []
-    try {
-      names = readdirSync(dir).filter((name) => /^\d{4}-\d{2}-\d{2}\.md$/.test(name))
-    } catch {
-      return fail('no_store', { dir })
-    }
-
-    const candidates = []
-    for (const name of names.sort()) {
-      const date = name.slice(0, 10)
-      if (wanted ? !wanted.has(date) : ageInDays(date) < beforeDays) continue
-      const file = readTextSafe(join(dir, name), { maxBytes: 2 * 1024 * 1024 })
-      candidates.push({ date, name, bytes: file.ok ? file.bytes : 0, entries: file.ok ? allEntries(file.text).length : 0 })
-    }
-
-    const plan = {
-      ok: true,
-      dryRun: input.dryRun !== false,
-      beforeDays,
-      target: 'project-daily',
-      candidates,
-      entries: candidates.reduce((sum, row) => sum + row.entries, 0),
-    }
-    if (plan.dryRun) return plan
-    if (candidates.length === 0) return fail('nothing_to_prune', { beforeDays })
-
-    const operationId = input.operationId || `prune-${Date.now()}`
-    const replay = seenOperation(operationId)
-    if (replay?.status === 'committed') return { ok: true, duplicate: true, pruned: [] }
-
-    const archiveDir = join(dir, 'archive')
-    mkdirSync(archiveDir, { recursive: true })
-    const pruned = []
-    const failed = []
-    for (const row of candidates) {
-      const sourcePath = join(dir, row.name)
-      try {
-        let dest = join(archiveDir, row.name)
-        let n = 1
-        while (existsSync(dest)) dest = join(archiveDir, `${row.date}-${n++}.md`)
-        renameSync(sourcePath, dest)
-        pruned.push({ date: row.date, name: row.name, archivePath: dest })
-      } catch (error) {
-        failed.push({ date: row.date, code: String(error?.message ?? error) })
+    if (input.dryRun !== false) {
+      const scan = scanCandidates(dir, { beforeDays, dates: dates.list ?? undefined })
+      if (!scan.ok) return fail(scan.code, { dir })
+      const now = Date.now()
+      const plan = {
+        planId: newPlanId(),
+        projectDir: canonicalPath(dir),
+        beforeDays,
+        dates: scan.candidates.map((row) => row.date),
+        candidates: scan.candidates,
+        createdAt: now,
+        expiresAt: now + PLAN_LIMITS.ttlMs,
+      }
+      plans.put(plan)
+      return {
+        ok: true,
+        dryRun: true,
+        planId: plan.planId,
+        beforeDays,
+        target: 'project-daily',
+        candidates: scan.candidates,
+        entries: scan.candidates.reduce((sum, row) => sum + row.entries, 0),
+        expiresAt: plan.expiresAt,
       }
     }
 
-    recordOperation({ id: operationId, at: Date.now(), target: 'project-daily', path: archiveDir, status: 'committed', pruned: pruned.map((row) => row.date) })
-    return { ok: true, pruned, failed, archive: archiveDir }
+    const op = operationOf(input.operationId)
+    if (!op.ok) return fail(op.code)
+    if (!op.id) return fail('operation_required')
+    if (!dates.list || dates.list.length === 0) return fail('plan_required', { reason: 'dates_required' })
+
+    const archiveDir = join(dir, 'archive')
+    const fingerprint = fingerprintFor({
+      action: 'prune',
+      paths: [dir],
+      request: {
+        planId: input.planId ? String(input.planId) : null,
+        dates: dates.list,
+      },
+    })
+
+    let outcome
+    try {
+      outcome = await withLock(opLockPath(op.id), cfg.write.lockWaitMs, async () => {
+        const prior = receipts.read(op.id)
+        if (!prior.ok) return { result: fail(prior.code, { reason: prior.reason, operationId: op.id }) }
+        let receipt = prior.record
+        if (receipt) {
+          if (receipt.fingerprint !== fingerprint) return { result: fail('operation_mismatch', { operationId: op.id }) }
+          if (receipt.status === 'committed') return { result: { ...receipt.result, duplicate: true }, events: [] }
+          if (!Array.isArray(receipt.manifest)) return { result: fail('outcome_unknown', { operationId: op.id }), events: [] }
+          return applyArchive({ dir, archiveDir, operationId: op.id, fingerprint, receipt })
+        }
+
+        const plan = plans.get(input.planId)
+        if (!plan) return { result: fail('plan_required', { reason: 'unknown_plan' }), events: [] }
+        if (plan.projectDir !== canonicalPath(dir)) return { result: fail('plan_conflict', { reason: 'project' }), events: [] }
+        if (Date.now() > plan.expiresAt) return { result: fail('plan_conflict', { reason: 'expired' }), events: [] }
+        if (dates.list.length > PLAN_LIMITS.maxFiles) {
+          return { result: fail('archive_capacity', { limit: PLAN_LIMITS.maxFiles }), events: [] }
+        }
+
+        const byDate = new Map(plan.candidates.map((row) => [row.date, row]))
+        const items = []
+        for (const date of dates.list) {
+          const candidate = byDate.get(date)
+          if (!candidate) return { result: fail('plan_conflict', { reason: 'unknown_date', date }), events: [] }
+          if (!candidate.revision) {
+            return { result: fail(candidate.error === 'too_large' ? 'too_large' : 'unreadable', { date }), events: [] }
+          }
+          items.push({
+            date,
+            name: candidate.name,
+            revision: candidate.revision,
+            archivePath: null,
+            status: 'pending',
+          })
+        }
+
+        return applyArchive({
+          dir,
+          archiveDir,
+          operationId: op.id,
+          fingerprint,
+          receipt: null,
+          fresh: { planId: plan.planId, items },
+        })
+      })
+    } catch (error) {
+      if (error?.code === 'lock_timeout') return fail('lock_timeout', { owner: error.owner })
+      return fail('write_failed', { message: String(error?.message ?? error) })
+    }
+
+    if (outcome?.events?.length) emit(outcome.events)
+    return outcome?.result
+  }
+
+  /**
+   * Move a prepared manifest. The lock order is operation → archive → sorted
+   * source file locks; all source locks are taken before any move, so a plan
+   * whose files changed is refused without moving a subset.
+   */
+  async function applyArchive({ dir, archiveDir, operationId, fingerprint, receipt, fresh }) {
+    const sourcePaths = (receipt ? receipt.manifest : fresh.items).map((item) => join(dir, item.name))
+    return withLock(join(lockDir, `${pathKey(archiveDir)}.lock`), cfg.write.lockWaitMs, () =>
+      withManyLocks(
+        sourcePaths.map((path) => join(lockDir, `${pathKey(path)}.lock`)),
+        cfg.write.lockWaitMs,
+        async () => {
+          let record = receipt
+          let items = receipt ? receipt.manifest.map((item) => ({ ...item })) : fresh.items.map((item) => ({ ...item }))
+
+          if (record) {
+            const again = receipts.read(operationId)
+            if (!again.ok) return { result: fail(again.code, { reason: again.reason }), events: [] }
+            if (!again.record) return { result: fail('outcome_unknown', { reason: 'receipt_disappeared' }), events: [] }
+            if (again.record.fingerprint !== fingerprint) {
+              return { result: fail('operation_mismatch', { operationId }), events: [] }
+            }
+            if (again.record.status === 'committed') {
+              return { result: { ...again.record.result, duplicate: true }, events: [] }
+            }
+            record = again.record
+            items = record.manifest.map((item) => ({ ...item }))
+            if (items.some((item) => !item.archivePath || !item.name)) {
+              return { result: fail('outcome_unknown', { reason: 'manifest_incomplete' }), events: [] }
+            }
+          } else {
+            for (const item of items) {
+              const source = join(dir, item.name)
+              if (!existsSync(source)) {
+                return { result: fail('plan_conflict', { reason: 'missing', date: item.date }), events: [] }
+              }
+              const read = readMoveSource(source)
+              if (!read.ok) return { result: fail(read.code, { date: item.date, error: read.error }), events: [] }
+              if (read.revision !== item.revision) {
+                return {
+                  result: fail('plan_conflict', { reason: 'changed', date: item.date, expected: item.revision, revision: read.revision }),
+                  events: [],
+                }
+              }
+            }
+            for (const item of items) {
+              const target = nextArchivePath(archiveDir, item.date)
+              if (!target) return { result: fail('archive_capacity', { date: item.date }), events: [] }
+              item.archivePath = target
+            }
+            const begun = receipts.begin({
+              version: 1,
+              id: operationId,
+              fingerprint,
+              action: 'prune',
+              target: 'project-daily',
+              status: 'applying',
+              createdAt: Date.now(),
+              before: null,
+              after: null,
+              planId: fresh.planId,
+              manifest: items,
+            })
+            if (!begun.ok) return { result: fail(begun.code, { reason: begun.reason }), events: [] }
+            record = begun.record ?? record
+            if (!record) {
+              // A store implementation that returned no record cannot be resumed,
+              // so do not pretend the move is recoverable.
+              return { result: fail('receipt_capacity', { reason: 'begin_returned_nothing' }), events: [] }
+            }
+          }
+
+          try {
+            mkdirSync(archiveDir, { recursive: true })
+          } catch (error) {
+            return { result: fail('archive_failed', { error: String(error?.message ?? error) }), events: [] }
+          }
+
+          const pruned = []
+          const failed = []
+          const events = []
+          for (const item of items) {
+            if (item.status === 'moved') {
+              const check = readMoveSource(item.archivePath)
+              if (check.ok && check.revision === item.revision) {
+                pruned.push({ date: item.date, name: item.name, archivePath: item.archivePath })
+              } else {
+                item.status = 'outcome_unknown'
+                failed.push({ date: item.date, name: item.name, code: 'outcome_unknown', reason: 'moved_target_unverified' })
+              }
+              continue
+            }
+            if (item.status === 'outcome_unknown') {
+              failed.push({ date: item.date, name: item.name, code: 'outcome_unknown', reason: 'previous_attempt_ambiguous' })
+              continue
+            }
+
+            const source = join(dir, item.name)
+            const sourceExists = existsSync(source)
+            const targetExists = existsSync(item.archivePath)
+
+            if (sourceExists && targetExists) {
+              item.status = 'outcome_unknown'
+              failed.push({ date: item.date, name: item.name, code: 'outcome_unknown', reason: 'both_exist' })
+            } else if (!sourceExists && !targetExists) {
+              item.status = 'outcome_unknown'
+              failed.push({ date: item.date, name: item.name, code: 'outcome_unknown', reason: 'neither_exists' })
+            } else if (!sourceExists && targetExists) {
+              const check = readMoveSource(item.archivePath)
+              if (check.ok && check.revision === item.revision) {
+                item.status = 'moved'
+                pruned.push({ date: item.date, name: item.name, archivePath: item.archivePath })
+              } else {
+                item.status = 'outcome_unknown'
+                failed.push({ date: item.date, name: item.name, code: 'outcome_unknown', reason: 'target_unverified' })
+              }
+            } else {
+              const read = readMoveSource(source)
+              if (!read.ok) {
+                item.status = 'failed'
+                failed.push({ date: item.date, name: item.name, code: read.code, error: read.error ?? null })
+              } else if (read.revision !== item.revision) {
+                item.status = 'outcome_unknown'
+                failed.push({ date: item.date, name: item.name, code: 'outcome_unknown', reason: 'revision_changed' })
+              } else {
+                try {
+                  renameSync(source, item.archivePath)
+                  item.status = 'moved'
+                  pruned.push({ date: item.date, name: item.name, archivePath: item.archivePath })
+                  events.push({
+                    path: source,
+                    target: 'project-daily',
+                    operation: 'prune',
+                    revision: item.revision,
+                    operationId,
+                    archivePath: item.archivePath,
+                  })
+                } catch (error) {
+                  item.status = 'failed'
+                  failed.push({ date: item.date, name: item.name, code: 'rename_failed', error: String(error?.message ?? error) })
+                }
+              }
+            }
+
+            record.manifest = items
+            record.status = 'applying'
+            receipts.update(record)
+          }
+
+          const result = { ok: failed.length === 0, pruned, failed, archive: archiveDir, planId: record.planId ?? null }
+          if (failed.length === 0) {
+            record.status = 'committed'
+            record.result = { ...result, ok: true }
+          } else {
+            record.status = 'partial'
+            record.result = { ...result, ok: false, code: 'partial' }
+          }
+          record.manifest = items
+          receipts.update(record)
+          recordOperation({ id: operationId, at: Date.now(), target: 'project-daily', path: archiveDir, status: failed.length === 0 ? 'committed' : 'partial', pruned: pruned.map((row) => row.date) })
+          if (failed.length === 0) return { result, events }
+          return { result: { ...result, code: 'partial' }, events }
+        },
+      ),
+    )
   }
 
   /** Result helper so every refusal has the same shape. */
@@ -311,7 +922,7 @@ export function createStore({ cfg, stateDir }) {
    *
    * It is append-only and read on every write, so an unbounded file eventually
    * costs a full read per operation. Rotation keeps one previous generation —
-   * enough for duplicate detection, which only ever looks at recent ids.
+   * enough for the panel's commit/conflict counts.
    */
   function ledgerPath() {
     return join(logDir, 'operations.jsonl')
@@ -351,23 +962,6 @@ export function createStore({ cfg, stateDir }) {
     return kept.reverse()
   }
 
-  /**
-   * Whether this write is a replay of an operation already committed.
-   * @param {string} operationId
-   */
-  function seenOperation(operationId) {
-    if (!operationId || !cfg.write.operationLog) return null
-    for (const line of ledgerTail(500)) {
-      try {
-        const record = JSON.parse(line)
-        if (record.id === operationId) return record
-      } catch {
-        // A torn last line from a crash; keep scanning older records.
-      }
-    }
-    return null
-  }
-
   function recordOperation(record) {
     if (!cfg.write.operationLog) return
     try {
@@ -375,28 +969,41 @@ export function createStore({ cfg, stateDir }) {
       rotateLedger()
       appendFileSync(ledgerPath(), `${JSON.stringify(record)}\n`, 'utf8')
     } catch {
-      // The log is an optimization for duplicate detection, not the truth.
+      // The ledger is for statistics. Receipts are what make a retry safe.
     }
   }
 
   /**
    * Copy the current file next to its siblings, keeping at most N.
    *
-   * Returns `{ ok: true, path }` or `{ ok: false }`. A failure is reported
-   * rather than swallowed: the caller refuses the write instead of performing
-   * the one destructive step in the chain with no way back.
+   * The name carries the time *and* a UUID, and the create is exclusive: two
+   * backups in the same millisecond are two files, never one overwriting the
+   * other. Returns `{ ok: true, path }` or `{ ok: false, error }`.
    */
   function backup(path) {
     if (cfg.write.backupKeep <= 0) return { ok: true, path: null }
     if (!existsSync(path)) return { ok: true, path: null }
+    let content
     try {
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-      const dir = backupDirFor(path)
+      content = readFileSync(path, 'utf8')
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) }
+    }
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const dir = backupDirFor(path)
+    try {
       mkdirSync(dir, { recursive: true })
-      const target = join(dir, `${stamp}.md`)
-      writeFileAtomic(target, readFileSync(path, 'utf8'), { fsync: false, mode: 0o600 })
-      pruneBackups(dir)
-      return { ok: true, path: target }
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const target = join(dir, `${stamp}-${randomUUID().slice(0, 8)}.md`)
+        try {
+          writeFileExclusive(target, content, { fsync: false, mode: 0o600 })
+          pruneBackups(dir)
+          return { ok: true, path: target }
+        } catch (error) {
+          if (error?.code !== 'EEXIST') throw error
+        }
+      }
+      return { ok: false, error: 'backup_name_collision' }
     } catch (error) {
       return { ok: false, error: String(error?.message ?? error) }
     }
@@ -439,8 +1046,9 @@ export function createStore({ cfg, stateDir }) {
   function readRevision(path, name) {
     const known = listRevisions(path).find((row) => row.name === name)
     if (!known) return { ok: false, code: 'no_revision' }
-    const file = readTextSafe(join(backupDirFor(path), name), { maxBytes: 2 * 1024 * 1024 })
+    const file = readTextSafe(join(backupDirFor(path), name), { maxBytes: MAX_SOURCE_BYTES })
     if (!file.ok) return { ok: false, code: 'unreadable', error: file.error }
+    if (file.truncated) return { ok: false, code: 'too_large', bytes: file.bytes }
     return { ok: true, name, text: file.text, bytes: file.bytes, mtime: known.mtime, revision: contentRevision(file.text) }
   }
 
@@ -513,8 +1121,8 @@ export function createStore({ cfg, stateDir }) {
       }
     }
 
-    const replay = seenOperation(input.operationId)
-    if (replay?.status === 'committed') return { ok: true, duplicate: true, revision: replay.after, path: resolved.path }
+    const op = operationOf(input.operationId)
+    if (!op.ok) return fail(op.code)
 
     const text = String(input.text ?? '').trim()
     if (!text) return fail('empty_text')
@@ -525,31 +1133,162 @@ export function createStore({ cfg, stateDir }) {
     if (/\r?\n/.test(text)) return fail('multiline_text', { target: input.target, hint: 'pass one line per call; call again for another entry' })
 
     if (resolved.mode === 'append') {
-      // Daily files: pure append, so another writer's bytes cannot be lost.
-      // The catch mirrors `writeEverywhere`: a lock timeout is a refusal with a
-      // code, not a rejected promise the tool layer would surface as a crash.
-      return withLock(join(lockDir, `${pathKey(resolved.path)}.lock`), cfg.write.lockWaitMs, () => {
-        const current = existsSync(resolved.path) ? readTextSafe(resolved.path) : { text: '', bytes: 0 }
-        const eol = current.text.includes('\r\n') ? '\r\n' : '\n'
-        const prefix = !current.text ? '' : current.text.endsWith('\n') ? '' : eol
-        const body = `${prefix}- ${text}${eol}`
-        appendFileDurable(resolved.path, body, { fsync: cfg.write.fsync })
-        const after = readTextSafe(resolved.path)
-        const revision = contentRevision(after.text)
-        recordOperation({ id: input.operationId, at: Date.now(), target: input.target, path: resolved.path, status: 'committed', after: revision })
-        return { ok: true, revision, path: resolved.path, bytes: after.bytes, appended: true }
-      }).catch((error) => {
-        if (error?.code === 'lock_timeout') return fail('lock_timeout', { owner: error.owner })
-        return fail('write_failed', { message: error?.message ?? String(error) })
+      return appendDaily({
+        target: input.target,
+        path: resolved.path,
+        op,
+        text,
+        expectedRevision: input.expectedRevision,
+        request: {
+          target: input.target,
+          section: null,
+          text,
+          date: input.date ? String(input.date) : null,
+          expectedRevision: input.expectedRevision ? String(input.expectedRevision) : null,
+        },
       })
     }
 
-    return writeEverywhere(resolved.path, input.target, input.expectedRevision, input.operationId, (current) => {
-      const section = input.section ? String(input.section).trim() : DEFAULT_SECTION
-      const result = appendToSection(current, section, text)
-      if (!result.ok) return { text: current, replaced: 0, reason: result.reason, hits: result.lines ?? [] }
-      return { text: result.text, replaced: 1, created: result.created, section }
+    return commitRewrite({
+      action: 'append',
+      target: input.target,
+      path: resolved.path,
+      operationId: input.operationId,
+      expectedRevision: input.expectedRevision,
+      requireCas: false,
+      allowNoBackup: true,
+      request: {
+        target: input.target,
+        section: input.section ? String(input.section).trim() : null,
+        text,
+        date: input.date ? String(input.date) : null,
+        expectedRevision: input.expectedRevision ? String(input.expectedRevision) : null,
+      },
+      transform: (current) => {
+        const section = input.section ? String(input.section).trim() : DEFAULT_SECTION
+        const result = appendToSection(current, section, text)
+        if (!result.ok) return { text: current, replaced: 0, reason: result.reason, hits: result.lines ?? [] }
+        return { text: result.text, replaced: 1, created: result.created, section }
+      },
     })
+  }
+
+  /** Append to a daily file: O_APPEND, optional CAS, receipt and verified read. */
+  async function appendDaily({ target, path, op, text, expectedRevision, request }) {
+    const fingerprint = fingerprintFor({ action: 'append', paths: [path], request })
+    const exec = async (id) =>
+      withLock(join(lockDir, `${pathKey(path)}.lock`), cfg.write.lockWaitMs, () => {
+        const prior = id ? receipts.read(id) : { ok: true, record: null }
+        if (!prior.ok) return { result: fail(prior.code, { reason: prior.reason, operationId: id }) }
+        let record = prior.record
+        if (record) {
+          if (record.fingerprint !== fingerprint) {
+            return { result: fail('operation_mismatch', { operationId: id, path }) }
+          }
+          if (record.status === 'committed') return { result: { ...record.result, duplicate: true } }
+          if (record.status !== 'applying') {
+            return { result: fail('outcome_unknown', { operationId: id, path, reason: record.status }) }
+          }
+        }
+
+        const current = existsSync(path)
+          ? readTextSafe(path, { maxBytes: MAX_SOURCE_BYTES })
+          : { ok: true, text: '', bytes: 0, truncated: false }
+        // `changed` used to look like an empty file here, so an append could
+        // overwrite the EOL/prefix decision and write over a raced snapshot.
+        if (!current.ok) return { result: fail('unreadable', { path, error: current.error }) }
+        if (current.truncated) return { result: fail('too_large', { path, bytes: current.bytes }) }
+
+        const before = contentRevision(current.text)
+        if (record?.status === 'applying') {
+          if (before === record.after) {
+            const done = markReceipt(record, { status: 'committed' })
+            return { result: { ...(done?.result ?? record.result), duplicate: true } }
+          }
+          if (before !== record.before) {
+            markReceipt(record, { status: 'outcome_unknown', result: { ...record.result, ok: false, code: 'outcome_unknown' } })
+            return { result: fail('outcome_unknown', { operationId: id, path }) }
+          }
+        }
+
+        if (expectedRevision && String(expectedRevision) !== before) {
+          recordOperation({
+            id,
+            at: Date.now(),
+            target,
+            path,
+            status: 'conflict',
+            expectedRevision: String(expectedRevision),
+            revision: before,
+          })
+          return {
+            result: {
+              ok: false,
+              code: 'conflict',
+              expectedRevision: String(expectedRevision),
+              revision: before,
+              path,
+            },
+          }
+        }
+
+        const eol = current.text.includes('\r\n') ? '\r\n' : '\n'
+        const prefix = !current.text ? '' : current.text.endsWith('\n') ? '' : eol
+        const body = `${prefix}- ${text}${eol}`
+        const afterRevision = contentRevision(current.text + body)
+
+        if (id) {
+          if (!record) {
+            const begun = receipts.begin({
+              version: 1,
+              id,
+              fingerprint,
+              action: 'append',
+              target,
+              path,
+              before,
+              after: afterRevision,
+              status: 'applying',
+              result: { ok: true, revision: afterRevision, path },
+              createdAt: Date.now(),
+            })
+            if (!begun.ok) return { result: fail(begun.code, { reason: begun.reason, path }) }
+            record = begun.record ?? null
+          } else {
+            record = markReceipt(record, { status: 'applying', before, after: afterRevision })
+            if (!record) return { result: fail('receipt_capacity', { reason: 'update_failed', path }) }
+          }
+        }
+
+        try {
+          appendFileDurable(path, body, { fsync: cfg.write.fsync })
+        } catch (error) {
+          return { result: fail('write_failed', { path, message: String(error?.message ?? error) }) }
+        }
+
+        const after = readTextSafe(path, { maxBytes: MAX_SOURCE_BYTES })
+        if (!after.ok || after.truncated) {
+          if (id) markReceipt(record, { status: 'outcome_unknown', result: { ok: false, code: 'outcome_unknown', path } })
+          return {
+            result: fail('outcome_unknown', { path, committed: true, error: after.error ?? (after.truncated ? 'too_large' : null) }),
+          }
+        }
+        if (!after.text.endsWith(body)) {
+          if (id) markReceipt(record, { status: 'outcome_unknown', result: { ok: false, code: 'outcome_unknown', path } })
+          return { result: fail('outcome_unknown', { path, committed: true, reason: 'appended_text_missing' }) }
+        }
+
+        const actual = contentRevision(after.text)
+        const result = { ok: true, revision: actual, path, bytes: after.bytes, appended: true }
+        if (id && record) markReceipt(record, { status: 'committed', after: actual, result })
+        recordOperation({ id, at: Date.now(), target, path, status: 'committed', before, after: actual })
+        return {
+          result,
+          event: { path, target, operation: 'append', revision: actual, operationId: id ?? null },
+        }
+      })
+
+    return runOperation({ op, exec })
   }
 
   /**
@@ -564,95 +1303,93 @@ export function createStore({ cfg, stateDir }) {
     const resolved = resolveTarget(input.target, probe)
     if (!resolved.path || resolved.mode !== 'rewrite') return fail('bad_target', { target: input.target })
 
-    const replay = seenOperation(input.operationId)
-    if (replay?.status === 'committed') return { ok: true, duplicate: true, revision: replay.after, path: resolved.path }
-
-    return writeEverywhere(resolved.path, input.target, input.expectedRevision, input.operationId, (current) => {
-      const result = editEntry(current, input.section, input.match, {
-        replacement: input.replacement,
+    return commitRewrite({
+      action: input.mode === 'remove' ? 'remove' : 'edit',
+      target: input.target,
+      path: resolved.path,
+      operationId: input.operationId,
+      expectedRevision: input.expectedRevision,
+      requireCas: true,
+      request: {
+        target: input.target,
+        section: String(input.section ?? ''),
+        match: String(input.match ?? ''),
+        replacement: input.replacement === undefined ? null : String(input.replacement),
         mode: input.mode ?? 'replace',
-      })
-      return {
-        text: result.text,
-        replaced: result.replaced,
-        reason: result.reason,
-        hits: result.lines,
-        duplicates: result.reason === 'ambiguous_section' ? result.lines?.length : undefined,
-      }
-    })
-  }
-
-  /** Shared lock → re-read → transform → backup → replace path. */
-  function writeEverywhere(path, target, expectedRevision, operationId, transform) {
-    return withLock(join(lockDir, `${pathKey(path)}.lock`), cfg.write.lockWaitMs, () => {
-      const current = existsSync(path) ? readTextSafe(path) : { ok: true, text: '', bytes: 0 }
-      if (!current.ok && current.error !== 'not_a_file') return fail('unreadable', { error: current.error, path })
-
-      const before = contentRevision(current.text)
-      if (expectedRevision && expectedRevision !== before) {
-        // Recorded so the panel can show "someone else wrote this" instead of
-        // silently offering a write that will keep failing.
-        recordOperation({
-          id: operationId,
-          at: Date.now(),
-          target,
-          path,
-          status: 'conflict',
-          expectedRevision,
-          revision: before,
+        expectedRevision: input.expectedRevision ? String(input.expectedRevision) : null,
+      },
+      transform: (current) => {
+        const result = editEntry(current, input.section, input.match, {
+          replacement: input.replacement,
+          mode: input.mode ?? 'replace',
         })
         return {
-          ok: false,
-          code: 'conflict',
-          expectedRevision,
-          revision: before,
-          path,
-          hint: 'the file changed since it was read; read again before writing',
+          text: result.text,
+          replaced: result.replaced,
+          reason: result.reason,
+          hits: result.lines,
+          duplicates: result.reason === 'ambiguous_section' ? result.lines?.length : undefined,
         }
-      }
-
-      const result = transform(current.text)
-      if (result.replaced === 0) {
-        // `ambiguous_section` carries the duplicate headings' line numbers so the
-        // caller can retry by position instead of guessing which copy it meant.
-        const extra = { path, hits: result.hits ?? [], issues: result.issues ?? [] }
-        if (result.duplicates) extra.duplicates = result.duplicates
-        return fail(result.reason ?? 'no_match', extra)
-      }
-
-      const snapshot = backup(path)
-      // No backup, no destructive write: the atomic replace is the one step
-      // that cannot be undone, so a full disk or a locked state directory must
-      // stop here rather than quietly leave nothing to restore from.
-      if (!snapshot.ok) return fail('backup_failed', { path, error: snapshot.error })
-      const backupPath = snapshot.path
-
-      writeFileAtomic(path, result.text, { fsync: cfg.write.fsync })
-      const after = readTextSafe(path)
-      const revision = contentRevision(after.text)
-      recordOperation({ id: operationId, at: Date.now(), target, path, status: 'committed', before, after: revision, backup: backupPath })
-      // `null`, never `undefined`: the host validates a tool result as lossless
-      // JSON, and a single undefined property makes the whole output illegal —
-      // the write succeeds but the caller sees "value is not lossless JSON".
-      return {
-        ok: true,
-        revision,
-        previous: before,
-        path,
-        bytes: after.bytes,
-        backup: backupPath ?? null,
-        created: Boolean(result.created),
-        // The section an append actually landed in, so an implicit fallback to
-        // `Notes` is visible instead of being guessed from the file.
-        section: result.section ?? null,
-      }
-    }).catch((error) => {
-      if (error?.code === 'lock_timeout') return fail('lock_timeout', { owner: error.owner })
-      return fail('write_failed', { message: error?.message ?? String(error) })
+      },
     })
   }
 
-  return { append, edit, editAt, remove, replaceSection, replaceDocument, removeSection: removeSectionAction, restore, prune, listRevisions, readRevision, operationStats, backupDirFor }
+  return {
+    append,
+    edit,
+    editAt,
+    remove,
+    replaceSection,
+    replaceDocument,
+    removeSection: removeSectionAction,
+    restore,
+    prune,
+    listRevisions,
+    readRevision,
+    operationStats,
+    backupDirFor,
+    subscribe,
+  }
+}
+
+/** Normalize a date selection; `{list:null}` means "no explicit list". */
+function normalizeDates(value) {
+  if (value === undefined || value === null) return { ok: true, list: null }
+  const list = (Array.isArray(value) ? value : [value]).map((row) => String(row).trim()).filter(Boolean)
+  if (list.length === 0) return { ok: true, list: null }
+  for (const date of list) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false }
+  }
+  return { ok: true, list: [...new Set(list)].sort() }
+}
+
+/** Acquire several locks in the given order, releasing in reverse order. */
+async function withManyLocks(lockPaths, waitMs, operation) {
+  const run = async (index) => {
+    if (index >= lockPaths.length) return operation()
+    return withLock(lockPaths[index], waitMs, () => run(index + 1))
+  }
+  return run(0)
+}
+
+/** Keep only the transform's result fields, never `undefined`. */
+function pickExtra(output) {
+  const extra = {}
+  for (const key of ['hits', 'issues', 'duplicates', 'created', 'section', 'removed', 'entries', 'restoredFrom']) {
+    if (output[key] !== undefined) extra[key] = output[key]
+  }
+  return extra
+}
+
+/** JSON stringify with sorted object keys, so a fingerprint is stable. */
+function stable(value) {
+  if (Array.isArray(value)) return value.map(stable)
+  if (value && typeof value === 'object') {
+    const out = {}
+    for (const key of Object.keys(value).sort()) out[key] = stable(value[key])
+    return out
+  }
+  return value
 }
 
 /** `statSync` that answers null instead of throwing. */

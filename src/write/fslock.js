@@ -229,6 +229,34 @@ export function resolveLink(path) {
   }
 }
 
+/**
+ * Create a new file with `wx`, so an existing file is never overwritten.
+ *
+ * Backups and first-write receipts need "either I created this name, or I
+ * failed": a plain `rename` over an existing path would silently replace the
+ * snapshot a previous write at the same millisecond had just taken.
+ *
+ * @param {string} path
+ * @param {string} content
+ * @param {{ fsync?: boolean, mode?: number }} [options]
+ */
+export function writeFileExclusive(path, content, options = {}) {
+  mkdirSync(dirname(path), { recursive: true })
+  const fd = openSync(path, 'wx', options.mode ?? 0o600)
+  try {
+    writeSync(fd, content, null, 'utf8')
+    if (options.fsync !== false) {
+      try {
+        fsyncSync(fd)
+      } catch {
+        // A platform without fsync still gets an exclusive create.
+      }
+    }
+  } finally {
+    closeSync(fd)
+  }
+}
+
 /** Append without rewriting — the one write that cannot truncate existing bytes. */
 export function appendFileDurable(path, content, options = {}) {
   mkdirSync(dirname(path), { recursive: true })

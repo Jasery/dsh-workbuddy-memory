@@ -159,17 +159,21 @@ test('the panel write chain: edit, conflict, add, remove, restore, prune', async
     assert.equal(restored.body.ok, true)
     assert.equal(readFileSync(s.projectMemory, 'utf8'), snapshot.body.text)
 
-    // Prune: only the old daily file is archived; MEMORY.md is never touched.
+    // Prune: preview is available, but this route does not forward planId yet.
+    // Task 4 wires the plan through the UI; until then an apply is refused
+    // rather than re-enumerating a set nobody previewed.
     const plan = await s.post({ type: 'prune', dryRun: true, beforeDays: 30 })
     assert.deepEqual(
       plan.body.candidates.map((row) => row.date),
       [s.oldDate],
     )
+    assert.equal(typeof plan.body.planId, 'string')
     const pruned = await s.post({ type: 'prune', dryRun: false, beforeDays: 30, dates: [s.oldDate] })
-    assert.equal(pruned.body.ok, true)
+    assert.equal(pruned.body.ok, false)
+    assert.equal(pruned.body.code, 'plan_required')
     assert.equal(readFileSync(s.projectMemory, 'utf8'), snapshot.body.text)
-    assert.equal(existsSync(s.dailyOld), false)
-    assert.match(readFileSync(join(s.memDir, 'archive', `${s.oldDate}.md`), 'utf8'), /旧条目一/)
+    assert.equal(existsSync(s.dailyOld), true)
+    assert.match(readFileSync(s.dailyOld, 'utf8'), /旧条目一/)
     assert.match(readFileSync(s.dailyNew, 'utf8'), /昨天的条目/)
   } finally {
     s.close()

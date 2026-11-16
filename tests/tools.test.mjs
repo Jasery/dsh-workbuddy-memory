@@ -267,8 +267,9 @@ test('memory_edit replaces one entry and keeps the rest byte-identical', async (
 
 test('memory_edit removes an entry', async () => {
   const { tools, exec, dir } = fixture()
+  const before = await tools.read.execute({ target: 'project-memory' }, exec)
   const edited = await tools.edit.execute(
-    { target: 'project-memory', section: '偏好', match: '避免人称代词', mode: 'remove' },
+    { target: 'project-memory', section: '偏好', match: '避免人称代词', mode: 'remove', expectedRevision: before.revision },
     exec,
   )
   assert.equal(edited.ok, true)
@@ -281,7 +282,8 @@ test('memory_edit refuses an ambiguous match instead of guessing', async () => {
   const { tools, exec, dir } = fixture()
   writeFileSync(join(dir, 'MEMORY.md'), '## 偏好\n- 中文输入\n- 中文输出\n', 'utf8')
 
-  const result = await tools.edit.execute({ target: 'project-memory', section: '偏好', match: '中文', replacement: 'x' }, exec)
+  const before = await tools.read.execute({ target: 'project-memory' }, exec)
+  const result = await tools.edit.execute({ target: 'project-memory', section: '偏好', match: '中文', replacement: 'x', expectedRevision: before.revision }, exec)
   assert.equal(result.ok, false)
   assert.equal(result.code, 'ambiguous')
 
@@ -302,7 +304,8 @@ test('memory_edit refuses a stale revision and a missing section', async () => {
   assert.equal(stale.ok, false)
   assert.equal(stale.code, 'conflict')
 
-  const noSection = await tools.edit.execute({ target: 'project-memory', section: '没有这节', match: '用简体中文' }, exec)
+  const current = await tools.read.execute({ target: 'project-memory' }, exec)
+  const noSection = await tools.edit.execute({ target: 'project-memory', section: '没有这节', match: '用简体中文', expectedRevision: current.revision }, exec)
   assert.equal(noSection.ok, false)
   assert.equal(noSection.code, 'no_section')
 })
@@ -320,7 +323,7 @@ test('a write survives a round trip through read', async () => {
   assert.match(file.content, /往返一条/)
 })
 
-test('memory_prune plans first and only archives when told to', async () => {
+test('memory_prune previews a plan and refuses an apply without planId', async () => {
   const { tools, exec, dir } = fixture()
   writeFileSync(join(dir, '2026-01-02.md'), '- 很久以前的一条\n', 'utf8')
 
@@ -328,16 +331,19 @@ test('memory_prune plans first and only archives when told to', async () => {
   assert.equal(plan.ok, true)
   assert.equal(plan.dryRun, true)
   assert.deepEqual(plan.candidates.map((row) => row.date), ['2026-01-02'])
+  assert.equal(typeof plan.planId, 'string')
   // A dry run must not move the file or touch MEMORY.
   assert.equal(readFileSync(join(dir, '2026-01-02.md'), 'utf8'), '- 很久以前的一条\n')
   assert.equal(readFileSync(join(dir, 'MEMORY.md'), 'utf8').includes('很久以前的一条'), false)
 
+  // Task 4 will forward planId from the UI. Until then the tool deliberately
+  // cannot archive without it: an apply that guesses the set is exactly the
+  // unsafe retry this contract removes.
   const done = await tools.prune.execute({ beforeDays: 30, dryRun: false, operationId: 'op-1' }, exec)
-  assert.equal(done.ok, true)
-  assert.deepEqual(done.pruned.map((row) => row.date), ['2026-01-02'])
-  // The raw log is archived, not folded into MEMORY.
-  assert.equal(existsSync(join(dir, '2026-01-02.md')), false)
-  assert.equal(existsSync(join(dir, 'archive', '2026-01-02.md')), true)
+  assert.equal(done.ok, false)
+  assert.equal(done.code, 'plan_required')
+  assert.equal(existsSync(join(dir, '2026-01-02.md')), true)
+  assert.equal(existsSync(join(dir, 'archive', '2026-01-02.md')), false)
   const memory = readFileSync(join(dir, 'MEMORY.md'), 'utf8')
   assert.equal(memory.includes('很久以前的一条'), false)
   assert.equal(memory.includes('2026-01-02'), false)
@@ -410,7 +416,7 @@ test('every write tool returns a result the host can snapshot', async () => {
   assert.equal(typeof second.backup, 'string')
   assert.equal(second.created, false)
 
-  const edited = await f.tools.edit.execute({ target: 'project-memory', section: 'A', match: '第一条', replacement: '第一条改' }, freshExec)
+  const edited = await f.tools.edit.execute({ target: 'project-memory', section: 'A', match: '第一条', replacement: '第一条改', expectedRevision: second.revision }, freshExec)
   assert.equal(edited.ok, true)
   assert.deepEqual(losslessViolations(edited), [], 'edit reports created only sometimes; it must not leak undefined')
   assert.equal(edited.created, false)
