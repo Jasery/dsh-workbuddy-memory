@@ -835,6 +835,298 @@ test('a conflict never offers to overwrite the disk', async () => {
   }
 })
 
+// ── refusals inside a modal ────────────────────────────────────────────────
+
+/** The text a modal shows, expanded so nested components are readable. */
+const modalText = (tree) => text(expand(tree))
+
+/** The expanded dialog nodes: only what a person can actually read on the mask. */
+const modalNodes = (tree) => walk(expand(tree)).filter((node) => String(node.props?.className ?? '').includes('wbm-mask'))
+
+/** Text of just the modal on screen, without the covered banner behind it. */
+function onlyModalText(tree) {
+  const masks = modalNodes(tree)
+  assert.ok(masks.length >= 1, 'a modal is open')
+  return masks.map((node) => text(node)).join('')
+}
+
+/** Open a draft and preview it, so the apply button is live. */
+async function previewedDraft() {
+  let tree = await openDraft(await openProject())
+  tree = await runtime.fire(draftBody(tree), 'onChange', MemoryOverviewPanel, {}, { value: DRAFT_TEXT })
+  tree = await runtime.fire(draftButton(tree, '预览差异'), 'onClick', MemoryOverviewPanel, {})
+  assert.ok(draftButton(tree, '应用草案'), 'the draft is previewed')
+  return tree
+}
+
+test('a refused draft apply explains itself in the dialog, not behind the mask', async () => {
+  // The banner renders in the normal flow with no z-index; the dialog's mask is
+  // `position:fixed; z-index:55`. A refusal written only to the banner is a
+  // refusal nobody can read or dismiss — the dialog does not change a word, so
+  // the button looks like it did nothing at all.
+  for (const code of ['too_large', 'full_text_disabled', 'invalid_structure']) {
+    runtime.reset()
+    const calls = installFetch({ actionResult: () => ({ ok: false, code }) })
+    const restore = installTimers()
+    try {
+      const tree = await previewedDraft()
+      const before = onlyModalText(tree)
+      const applied = await runtime.fire(draftButton(tree, '应用草案'), 'onClick', MemoryOverviewPanel, {})
+      assert.equal(calls.actions.length, 1, `${code}: one write was attempted`)
+
+      const after = onlyModalText(applied)
+      assert.notEqual(after, before, `${code}: the dialog says something`)
+      // The copy for the code, not the raw identifier: a person reads a sentence.
+      assert.equal(after.includes(code), false, `${code}: the code is translated, not printed raw`)
+      assert.match(after, /太大|全文编辑|结构/, `${code}: the refusal names the reason`)
+      // The apply button goes back to a state the person can act on: a preview
+      // that just failed is not a preview that is ready to submit again.
+      assert.equal(draftButton(applied, '应用草案').props.disabled, true, `${code}: a refused apply is not still ready`)
+      assert.equal(draftButton(applied, '预览差异').props.disabled, false, `${code}: but re-previewing is offered`)
+    } finally {
+      restore()
+    }
+  }
+})
+
+test('a refused restore explains itself in the history dialog', async () => {
+  for (const code of ['too_large', 'invalid_structure', 'lock_timeout']) {
+    runtime.reset()
+    const calls = installFetch({ actionResult: () => ({ ok: false, code }) })
+    const restore = installTimers()
+    try {
+      let tree = await openProject()
+      tree = await runtime.fire(control(tree, '历史版本'), 'onClick', MemoryOverviewPanel, {})
+      const pick = walk(expand(tree)).find((node) => node.type === 'button' && text(node).includes('2026-11-09T10-00-00-000Z.md'))
+      tree = await runtime.fire(pick, 'onClick', MemoryOverviewPanel, {})
+      const before = onlyModalText(tree)
+      const restoreButton = walk(expand(tree)).find((node) => node.type === 'button' && text(node).startsWith('恢复这个版本'))
+      assert.ok(restoreButton, `${code}: a previewed backup can be restored`)
+
+      const after = await runtime.fire(restoreButton, 'onClick', MemoryOverviewPanel, {})
+      assert.equal(calls.actions.length, 1)
+      assert.notEqual(onlyModalText(after), before, `${code}: the dialog says something`)
+      assert.equal(onlyModalText(after).includes(code), false, `${code}: the code is translated`)
+      assert.match(onlyModalText(after), /太大|结构|占用/, `${code}: the refusal names the reason`)
+    } finally {
+      restore()
+    }
+  }
+})
+
+test('a modal refusal does not also raise the banner nobody can see', async () => {
+  // Two copies of the same failure is worse than one: the banner is covered by
+  // the mask, so it can only be discovered after the dialog closes, long after
+  // it stopped being relevant.
+  const calls = installFetch({ actionResult: () => ({ ok: false, code: 'too_large' }) })
+  const restore = installTimers()
+  try {
+    const tree = await previewedDraft()
+    const applied = await runtime.fire(draftButton(tree, '应用草案'), 'onClick', MemoryOverviewPanel, {})
+    assert.equal(calls.actions.length, 1)
+    const expanded = expand(applied)
+    const banners = walk(expanded).filter((node) => String(node.props?.className ?? '').includes('wbm-banner warn'))
+    const insideModal = banners.filter((node) => text(node).includes('太大'))
+    assert.ok(insideModal.length >= 1, 'the reason is in the dialog')
+    // The top-level banner lives directly under `wbm-root`; one there would be
+    // the invisible duplicate.
+    const rootBanners = walk(expanded)
+      .filter((node) => node.props?.className === 'wbm-root')
+      .flatMap((root) => (root.children ?? []).filter((child) => String(child.props?.className ?? '').includes('wbm-banner warn')))
+    assert.equal(rootBanners.length, 0, 'no duplicate banner behind the mask')
+  } finally {
+    restore()
+  }
+})
+
+// ── draft entry gating ─────────────────────────────────────────────────────
+
+test('a draft entry needs full-text editing, and offers the same way out as source mode', async () => {
+  // The draft's only write is `replace-document`, which the store refuses with
+  // `full_text_disabled` whenever the switch is off. Source mode already asks
+  // whether to turn it on; a draft button that can only fail has no way out.
+  //
+  // The panel reads the switch through `runtime.flags`, which `readFlags` fills
+  // from the host form; there is no form here, so the flag is set directly.
+  const { runtime: moduleRuntime } = client.__internals
+  const calls = installFetch({ state: stateFor({ allowFullTextEdit: false }) })
+  const restore = installTimers()
+  const previous = moduleRuntime.flags.allowFullTextEdit
+  moduleRuntime.flags.allowFullTextEdit = false
+  try {
+    const tree = await openProject()
+    const draftEntry = control(tree, '粘贴草案')
+    const historyButton = control(tree, '历史版本')
+    assert.ok(historyButton, 'history restores a backup, which the switch does not gate')
+
+    assert.ok(draftEntry, 'the draft entry is still offered, because it leads somewhere')
+    // The entry has to lead to the same confirmation source mode uses.
+    const next = await runtime.fire(draftEntry, 'onClick', MemoryOverviewPanel, {})
+    const body = onlyModalText(next)
+    assert.match(body, /全文编辑/, 'the entry explains what is off')
+    const confirm = walk(expand(next)).find((node) => node.type === 'button' && /开启|打开/.test(text(node)))
+    assert.ok(confirm, 'and offers to turn it on')
+    assert.equal(calls.actions.length, 0, 'nothing was written by opening it')
+  } finally {
+    moduleRuntime.flags.allowFullTextEdit = previous
+    restore()
+  }
+})
+
+test('a refused draft with full-text editing off says which switch to flip', async () => {
+  // Reached when the flag flips while the dialog is open. The refusal has to
+  // name the setting, because the panel cannot turn it on from inside a failed
+  // apply.
+  const calls = installFetch({ actionResult: () => ({ ok: false, code: 'full_text_disabled' }) })
+  const restore = installTimers()
+  try {
+    const tree = await previewedDraft()
+    const applied = await runtime.fire(draftButton(tree, '应用草案'), 'onClick', MemoryOverviewPanel, {})
+    assert.equal(calls.actions.length, 1)
+    assert.match(modalText(applied), /全文编辑/, 'the refusal names the setting')
+  } finally {
+    restore()
+  }
+})
+
+// ── async window ───────────────────────────────────────────────────────────
+
+test('changing the draft base while the preview is in flight discards the late response', async () => {
+  // The apply button submits `baseRevision`, which the preview response sets.
+  // A response that lands after the person retyped the base would put the old
+  // base back on screen while the field still shows the new one — the panel
+  // would then claim one baseline and submit another.
+  const restore = installTimers()
+  let release
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  let contentCalls = 0
+  const calls = installFetch()
+  const inner = globalThis.fetch
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url).includes('/content') && init.method !== 'POST') {
+      contentCalls += 1
+      // Only the draft's own read is gated; opening the file must not hang.
+      if (contentCalls > 1) await gate
+    }
+    return inner(url, init)
+  }
+  try {
+    let tree = await openDraft(await openProject())
+    tree = await runtime.fire(draftBody(tree), 'onChange', MemoryOverviewPanel, {}, { value: DRAFT_TEXT })
+
+    // Start the preview, but do not await it: the request is the gated one.
+    const pending = runtime.fire(draftButton(tree, '预览差异'), 'onClick', MemoryOverviewPanel, {})
+    await tick(5)
+    tree = await runtime.settle(MemoryOverviewPanel, {})
+
+    // Retype the base while the request is in flight.
+    const baseField = inDraft(tree, (node) => node.type === 'input' && String(node.props?.value ?? '').startsWith('rev-'))
+    assert.ok(baseField, 'the base field is on screen')
+    tree = await runtime.fire(baseField, 'onChange', MemoryOverviewPanel, {}, { value: 'rev-typed-by-user' })
+
+    release()
+    await pending
+    tree = await runtime.settle(MemoryOverviewPanel, {})
+
+    const shownBase = inDraft(tree, (node) => node.type === 'input' && String(node.props?.value ?? '').startsWith('rev-'))
+    assert.equal(shownBase?.props?.value, 'rev-typed-by-user', 'the field keeps what the person typed')
+    // A late response must not re-enable apply: it was built against a base the
+    // person has since replaced.
+    assert.equal(draftButton(tree, '应用草案').props.disabled, true, 'the stale preview does not re-arm apply')
+    assert.equal(calls.actions.length, 0, 'and nothing is written')
+  } finally {
+    release()
+    restore()
+  }
+})
+
+test('the baseline on screen is the one the draft submits', async () => {
+  // The invariant behind the race above: whatever the dialog shows as the
+  // source revision is what the apply has to send.
+  const calls = installFetch()
+  const restore = installTimers()
+  try {
+    let tree = await openDraft(await openProject())
+    tree = await runtime.fire(draftBody(tree), 'onChange', MemoryOverviewPanel, {}, { value: DRAFT_TEXT })
+    const baseField = inDraft(tree, (node) => node.type === 'input' && String(node.props?.value ?? '').startsWith('rev-'))
+    assert.ok(baseField, 'the dialog prefills the base')
+    tree = await runtime.fire(baseField, 'onChange', MemoryOverviewPanel, {}, { value: 'rev-project' })
+    tree = await runtime.fire(draftButton(tree, '预览差异'), 'onClick', MemoryOverviewPanel, {})
+    tree = await runtime.fire(draftButton(tree, '应用草案'), 'onClick', MemoryOverviewPanel, {})
+
+    const written = calls.actions.find((payload) => payload.type === 'replace-document')
+    const shown = inDraft(tree, (node) => node.type === 'input' && String(node.props?.value ?? '').startsWith('rev-'))?.props?.value
+    assert.ok(written, 'the draft was applied')
+    assert.equal(written.expectedRevision, 'rev-project')
+    assert.equal(String(shown ?? 'rev-project'), written.expectedRevision, 'screen and request agree')
+  } finally {
+    restore()
+  }
+})
+
+// ── conflict ownership ─────────────────────────────────────────────────────
+
+test('a conflict during a draft apply never stacks two masks', async () => {
+  // Both `.wbm-mask` layers are `z-index:55`, and the draft dialog renders after
+  // the conflict dialog, so the conflict's three exits are covered by the draft.
+  // Closing the draft then left the conflict on screen with nothing to own it.
+  const calls = installFetch({ actionResult: () => ({ ok: false, code: 'conflict', revision: 'rev-other', expectedRevision: 'rev-project' }) })
+  const restore = installTimers()
+  try {
+    const tree = await previewedDraft()
+    const applied = await runtime.fire(draftButton(tree, '应用草案'), 'onClick', MemoryOverviewPanel, {})
+    assert.equal(calls.actions.length, 1)
+
+    const masks = modalNodes(applied)
+    assert.equal(masks.length, 1, `at most one modal is on screen, saw ${masks.length}`)
+    // And the conflict is not left ownerless behind it.
+    assert.equal(onlyModalText(applied).includes('文件已被改动'), false, 'no orphan conflict dialog under the draft')
+  } finally {
+    restore()
+  }
+})
+
+test('a conflict during a restore never stacks two masks', async () => {
+  const calls = installFetch({ actionResult: () => ({ ok: false, code: 'conflict', revision: 'rev-other', expectedRevision: 'rev-project' }) })
+  const restore = installTimers()
+  try {
+    let tree = await openProject()
+    tree = await runtime.fire(control(tree, '历史版本'), 'onClick', MemoryOverviewPanel, {})
+    const pick = walk(expand(tree)).find((node) => node.type === 'button' && text(node).includes('2026-11-09T10-00-00-000Z.md'))
+    tree = await runtime.fire(pick, 'onClick', MemoryOverviewPanel, {})
+    const restoreButton = walk(expand(tree)).find((node) => node.type === 'button' && text(node).startsWith('恢复这个版本'))
+    const after = await runtime.fire(restoreButton, 'onClick', MemoryOverviewPanel, {})
+
+    const masks = modalNodes(after)
+    assert.equal(masks.length, 1, `at most one modal is on screen, saw ${masks.length}`)
+    assert.match(onlyModalText(after), /重新选版本|已被改动|被改过/, 'the history dialog carries the conflict message')
+  } finally {
+    restore()
+  }
+})
+
+test('a conflict during a source save never stacks two masks', async () => {
+  const calls = installFetch({ actionResult: () => ({ ok: false, code: 'conflict', revision: 'rev-other', expectedRevision: 'rev-project' }) })
+  const restore = installTimers()
+  try {
+    let tree = await openSourceMode(await openProject())
+    const area = walk(tree).find((node) => node.type === 'textarea' && String(node.props?.value ?? '').includes('Node 22'))
+    tree = await runtime.fire(area, 'onChange', MemoryOverviewPanel, {}, { value: projectMemory.replace('Node 22', 'Node 24') })
+    tree = await runtime.fire(walk(tree).find((node) => node.type === 'button' && text(node) === '预览差异'), 'onClick', MemoryOverviewPanel, {})
+    tree = await runtime.fire(walk(tree).find((node) => node.type === 'button' && text(node) === '保存整份文件'), 'onClick', MemoryOverviewPanel, {})
+
+    assert.equal(calls.actions.length, 1)
+    const masks = modalNodes(tree)
+    // Source mode is an inline editor, not a modal: a conflict here may open the
+    // conflict dialog, but it must be the only one.
+    assert.ok(masks.length <= 1, `at most one modal, saw ${masks.length}`)
+  } finally {
+    restore()
+  }
+})
+
 // ── source mode ────────────────────────────────────────────────────────────
 
 /** Enter source mode, clicking through the first-run confirmation. */

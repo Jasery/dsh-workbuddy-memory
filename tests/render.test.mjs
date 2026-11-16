@@ -430,6 +430,35 @@ test('compact rules are complete in both locales and remain under 500 UTF-16 uni
   assert.match(chinese, /面板操作/)
 })
 
+test('full-mode rules keep every numbered rule inside limits.rules, hint included, in both locales', () => {
+  // The English block grew past its own budget when the bulk tidy-up and daily
+  // file rules were added: `truncateChars` cut rule 7 mid-word, and with the
+  // distillation hint present the whole rule vanished — silently dropping
+  // "never copy raw logs into MEMORY.md", the one rule that keeps the file from
+  // overflowing the injection limit in the first place.
+  //
+  // The worst case is a user file past the limit *and* past the threshold: that
+  // is the longest hint, so it is the budget the rules have to survive.
+  for (const locale of ['en', 'zh']) {
+    const translator = createTranslator(locale)
+    const { cfg, probe } = fixture({ user: `${'- 一条\n'.repeat(6000)}`, config: { inject: { limits: { user: 8000 } } } })
+    assert.ok(cfg.inject.limits.rules > 0, 'the fixture injects the rules block')
+    const hint = distillHint({ cfg, probe, t: translator })
+    assert.notEqual(hint, '', `${locale}: the fixture is past the limit, so a hint is present`)
+
+    const rules = renderSections({ cfg, probe, t: translator }).find((section) => section.name === 'workbuddy-memory:rules')
+    assert.ok(rules.text.length <= cfg.inject.limits.rules, `${locale}: the block is ${rules.text.length} units against a ${cfg.inject.limits.rules} budget`)
+
+    // Every rule the locale ships has to survive: a cut rule is a rule the model
+    // never reads, and the block still looks complete without it.
+    const declared = translator('rules')
+    assert.ok(Array.isArray(declared) && declared.length > 0)
+    for (let index = 0; index < declared.length; index += 1) {
+      assert.ok(rules.text.includes(`${index + 1}. ${declared[index]}`), `${locale}: rule ${index + 1} survives whole`)
+    }
+  }
+})
+
 test('mixed files retain legacy block while layered source remains layered', () => {
   const { root, cwd, home } = fixture({ project: '## Old\n- legacy\n', user: '# User\n\n## Core Memory\n- core\n' })
   const cfg = normalizeConfig({ workbuddyHome: home, inject: { mode: 'layered' } })

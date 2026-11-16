@@ -138,6 +138,12 @@ window.__ModuleLoader__.load({
       'draft.applied': '草案已应用',
       'draft.diffTitle': '与磁盘当前内容的差异（+ 是草案新增的行）',
       'draft.stats': '+{added} / -{removed} 行',
+      // A draft is applied with `replace-document`, which full-text editing
+      // gates. With the switch off the entry asks first, like source mode does.
+      'draft.titleEnable': '开启全文编辑？',
+      'draft.bodyBlocked': '粘贴草案会用整份正文覆盖文件，而全文编辑当前是关闭的。开启后可以粘贴草案；保存前仍会先备份、再校验结构。确认后会同时打开草案面板。',
+      'draft.confirmBlocked': '开启并粘贴草案',
+      'draft.cannotEnableFullText': '无法写入宿主配置，请到设置页手动开启「全文编辑」。',
 
       // feedback
       'flash.saved': '已保存，下一轮对话生效',
@@ -479,6 +485,12 @@ window.__ModuleLoader__.load({
       'draft.applied': 'Draft applied',
       'draft.diffTitle': 'Diff against the file on disk (+ lines come from the draft)',
       'draft.stats': '+{added} / -{removed} lines',
+      // A draft is applied with `replace-document`, which full-text editing
+      // gates. With the switch off the entry asks first, like source mode does.
+      'draft.titleEnable': 'Turn on full-text editing?',
+      'draft.bodyBlocked': 'Pasting a draft overwrites the whole file, and full-text editing is currently off. Turning it on allows drafts; saving still backs up and checks the structure first. Confirming also opens the draft panel.',
+      'draft.confirmBlocked': 'Enable and paste a draft',
+      'draft.cannotEnableFullText': 'Cannot write host config; enable "Full-text editing" in settings.',
 
       'flash.saved': 'Saved; applies from the next turn',
       'flash.added': 'Added',
@@ -1900,6 +1912,9 @@ window.__ModuleLoader__.load({
       const [sectionEdit, setSectionEdit] = React.useState(null)
       const [sourceEdit, setSourceEdit] = React.useState(null)
       const [confirmSource, setConfirmSource] = React.useState(false)
+      // The draft entry's "turn on full-text editing" confirmation, the twin of
+      // `confirmSource`: a draft's only write is refused while that switch is off.
+      const [confirmDraft, setConfirmDraft] = React.useState(false)
       const [busy, setBusy] = React.useState(false)
       const [conflict, setConflict] = React.useState(null)
       const [dialog, setDialog] = React.useState(null)
@@ -2159,6 +2174,29 @@ window.__ModuleLoader__.load({
       }
 
       /**
+       * Open the draft panel, turning full-text editing on first if asked.
+       *
+       * The twin of `openSourceAfterConfirm`: a draft is written with
+       * `replace-document`, which the store refuses with `full_text_disabled`
+       * while the switch is off, so the entry has to lead somewhere. Refusing to
+       * write the setting is reported in the panel's banner, because the
+       * confirmation is the thing that just closed.
+       */
+      async function openDraftAfterConfirm(withFlag) {
+        if (withFlag) {
+          const ok = await setFlag('ui.allowFullTextEdit', true)
+          if (!ok) {
+            setConfirmDraft(false)
+            setError(t('draft.cannotEnableFullText'))
+            return
+          }
+          runtime.flags.allowFullTextEdit = true
+        }
+        setConfirmDraft(false)
+        openDraft()
+      }
+
+      /**
        * One action against the store, with the panel's shared error handling.
        *
        * `payload.key` names the project the write belongs to; everything else is
@@ -2167,10 +2205,21 @@ window.__ModuleLoader__.load({
        * write — the file, the project, the backup it produced and the revision it
        * left behind — rather than to whatever document happens to be on screen
        * ten seconds later.
+       *
+       * `options.owned` says the caller renders its own failure inside a modal.
+       * The banner is in the normal flow with no z-index while a modal mask is
+       * `position:fixed; z-index:55`, so a refusal written there during a dialog
+       * is a refusal nobody can read or dismiss. It also keeps `conflict` out of
+       * the global dialog: a modal that owns the failure owns its conflict too,
+       * which is what stops two masks stacking at the same z-index.
+       *
+       * @param {object} payload
+       * @param {{ owned?: boolean }} [options]
        */
-      async function act(payload) {
+      async function act(payload, options = {}) {
+        const owned = options.owned === true
         setBusy(true)
-        setError('')
+        if (!owned) setError('')
         const key = payload.key ?? selected?.key ?? effectiveKey
         const body = { ...payload }
         delete body.key
@@ -2199,15 +2248,17 @@ window.__ModuleLoader__.load({
             return result
           }
           if (result.code === 'conflict') {
+            if (owned) return result
             setConflict({ payload: body, body: result })
             return result
           }
+          if (owned) return result
           const detail = result.issues?.length ? t('misc.issuesDetail', { lines: result.issues.map((row) => row.line).join(', ') }) : ''
           setError(`${describeCode(result.code)}${detail}`)
           return result
         } catch (cause) {
-          setError(String(cause?.message ?? cause))
-          return null
+          if (!owned) setError(String(cause?.message ?? cause))
+          return owned ? { ok: false, code: String(cause?.message ?? cause) } : null
         } finally {
           setBusy(false)
         }
@@ -2294,18 +2345,20 @@ window.__ModuleLoader__.load({
           text,
           expectedRevision: sourceEdit.baseRevision,
           operationId: sourceEdit.operationId,
-        })
+        }, { owned: true })
         if (result?.ok) {
           setSourceEdit(null)
           flash(t('flash.documentSaved'))
           await reload()
-        } else if (result?.code === 'conflict') {
-          // Keep the draft and the text, drop the preview: the person has to
-          // reload (or re-preview) rather than write over a file they have not
-          // seen. Deleting the revision to force it through is the one thing
-          // this path must never do.
-          setSourceEdit((current) => (current ? { ...current, preview: null, message: t('history.stale') } : current))
+          return
         }
+        if (!result) return
+        // Source mode is an inline editor rather than a mask, but it still owns
+        // its failure: opening the conflict dialog on top of it would leave a
+        // second, higher layer whose exits are behind the editor. The message
+        // says the same thing the conflict dialog would.
+        const message = result.code === 'conflict' ? t('history.stale') : describeCode(result.code)
+        setSourceEdit((current) => (current ? { ...current, preview: null, message } : current))
       }
 
       async function removeSection(section) {
@@ -2451,7 +2504,14 @@ window.__ModuleLoader__.load({
         }
       }
 
-      /** Restore the previewed backup, against the revision its diff used. */
+      /**
+       * Restore the previewed backup, against the revision its diff used.
+       *
+       * The dialog owns its own failures: every refusal lands in the dialog's
+       * `message`, and the preview is dropped so the restore button goes back to
+       * disabled. The banner would be hidden behind the mask, and a button that
+       * still looks ready after a refusal invites the same click again.
+       */
       async function restoreRevision() {
         const frozen = history
         if (!frozen?.picked || !frozen.baseRevision) return
@@ -2461,14 +2521,19 @@ window.__ModuleLoader__.load({
           name: frozen.picked,
           expectedRevision: frozen.baseRevision,
           key: frozen.projectKey,
-        })
+        }, { owned: true })
         if (result?.ok) {
           setHistory(null)
           flash(t('history.restored'))
           await reload()
-        } else if (result?.code === 'conflict') {
-          setHistory((current) => (current ? { ...current, diff: null, baseRevision: null, message: t('history.stale') } : current))
+          return
         }
+        if (!result) return
+        const message = result.code === 'conflict' ? t('history.stale') : describeCode(result.code)
+        // A preview that just failed is not a preview that is ready to submit:
+        // dropping it also disables the restore button, which is the honest
+        // state — re-previewing is one click away.
+        setHistory((current) => (current ? { ...current, status: 'ready', diff: null, baseRevision: null, message } : current))
       }
 
       // ── drafts ─────────────────────────────────────────────────────────────
@@ -2541,7 +2606,14 @@ window.__ModuleLoader__.load({
         }
       }
 
-      /** Apply the previewed draft: frozen base, frozen body, one operation id. */
+      /**
+       * Apply the previewed draft: frozen base, frozen body, one operation id.
+       *
+       * Same contract as `restoreRevision`: the dialog owns its refusal. The
+       * failure is written into the dialog's own message, and the preview is
+       * dropped so apply goes back to disabled — a refused apply that still
+       * looked ready would read as "the click did nothing".
+       */
       async function applyDraft() {
         const frozen = draft
         if (!frozen || frozen.status !== 'previewed') return
@@ -2554,14 +2626,16 @@ window.__ModuleLoader__.load({
           // of writing the body twice.
           operationId: frozen.operationId,
           key: frozen.projectKey,
-        })
+        }, { owned: true })
         if (result?.ok) {
           setDraft(null)
           flash(t('draft.applied'))
           await reload()
-        } else if (result?.code === 'conflict') {
-          setDraft((current) => (current ? { ...current, status: 'editing', preview: null, message: t('history.stale') } : current))
+          return
         }
+        if (!result) return
+        const message = result.code === 'conflict' ? t('history.stale') : describeCode(result.code)
+        setDraft((current) => (current ? { ...current, status: 'editing', preview: null, baseRevision: null, message } : current))
       }
 
       /**
@@ -2573,6 +2647,13 @@ window.__ModuleLoader__.load({
        * person never saw.
        */
       function editDraft(patch) {
+        // A preview already in flight was built against the values being
+        // replaced. Bumping the generation is what makes its response get
+        // dropped: without it the late callback re-armed apply and set
+        // `baseRevision` back to the base the request was sent with, while the
+        // field on screen kept what the person had just typed — the panel then
+        // displayed one baseline and submitted another.
+        if ('body' in patch || 'base' in patch) manageSeq.current += 1
         setDraft((current) => {
           if (!current) return current
           const next = { ...current, ...patch, status: 'editing', preview: null, message: '' }
@@ -3253,7 +3334,15 @@ window.__ModuleLoader__.load({
         // History and drafts are whole-file surfaces: they need a full revision
         // to freeze as their base, and a daily note has none (it is appended to,
         // never rewritten). The profile is read-only.
-        const canManage = Boolean(panelWriteOn && state?.writeEnabled !== false && !state?.readOnly && selected && doc && target !== 'profile' && target !== 'project-daily')
+        //
+        // They are gated separately because they do not share a write. History
+        // restores a backup, which `ui.allowFullTextEdit` does not gate. A draft
+        // is applied with `replace-document`, which the store refuses with
+        // `full_text_disabled` whenever that switch is off — so the draft entry
+        // also asks for the switch, and offers the same "turn it on" confirmation
+        // source mode uses. An entry that can only fail is not an entry.
+        const canHistory = Boolean(panelWriteOn && state?.writeEnabled !== false && !state?.readOnly && selected && doc && target !== 'profile' && target !== 'project-daily')
+        const canDraft = Boolean(canHistory && flags.allowFullTextEdit)
         return h(
           'div',
           { className: 'wbm-doc-head' },
@@ -3276,11 +3365,24 @@ window.__ModuleLoader__.load({
             canSource
               ? h('button', { type: 'button', className: 'wbm-btn', onClick: openSource }, h(SourceIcon), t('editor.source'))
               : null,
-            canManage
+            canHistory
               ? h('button', { type: 'button', className: 'wbm-btn', title: t('doc.history'), onClick: openHistory }, h(HistoryIcon), t('doc.history'))
               : null,
-            canManage
-              ? h('button', { type: 'button', className: 'wbm-btn', title: t('doc.draft'), onClick: openDraft }, h(DraftIcon), t('doc.draft'))
+            canHistory
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'wbm-btn',
+                    title: t('doc.draft'),
+                    // With full-text editing off the draft would be refused by
+                    // the store, so the click asks first — exactly like source
+                    // mode — instead of opening a dialog with no way forward.
+                    onClick: canDraft ? openDraft : () => setConfirmDraft(true),
+                  },
+                  h(DraftIcon),
+                  t('doc.draft'),
+                )
               : null,
             selected && writable && target === 'project-memory'
               ? h('button', { type: 'button', className: 'wbm-btn', title: t('doc.archiveOld'), onClick: () => setDialog({ kind: 'prune' }) }, h(SparkIcon), t('doc.archiveOld'))
@@ -3435,6 +3537,19 @@ window.__ModuleLoader__.load({
               onConfirm: () => openSourceAfterConfirm(!flags.allowFullTextEdit),
             })
           : null,
+        confirmDraft
+          ? h(SourceConfirmDialog, {
+              // Reuses the source-mode confirmation verbatim: one control, one
+              // wording, one way to turn the same switch on. Only the labels
+              // differ, because "source mode" is not what the person clicked.
+              allowed: false,
+              title: t('draft.titleEnable'),
+              body: t('draft.bodyBlocked'),
+              confirmLabel: t('draft.confirmBlocked'),
+              onClose: () => setConfirmDraft(false),
+              onConfirm: () => openDraftAfterConfirm(true),
+            })
+          : null,
         dialog?.kind === 'prune'
           ? h(PruneDialog, { projectKey: effectiveKey, act, onClose: () => setDialog(null), flash, reload })
           : null,
@@ -3524,26 +3639,31 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function SourceConfirmDialog({ allowed, onClose, onConfirm }) {
+    /**
+     * Ask before turning on a whole-file write path.
+     *
+     * Used for source mode and, with the label overrides, for the draft panel:
+     * both end in `replace-document`, both are gated by the same switch, so both
+     * ask the same question. The default copy is source mode's.
+     */
+    function SourceConfirmDialog({ allowed, title, body, confirmLabel, onClose, onConfirm }) {
       return h(
         'div',
         { className: 'wbm-mask' },
         h(
           'div',
           { className: 'wbm-modal' },
-          h('div', { className: 'h' }, allowed ? t('source.title') : t('source.titleEnable')),
+          h('div', { className: 'h' }, title ?? (allowed ? t('source.title') : t('source.titleEnable'))),
           h(
             'div',
             { className: 'd' },
-            allowed
-              ? t('source.bodyAllowed')
-              : t('source.bodyBlocked'),
+            body ?? (allowed ? t('source.bodyAllowed') : t('source.bodyBlocked')),
           ),
           h(
             'div',
             { className: 'row', style: { justifyContent: 'flex-end' } },
             h('button', { type: 'button', className: 'wbm-btn', onClick: onClose }, t('common.cancel')),
-            h('button', { type: 'button', className: 'wbm-btn primary', onClick: onConfirm }, allowed ? t('source.confirmAllowed') : t('source.confirmBlocked')),
+            h('button', { type: 'button', className: 'wbm-btn primary', onClick: onConfirm }, confirmLabel ?? (allowed ? t('source.confirmAllowed') : t('source.confirmBlocked'))),
           ),
         ),
       )
