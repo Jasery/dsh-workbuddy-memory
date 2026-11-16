@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>dsh-workbuddy-memory 优化方案 v1.2 · 2026-11-13</title>
+<title>dsh-workbuddy-memory 优化方案 v1.3 · 2026-11-16</title>
 <style>
   :root{
     --bg:#0d1219; --bg2:#111823; --card:#151d29; --card2:#1a2431;
@@ -117,7 +117,7 @@
     <span class="pill a">基线版本 v0.1.4 · HEAD 48f0569</span>
     <span class="pill b">对比基线 dsh-memory-palace v1.8.5 · 081582e</span>
     <span class="pill">交付格式：单文件 HTML</span>
-    <span class="pill a">v1.2 · 背景改大白话 + 通俗导读</span>
+    <span class="pill a">v1.3 · O-06 改为按轮冻结</span>
   </div>
   <nav class="toc">
     <a href="#plain">0 一分钟读懂</a><a href="#basis">1 依据与范围</a><a href="#principle">2 四条硬原则</a><a href="#summary">3 优化项总表</a>
@@ -136,11 +136,12 @@
   </div>
   <p>为什么会有一份优化方案：发现另一个插件也在做类似的事，逐项对比之后，看清自己哪些地方还差一口气。下面 11 项，就是「差的那几口气」。</p>
   <table>
-    <thead><tr><th>问题分三堆</th><th>大白话</th><th>对应项</th></tr></thead>
+    <thead><tr><th>问题分四堆</th><th>大白话</th><th>对应项</th></tr></thead>
     <tbody>
       <tr><td>写了却看不见</td><td>记事本太厚的时候，被撕掉的恰好是最新写的那几页</td><td>O-01</td></tr>
+      <tr><td>写一次就贵一次</td><td>记忆一改，下一次请求就要把整段对话重新算一遍；同一轮写三次，就算三遍</td><td>O-06</td></tr>
       <tr><td>怕手滑、怕撞车</td><td>按钮和别人撞名、误删没人拦、多个窗口共用一份状态、并发场景没人测过</td><td>O-02 / O-03 / O-05 / O-07</td></tr>
-      <tr><td>该算清的账</td><td>开关有没有真在用、每轮花多少 token、什么时候该整理、发版怎么走、别家目录认不认、话有没有说清楚</td><td>O-04 / O-06 / O-08 / O-09 / O-10 / O-11</td></tr>
+      <tr><td>该算清的账</td><td>开关有没有真在用、注入花了多少、什么时候该整理、发版怎么走、别家目录认不认、话有没有说清楚</td><td>O-04 / O-08 / O-09 / O-10 / O-11</td></tr>
     </tbody>
   </table>
   <h3>四条底线，用大白话说</h3>
@@ -199,7 +200,7 @@
 
 <section id="summary">
   <h2>3. 优化项总表</h2>
-  <p class="sub">「原因」列是每项的一句话摘要。v1.2 起，第 5–7 节每项按<strong>背景（大白话）→ 现有问题 → 原因与取舍 → 动作 / 验收 / 回退</strong>展开；背景只讲「这块是干什么的、当初为什么这么做」，代码行号、提交记录与技术证据集中在「现有问题」和「动作 / 验收」里。成本为相对量（1 最低 / 5 最高），用于第 4 节气泡图。</p>
+  <p class="sub">「原因」列是每项的一句话摘要。v1.2 起，第 5–7 节每项按<strong>背景（大白话）→ 现有问题 → 原因与取舍 → 动作 / 验收 / 回退</strong>展开；背景只讲「这块是干什么的、当初为什么这么做」，代码行号、提交记录与技术证据集中在「现有问题」和「动作 / 验收」里。成本为相对量（1 最低 / 5 最高），用于第 4 节气泡图。<strong>v1.3 起表格按优先级排序而不是按编号</strong>：O-06 提到 P0 但编号保持不变，便于与 v1.2 对照。</p>
   <table>
     <thead><tr><th>编号</th><th>优先级</th><th>优化项</th><th>原因（一句话）</th><th>主要落点</th><th>成本</th><th>收益</th></tr></thead>
     <tbody>
@@ -208,7 +209,7 @@
       <tr><td>O-03</td><td><span class="pr p0">P0</span></td><td>三条软规则升级为硬门禁</td><td>删除、整文件重写、归档属于不可逆动作，不能靠 prompt 约束模型</td><td><code>src/write/store.js</code> / <code>src/host/routes.js</code></td><td class="num">3</td><td class="num">5</td></tr>
       <tr><td>O-04</td><td><span class="pr p1">P1</span></td><td>配置键审计与收敛</td><td>30+ 键里存在「设了不生效」的风险；本项目已有删 <code>conflictPolicy</code> 的先例</td><td><code>src/config.js</code> / CHANGELOG</td><td class="num">2</td><td class="num">3</td></tr>
       <tr><td>O-05</td><td><span class="pr p1">P1</span></td><td>会话级状态分桶 + 静默预设工具掩码</td><td>DSH 长驻多会话，全局单例状态会串台；minimal 裸测环境不该看到记忆工具</td><td>新增 <code>src/session.js</code> / <code>tools/index.js</code></td><td class="num">4</td><td class="num">3</td></tr>
-      <tr><td>O-06</td><td><span class="pr p1">P1</span></td><td>注入成本核算 + 恒定前缀拆分</td><td>规则块含随文件大小变化的动态行，<code>on-change</code> 每轮重算，前缀缓存从未核算</td><td><code>src/inject.js</code> / <code>render.js</code> / <code>tools/status.js</code></td><td class="num">3</td><td class="num">4</td></tr>
+      <tr><td>O-06</td><td><span class="pr p0">P0</span></td><td>注入刷新策略：默认按轮冻结</td><td>记忆放在 system 段且每步重算，模型每写一次记忆，下一次请求就把整段上下文作废一次；同一轮写多次还算多次</td><td><code>src/inject.js</code> / <code>cache.js</code> / <code>render.js</code> / <code>locale</code></td><td class="num">3</td><td class="num">4</td></tr>
       <tr><td>O-07</td><td><span class="pr p1">P1</span></td><td>跨会话 / 并发写入回归测试</td><td>现有 14 个测试文件没有「上次出过的串台 bug 会不会回来」这类回归</td><td><code>tests/</code></td><td class="num">2</td><td class="num">3</td></tr>
       <tr><td>O-08</td><td><span class="pr p2">P2</span></td><td>CI 校验（不自动发布）</td><td>5 个 release 全手工、无版本一致性校验；但发布必须人工确认（P-4）</td><td><code>.github/workflows/ci.yml</code></td><td class="num">2</td><td class="num">4</td></tr>
       <tr><td>O-09</td><td><span class="pr p2">P2</span></td><td>双门禁重整命令</td><td>目前只有「规则提示蒸馏」，没有可机器校验的触发条件与冷却期</td><td><code>src/tools/write.js</code> / <code>store.js</code></td><td class="num">4</td><td class="num">3</td></tr>
@@ -236,12 +237,12 @@
   </div>
   <div class="box">
     <div class="h">读图要点</div>
-    <p style="margin:0">O-01 落在「成本最低、收益最高」象限，且修的是既有 bug 而非新增能力，无条件先做。O-02 / O-03 成本低但需要动契约，紧随其后。O-05 / O-09 成本高、收益中等，放在后批次。雷达图里「数据一致性」「写入安全」「可视化编辑」三项保持 5 分不动 —— 这是本项目的护城河，优化不以牺牲它们为代价。</p>
+    <p style="margin:0">O-01 落在「成本最低、收益最高」象限，且修的是既有 bug 而非新增能力，无条件先做。O-02 / O-03 成本低但需要动契约，紧随其后。O-06 的成本与 O-01 相当、收益更长期（每次会话都省），且与 O-01 同动注入链，一起做最划算。O-05 / O-09 成本高、收益中等，放在后批次。雷达图里「数据一致性」「写入安全」「可视化编辑」三项保持 5 分不动 —— 这是本项目的护城河，优化不以牺牲它们为代价。</p>
   </div>
 </section>
 
 <section id="p0">
-  <h2>5. P0 · 立即处理（3 项）</h2>
+  <h2>5. P0 · 立即处理（4 项）</h2>
 
   <div class="item">
     <div class="hd"><span class="id">O-01</span><span class="pr p0">P0</span><span class="t">截断改为「结构行保留 + 尾部优先」</span></div>
@@ -316,10 +317,42 @@
       <div class="k">验收</div><div>不带 token 调用删除类一律返回 <code>confirmation_required</code> 且文件 mtime 不变；token 重放第二次返回 <code>duplicate</code>；<code>replaceDocument</code> 缺 revision 返回 <code>revision_required</code>。</div>
     </div>
   </div>
+
+  <div class="item">
+    <div class="hd"><span class="id">O-06</span><span class="pr p0">P0</span><span class="t">注入刷新策略：默认按轮冻结</span></div>
+    <div class="ctx">
+      <div class="h">背景（大白话）</div>
+      <p>模型服务商有个省钱机制：如果这次发过去的开头和上次一模一样，那段就直接复用、按很便宜的价格算；一旦有一个字不同，从那个字往后全部按原价重算。现在的做法是「每一步都重新拼一次提示词」，而记忆恰好放在最前面那段（system）。于是模型每写一次记忆，下一次请求就要把整段对话重新算一遍 —— 写得越多，账单越厚。</p>
+    </div>
+    <div class="prob">
+      <div class="h">现有问题</div>
+      <p><strong>求值粒度是「步」，不是「轮」</strong>：宿主每个 step 进模型前都会调一次 <code>systemPrompt.assemble()</code>（<code>dsh-agent-loop/lib/index.js:679</code>），本项目四个 section 的 <code>text(context)</code> 就在这里重跑 → <code>probeEnvironment</code> + <code>renderSections</code> 全量读盘重渲染。同一步内的重试走 <code>refreshContext()</code>，官方注释明确 section provider 不重跑（<code>dsh-system-prompt/lib/index.js:320-321</code>），但那只是同一步内。</p>
+      <p><strong>记忆位置决定失效范围</strong>：记忆在 system 段（order 200–230），只要其中一块文本变，后面「其余 section + 整段 messages」的 token 前缀全部错位，等于整条请求重新 prefill。一次 <code>memory_append</code> 触发一次；同一轮连写三次就触发三次。</p>
+      <p><strong>还有一处纯抖动源</strong>：<code>distillHint</code> 把实时字符数 <code>{chars}</code> 写进规则块（<code>render.js:115-130</code>、<code>locale/zh.json</code>），只要用户记忆超过 <code>limits.user</code>，每次写用户记忆都会改一次 system 文本 —— 内容没实质变化，前缀照样作废。</p>
+      <p><strong>没有度量，也没有中间档</strong>：<code>memory_status</code> 只有 <code>Math.min(chars, limit)</code> 的推断值（<code>status.js:86</code>），看不到本次装配实际拼了多少字符、哪块被截断；<code>inject.refresh</code> 只有 <code>on-change</code> / <code>first-turn</code> 两个极端 —— 一个每步都破，一个整会话冻结。</p>
+      <p><strong>触发条件与影响面</strong>：长会话 + 模型主动写记忆时最明显。system 约 10–15k token、历史 40k token 的情况下，一次写入约等于多付一个完整请求的 prefill；写 10 次就是 10 个。</p>
+    </div>
+    <div class="why">
+      <div class="h">原因与取舍</div>
+      <p><strong>三选二，没有第四个选项</strong>：「实时可见」「不累积」「不破缓存」三者只能要两个。现状是「实时 + 不累积」，代价是破缓存；全文迁 <code>context()</code> 是「实时 + 不破缓存」，代价是累积；<code>first-turn</code> 是「不累积 + 不破缓存」，代价是会话内看不到新写入。</p>
+      <p><strong>为什么否决全文迁 context</strong>：宿主用 <code>session.append(..., { surfaceOp: "append" })</code> 追加快照，旧快照不删除（<code>dsh-session/lib/index.js:193</code> 只认 <code>append</code> 与显式 replace）。写 N 次就在历史里留 N 份正文，之后每一步都带着，省下的重算会被冗余吃掉；还要重做统计口径、面板归因与跨版本测试。</p>
+      <p><strong>为什么否决「只注入索引 + 按需 memory_read」</strong>：记忆是每轮都要遵守的约定与偏好，不是低频资料。索引化后模型每轮都得读回来，token 只是从 system 挪到 tool result，还多一次工具往返。RAG 那套假设是「资料多、命中少」，记忆正好相反。</p>
+      <p><strong>为什么选按轮冻结</strong>：它只牺牲「同一轮内立刻可见」—— 而模型刚写完的内容，工具结果已经回显在它自己的上下文里，不需要再注入一遍。跨轮一定可见，同轮内多次写入被合并成一次失效。收益边界要说清：<strong>它压缩的是「同轮重复失效」，不改变「写一次破一次」的本质</strong>；如果每轮最多写一次，收益为零。</p>
+    </div>
+    <div class="kv">
+      <div class="k">动作 A</div><div>新增 <code>inject.refresh: 'turn-start'</code> 并设为默认：监听 <code>session/event</code> 的 <code>turn/start</code>（<code>dsh-agent-loop/lib/index.js:731</code>）清掉该 workspace 的冻结快照，轮内复用 <code>createFrozenStore</code>，key 沿用现有 cwd 维度。</div>
+      <div class="k">动作 B</div><div>接上 <code>createFileCache</code>（<code>cache.js:15</code>，目前只有单测引用，<code>src/</code> 无调用点）：<code>renderFileBlock</code> 的 <code>readTextSafe</code> 与 <code>distillHint</code> 的 <code>fileCharCount</code> 改走 <code>mtime + size</code> 缓存；未变更时每步只剩 stat。</div>
+      <div class="k">动作 C</div><div>把 <code>{chars}</code> 从规则块文案里去掉，改定性提示（「已超限，部分内容本会话读不到」）；具体数字只进 <code>memory_status.injectedChars</code>（按块返回实际字符数、是否截断、丢弃量，保留原 <code>user.injected</code> 兼容）。</div>
+      <div class="k">动作 D</div><div>文档补一张「三种 refresh 模式的成本模型」对照表：各自何时重算、破的是什么范围、功能代价是什么，并把「同轮写 N 次 = 1 次失效」写成明确承诺。</div>
+      <div class="k">不动的部分</div><div>不换注入通道（仍用 <code>section()</code>）、不引入第二个 LLM 调用、不改写入链。截断方向由 O-01 负责，本项只做刷新策略与度量。</div>
+      <div class="k">验收</div><div>同一轮里连续两次 <code>memory_append</code> 后，下一步装配文本与上一步<strong>逐字相同</strong>（断言 <code>renderPrompt</code> 相等）；跨轮后的首步可见新内容；未变更时读盘次数为 0（mock fs 断言只 stat）；<code>memory_status.injectedChars</code> 与实际拼接长度一致；规则块任意状态下都不含数字。</div>
+      <div class="k">回退</div><div><code>inject.refresh</code> 改回 <code>on-change</code> 即恢复逐 step 实时；动作 B / C 各自独立，可分别回退，不影响工具契约。</div>
+    </div>
+  </div>
 </section>
 
 <section id="p1">
-  <h2>6. P1 · 工程加固（4 项）</h2>
+  <h2>6. P1 · 工程加固（3 项）</h2>
 
   <div class="item">
     <div class="hd"><span class="id">O-04</span><span class="pr p1">P1</span><span class="t">配置键审计与收敛</span></div>
@@ -366,31 +399,6 @@
       <div class="k">动作</div><div>新增 <code>src/session.js</code>：按 sessionId 保存 cwd / 最近项目 / 冻结快照键；<code>registerSections</code> 与 <code>createProjectCatalog</code> 读取分桶状态。新增 <code>session.silentPresets</code>（默认空，不默认改行为），命中时用宿主工具掩码把写工具从模型可见集移除；判据缺失一律 fail-open（不静默），与对方一致。</div>
       <div class="k">前置验证</div><div>先在目标 DSH 版本上确认 <code>ctx.tools.restrict</code> / 等价 API 是否可用；不可用则退化为「工具执行时返回 <code>silent</code> 拒绝」，并在文档注明「schema 仍在可见集，非零足迹」。</div>
       <div class="k">验收</div><div>两个不同 cwd 的会话交替调用，注入块与面板项目列表互不污染；静默预设下写工具调用一律被拒。</div>
-    </div>
-  </div>
-
-  <div class="item">
-    <div class="hd"><span class="id">O-06</span><span class="pr p1">P1</span><span class="t">注入成本核算 + 恒定前缀拆分</span></div>
-    <div class="ctx">
-      <div class="h">背景（大白话）</div>
-      <p>每轮对话都要把几段文字塞进提示词里，这是要花 token 的。项目已经做了缓存，避免反复读硬盘；也有个状态查询能看到用户记忆有多大、有没有超预算。但「这一轮到底塞了多少字、哪一段被裁掉、比上一轮多花了多少」，查不到 —— 有点像家里有总电表，却看不到每台电器的用电量。</p>
-    </div>
-    <div class="prob">
-      <div class="h">现有问题</div>
-      <p><strong>度量只覆盖一个文件，且是推断值</strong>：<code>status.injected</code> 是 <code>Math.min(userChars, limits.user)</code> 算出来的配置推断，不是本次装配实际拼出的文本长度；project / rules / profile 三块各注入多少字符、是否被截断、丢了多少，全都查不到。也无法回答「这一轮比上一轮多花了多少 token」。</p>
-      <p><strong>前缀里有一段每轮可能变的内容</strong>：规则块尾部挂着随用户记忆大小变化的蒸馏提示，<code>on-change</code> 下每轮重新装配。<code>cache.js</code> 优化的是「不重复读盘」，并没有核算「system prompt 前缀能否命中缓存」；<code>first-turn</code> 与 <code>on-change</code> 的实际代价也没有对照数据。</p>
-      <p><strong>触发条件与影响面</strong>：用户记忆接近或超过 8000 字符、或规则文案改动时最明显。对比项目把最坏注入份数写进 <code>CONFIG.md:64</code>（8 条消息 ≈ 5 万字符），本项目连查询入口都没有，只能靠读代码估算。</p>
-      <p><strong>明确不是问题的一点</strong>：本项目没有采用历史投影，因此不存在对方那种「注入份数随目录数膨胀」的风险。这里要补的是可观测性，不是换通道。</p>
-    </div>
-    <div class="why">
-      <div class="h">原因与取舍</div>
-      <p>本项目四个注入块里，<code>rules</code> 块含随用户记忆文件大小变化的 <code>distillHint</code>（<code>render.js:50/115-130</code>），<code>inject.refresh</code> 默认 <code>on-change</code> 每轮重新装配。也就是说 system prompt 前缀里有一段每轮可能变化的内容，而现有度量只覆盖用户级文件大小（<code>status.js:86</code> 的 <code>Math.min(chars, limit)</code> 是推断值），不覆盖实际装配文本。对比项目 <code>projection.mjs:1-32</code> 通篇解释「把易变内容移出 system prompt，前缀缓存才永久有效」，<code>CONFIG.md:64</code> 甚至主动算出最坏注入份数 —— 哪怕它的实现有预览期 API 风险，这种成本意识本身值得学。本项目不需要改成历史投影，只需要把账算清、把恒定与动态拆开。</p>
-    </div>
-    <div class="kv">
-      <div class="k">动作 A</div><div>在 <code>memory_status</code> 已有 <code>user.injected</code> 的基础上增加 <code>injectedChars</code>：按四个块返回本次装配的实际字符数、是否被截断、截断丢了多少字符；保留原有推断字段以兼容调用方。</div>
-      <div class="k">动作 B</div><div>把 <code>rules</code> 拆成「恒定规则段」与「动态压力提示段」两个 section（order 相邻），动态段单独返回空串即可被宿主丢弃；这样文件没超限时 system prompt 前缀完全稳定。</div>
-      <div class="k">动作 C</div><div>文档补一份「每轮注入多少字符、哪些段每步在变、<code>first-turn</code> 与 <code>on-change</code> 的缓存代价」对照表，作为后续是否引入投影通道的决策依据。</div>
-      <div class="k">验收</div><div><code>memory_status</code> 返回值通过 <code>lossless()</code> 校验；规则段在文件未超限时逐字相同；新增测试断言动态段为空时该 section 返回 <code>''</code>。</div>
     </div>
   </div>
 
@@ -522,6 +530,8 @@
       <tr><td><span class="strike">用户级真源独立 / 多目录双写</span></td><td>直接违反 P-1。对方用户级用 <code>~/.deepseek-harness/MEMORY.md</code>，WorkBuddy 端改偏好 DSH 端看不到；项目级多目录双写还会导致「dsh 目录旧内容 + buddy 新内容」同时注入</td><td>无。这是定位差异，不是待优化项</td></tr>
       <tr><td><span class="strike">MEMORY.md 去掉全局锁 / 移除写入总开关</span></td><td>本项目写链（跨进程锁 → revision → 备份 → 原子写）与 <code>readOnly</code> 是信任基础；对方靠章节 stale 校验，粒度不同</td><td>无</td></tr>
       <tr><td><span class="strike">破坏性变更不迁移存量配置值</span></td><td>对方 v1.8.4 把自定义指令迁到新文件且明确不迁移存量值，用户旧配置静默丢失。本项目删键应保持宽容读取 + 明确告知</td><td>无</td></tr>
+      <tr><td><span class="strike">记忆正文迁到 runtime-context（<code>context()</code>）</span></td><td>宿主用 <code>surfaceOp: "append"</code> 追加快照，旧快照不删除（<code>dsh-session/lib/index.js:193</code>）；写 N 次就在历史里留 N 份正文，之后每一步都带着，省下的重算会被冗余吃掉。还要重做统计口径、面板归因与跨版本测试</td><td>宿主提供快照「替换」语义（replace op）并进入公开类型声明；或实测会话压缩能稳定回收旧快照</td></tr>
+      <tr><td><span class="strike">只注入索引，全文靠 <code>memory_read</code> 按需取</span></td><td>记忆是每轮都要遵守的约定与偏好，不是低频资料。索引化后模型每轮都得读回来，token 只是从 system 挪到 tool result，还多一次工具往返；RAG 假设「资料多、命中少」，记忆正好相反</td><td>单文件超过 30k 字符，且实测 80% 轮次不访问记忆；或多项目记忆混在一个文件需要按项目隔离</td></tr>
     </tbody>
   </table>
   <div class="box danger">
@@ -535,8 +545,8 @@
   <table>
     <thead><tr><th>批次</th><th>包含</th><th>为什么这样分组</th><th>批次出口</th></tr></thead>
     <tbody>
-      <tr><td><span class="pr p0">批次 1</span></td><td>O-01、O-02、O-03</td><td>三项互不依赖；O-01 修既有 bug、O-02 防共存事故、O-03 补安全边界，都是「不做会有实际损失」</td><td><code>npm test</code> 全绿；新增断言全部通过；README 共存说明上线</td></tr>
-      <tr><td><span class="pr p1">批次 2</span></td><td>O-04、O-06、O-07</td><td>O-04 先收敛配置，避免 O-06 新增 <code>injectedChars</code> 与前缀拆分时又堆键；O-07 为批次 1 的写链改动补回归</td><td>配置清单可逐键定位读取点；<code>memory_status</code> 可查注入字符数；覆盖率不低于基线</td></tr>
+      <tr><td><span class="pr p0">批次 1</span></td><td>O-01、O-02、O-03、O-06</td><td>四项互不依赖，且 O-01 与 O-06 同动 <code>render.js</code> / <code>inject.js</code>，合并改只需一轮回归。O-01 修既有 bug、O-02 防共存事故、O-03 补安全边界、O-06 修「写一次破一次」的成本结构</td><td><code>npm test</code> 全绿；新增断言全部通过；README 共存说明上线；同轮多次写入后装配文本逐字不变</td></tr>
+      <tr><td><span class="pr p1">批次 2</span></td><td>O-04、O-07</td><td>O-04 收敛配置，把 O-06 新增的 <code>refresh</code> 取值与三种模式一并写进键清单；O-07 为批次 1 的写链与注入改动补回归</td><td>配置清单可逐键定位读取点；<code>memory_status</code> 可查分块注入字符数；覆盖率不低于基线</td></tr>
       <tr><td><span class="pr p1">批次 3</span></td><td>O-05</td><td>依赖宿主工具掩码 API 的可用性验证；验证不通过就走「执行时拒绝」的降级实现，不阻塞其他批次</td><td>跨会话串台测试通过；静默预设行为有文档说明</td></tr>
       <tr><td><span class="pr p2">批次 4</span></td><td>O-08、O-11</td><td>CI 与文档都不改运行时行为，风险最低；文档需要批次 1–3 的最终结论才能写准</td><td>PR 可见测试状态；workflow 内无自动发布；README/doc 与实现一致</td></tr>
       <tr><td><span class="pr p2">批次 5</span></td><td>O-09、O-10</td><td>O-09 复用 O-03 的确认机制与现有备份链，必须后置；O-10 涉及路径解析，改动面广且收益最低</td><td>门禁拒绝路径不落盘；多目录场景只注入一份、只写一处</td></tr>
@@ -555,7 +565,7 @@
       <tr><td>契约</td><td>默认配置下 9 个工具名与 0.1.4 一致；设前缀后全部与规则文案同步</td><td>机器</td></tr>
       <tr><td>安全</td><td>删除/整文件重写/归档未确认不落盘；token 重放幂等；<code>replaceDocument</code> 缺 revision 被拒</td><td>机器</td></tr>
       <tr><td>并发</td><td>两个 cwd 交替不串台；并发写只有一个成功，另一个 <code>conflict</code>/<code>lock_timeout</code>，备份可恢复</td><td>机器</td></tr>
-      <tr><td>成本可见性</td><td><code>memory_status.injectedChars</code> 与实际注入文本长度一致；规则段未超限时逐字稳定</td><td>机器 + 手工</td></tr>
+      <tr><td>成本模型</td><td>同一轮多次写入后，下一步装配文本与上一步逐字相同；跨轮首步可见新内容；未变更时只 stat 不整读；<code>injectedChars</code> 与实际拼接长度一致</td><td>机器</td></tr>
       <tr><td>CI</td><td>workflow 中不存在 <code>npm publish</code> / Release 创建；版本不一致时失败</td><td>grep + 手工</td></tr>
       <tr><td>双端一致性</td><td>WorkBuddy 手改一条 → DSH 注入可见；DSH 写一条 → WorkBuddy 文件可见；外部改动返回 <code>conflict</code> 且有备份</td><td>手工（同一 profile 只装本项目）</td></tr>
       <tr><td>无回归</td><td>不产生第二个记忆目录；不出现第二个 <code>MEMORY.md</code> 真源；不新增依赖；不新增 LLM 调用</td><td>手工 + 依赖清单比对</td></tr>
@@ -591,7 +601,7 @@
       <tr><td>软约束不可靠</td><td>规则文案无法阻止不可逆写入（<code>locale/zh.json</code>）；对方用机器门禁 + 双重复核</td><td>O-03、O-09</td></tr>
       <tr><td>配置腐化</td><td>「说谎的开关」先例（<code>config.js:73-77</code>）；对方 v1.8.0 敢删三模式</td><td>O-04</td></tr>
       <tr><td>长驻进程并发</td><td>插件级单例状态在多会话下串台；对方四张分桶 Map + 三个串台回归测试</td><td>O-05、O-07</td></tr>
-      <tr><td>成本不透明</td><td>动态规则行每轮重算、前缀缓存未核算；对方主动量化最坏注入份数</td><td>O-06、O-11</td></tr>
+      <tr><td>成本不透明</td><td>记忆在 system 段每步重算，写一次作废一次；动态 <code>{chars}</code> 再添一处抖动源；没有中间档的刷新策略</td><td>O-06、O-11</td></tr>
       <tr><td>发布流程风险</td><td>手工发版无版本校验；但项目约定发布必须人工确认，所以只取 CI 前半段</td><td>O-08</td></tr>
       <tr><td>兼容缺口</td><td><code>.codebuddy</code> 用户看不到另一侧记忆，但双写会破坏单一真源</td><td>O-10</td></tr>
       <tr><td>产品定位</td><td>用户会靠猜在两个插件间二选一（本次连续四轮追问即为证据）</td><td>O-11</td></tr>
@@ -643,7 +653,7 @@
     {id:'O-03', n:'软规则升级硬门禁', x:3, y:5, r:18, g:'P0'},
     {id:'O-04', n:'配置键审计', x:2, y:3, r:12, g:'P1'},
     {id:'O-05', n:'会话分桶/静默掩码', x:4, y:3, r:12, g:'P1'},
-    {id:'O-06', n:'注入成本核算', x:3, y:4, r:13, g:'P1'},
+    {id:'O-06', n:'注入按轮冻结', x:3, y:4, r:15, g:'P0'},
     {id:'O-07', n:'并发回归测试', x:2, y:3, r:11, g:'P1'},
     {id:'O-08', n:'CI 校验(不发布)', x:2, y:4, r:12, g:'P2'},
     {id:'O-09', n:'双门禁重整', x:4, y:3, r:11, g:'P2'},
