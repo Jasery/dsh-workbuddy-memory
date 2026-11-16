@@ -577,3 +577,35 @@ test('a legacy file past its own limit says so without promising a core split', 
 test('backupKeep defaults to a tidy-up-sized window', () => {
   assert.equal(normalizeConfig({}).write.backupKeep, 20)
 })
+
+test('in layered mode limits.user still moves the distillation threshold it derives', () => {
+  // `limits.user` is documented as "just an on/off switch" in layered mode. It
+  // is not: `distillAbove` defaults to `2 × limits.user`, and the layered
+  // directory reads that threshold. So tuning the limit alone flips the
+  // "time to distil" sentence on the same untouched file — which is why the
+  // hint and the README have to say so instead of promising a pure switch.
+  const user = `# User\n\n## 常驻记忆\n- core\n\n${Array.from({ length: 80 }, (_, index) => `- ${'x'.repeat(60)}`).join('\n')}\n`
+  const { probe } = fixture({ project: '# Memory\n\n## 常驻记忆\n- core\n', user })
+  const render = (limitsUser) => {
+    const cfg = normalizeConfig({
+      workbuddyHome: probe.home.path,
+      inject: { mode: 'layered', coreBudget: 4000, limits: { user: limitsUser } },
+    })
+    const directory = renderSections({ cfg, probe, t }).find((item) => item.name === 'workbuddy-memory:profile')
+    return { cfg, text: directory.text }
+  }
+
+  const wide = render(8000)
+  const narrow = render(2000)
+
+  // The derivation itself: 0 means twice the limit, so the limit decides it.
+  assert.equal(wide.cfg.inject.distillAbove, 16000, '8000 derives 16000')
+  assert.equal(narrow.cfg.inject.distillAbove, 4000, '2000 derives 4000')
+  assert.ok(user.length > narrow.cfg.inject.distillAbove, `the file crosses the narrow threshold: ${user.length}`)
+  assert.ok(user.length < wide.cfg.inject.distillAbove, `and not the wide one: ${user.length}`)
+
+  // Same file, same mode, same budget: only limits.user changed.
+  assert.notEqual(wide.text, narrow.text, 'the layered output follows the derived threshold')
+  assert.doesNotMatch(wide.text, /蒸馏/, 'the wide limit leaves the file under its threshold')
+  assert.match(narrow.text, /蒸馏/, 'the narrow limit brings the distillation sentence back')
+})

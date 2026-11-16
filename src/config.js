@@ -63,10 +63,14 @@ export const Config = z.object({
       // when only the limit is tuned. Anything else is an absolute character
       // count. A number cannot express "default to twice another key" in the
       // schema, so the default is resolved in normalizeConfig instead.
+      //
+      // The threshold is read by both modes: the full-mode rules hint and the
+      // layered topic directory. Because the default follows `limits.user`,
+      // tuning that limit alone moves the threshold in layered mode too.
       distillAbove: z
         .number()
         .default(0)
-        .description('User MEMORY.md characters above which the rules ask the model to distill by topic. 0 = twice limits.user.')
+        .description('User MEMORY.md characters above which the plugin says the file is due for a by-topic distillation (layered: topic directory; full: rules). 0 = twice limits.user.')
         .volatile(),
     }),
 

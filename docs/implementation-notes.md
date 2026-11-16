@@ -267,8 +267,9 @@ L3 会带整份文件，`POST /action` 的 body 上限从 64 KB 提到 512 KB；
 - 切分：项目核心 `floor(coreBudget × 0.375)`、用户核心同样 37.5%、规则 12.5%、主题目录 + 兼容提示 12.5%（合计 100%）。
 - 核心条目是文件**前缀**：第一条放不下就停止，不会跳过它去捡后面更短的条目——跳过会让模型分不清「漏掉的」和「被删掉的」。溢出提示的槽位在任何条目落位前预留，且按最坏情况（位数最多）预留，所以加提示永远不会把块顶出预算。
 - 少放了条目时状态写成 `layered:core-over-budget(N)`，并进入 `compatibility`；`NORMAL_STATES` 之外的任何状态都算「这块不是全部」。
-- 规则块在分层下不用 `inject.limits.rules` 的长度，而是 `coreBudget × 0.125`，整行取舍；**蒸馏/超限提示只在 `inject.mode: 'full'` 下注入**（`hint = layered ? '' : …`）。判据是配置模式，不是某个文件是否退回 legacy——所以 legacy 文件跑在默认分层配置下同样没有这段提示。分层下用户记忆超限的可见性由主题目录与 `memory_status` 的 `compatibility` 承担。
-- `limits.project` / `.user` 在分层下只当开关用（`> 0` 才启用），不参与预算。
+- 规则块在分层下不用 `inject.limits.rules` 的长度，而是 `coreBudget × 0.125`，整行取舍；**规则块里的蒸馏/超限提示只在 `inject.mode: 'full'` 下注入**（`hint = layered ? '' : …`）。判据是配置模式，不是某个文件是否退回 legacy——所以 legacy 文件跑在默认分层配置下同样没有这段提示。分层下用户记忆超限的可见性由主题目录与 `memory_status` 的 `compatibility` 承担。
+- **但 `inject.distillAbove` 两种模式都生效**（M-3 起）：full 下写在规则块（`distillHint`），分层下写在主题目录（`render.js:111-114` 的 `overShare` 带 `distill` 标记 → `overShareDistill` 文案）。所以两种模式超过同一阈值都会说「该蒸馏」，区别只在提示落在哪一块。
+- `limits.project` / `.user` 在分层下只当**块上限**的开关用（`> 0` 才启用），不参与预算。但 `limits.user` 还有第二个作用：`distillAbove` 的默认值是 `2 × limits.user`（`resolveDistillAbove`），所以**分层下调小 `limits.user` 会让同一个文件更早被判为该蒸馏**。实测：同一份 5033 字符用户文件，`limits.user: 8000`（阈值 16000）只出「常驻只取核心」，`limits.user: 2000`（阈值 4000）多出「已超过蒸馏阈值……下次改动时先按主题蒸馏」。`limits.user: 0` 仍然关掉整个用户来源（`render.js:79` 先判 `> 0`，`distillAbove` 也随之变 0）。这条语义由 `tests/render.test.mjs` 的 `in layered mode limits.user still moves the distillation threshold it derives` 钉住，面板 hint 与 README 配置表按它写。
 - 主题目录的 section 名沿用 `workbuddy-memory:profile`（与画像块共名），所以状态从 `states.directory` 读，不从名字推断。
 - `inject.mode: 'full'`：每块按自己的 `limits.*` 整份渲染，UTF-16 码元计量，包装/前缀/截断提示都算在内；`prefix.length >= limit` 时**不产出任何块**，状态记 `full:too-small`（不记 `full`，否则「注入了」是谎话）。
 - 混合状态：只要有一路源退回 legacy，整体 `mode` 报 `mixed`，否则 `layered`；`full` 模式报 `full`。
@@ -332,11 +333,11 @@ operation lock（op-<hash>.lock，只有带 operationId 时）
 
 - 锁只对**协作方**有效。外部编辑器（WorkBuddy 自己的 `Edit`、任意文本编辑器）不认这把锁，只靠 revision 比对兜；同一毫秒窗口里的竞争写可能撞车，靠备份 + 写后 revision 变成「可恢复」而不是「可避免」。两个引擎同时驱动同一批文件不在支持范围（不加路径前缀做隔离）。
 - 无面板时模型只能读、搜、追加、单条编辑；归档与历史恢复必须由人在面板点。
-- `backupKeep: 0` 时破坏性改写返回 `backup_required`，普通追加仍允许。
+- `backupKeep: 0` 时破坏性改写返回 `backup_required`，普通追加仍允许。面板没有「备份保留数」控件（`write.backupKeep` 没进配置卡），所以拒绝文案指向 profile 的 `cordis.patch.yml` 的 `config:` 段，而不是一个不存在的开关。
 - 去重只在窗口内：已提交回执 24h / 2000 条，未决 100 条；过了窗口同一个 id 就是新请求。
 - `memory_status` 不估 token、不估注入字符数；`lastAssembly` 只是插件贡献（UTF-16 码元，脱敏后测量）。
 - `src/tools/status.js` 里的 `describe()`（详细探针）当前没有调用方——面板 `/state` 用的是 `routes.js` 自己的 `describe(path)`。它保留未删，`tests/` 也不覆盖它，所以覆盖率里 `status.js` 偏低（47%）。**未验证**：这段代码是否还有用途，未做决定。
-- 分层下的「超限/蒸馏提示」不再注入（见 §15.2）；用户记忆超限的可见性依赖主题目录与 `memory_status` 的兼容状态。这是有意的取舍，不是遗漏。
+- 分层下的**规则块**超限/蒸馏提示不注入（见 §15.2），但 `inject.distillAbove` 的阈值在分层下仍通过主题目录生效；`limits.user` 是它的默认基准，所以分层下调小 `limits.user` 会改变同一份文件的输出。这是有意的取舍（两个阈值都要保留），不是遗漏。
 
 ### 15.9 本轮未验证
 

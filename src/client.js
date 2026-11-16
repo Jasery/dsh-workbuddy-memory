@@ -27,6 +27,33 @@ window.__ModuleLoader__.load({
     const TAB_KIND = 'workbuddy-memory'
     const SOURCE_ACK_KEY = 'wbm:fulltext-ack'
 
+    /**
+     * The bounds `normalizeConfig` clamps `inject.coreBudget` to.
+     *
+     * The schema does **not** clamp: a stored 1000 stays 1000 in the snapshot and
+     * is turned into 4000 at run time (`config.js`, `num(inject.coreBudget,
+     * 4000, 4000, 20000)`). The control's `min`/`max` only constrain validity, so
+     * they neither stop the typing nor the blur that commits it. Rendering the
+     * stored number would therefore show 1000 while the plugin ran at 4000 — the
+     * card has to show the value in force, which is why the render site clamps
+     * with these same bounds.
+     */
+    const CORE_BUDGET_MIN = 4000
+    const CORE_BUDGET_MAX = 20000
+
+    /**
+     * The `inject.coreBudget` value the plugin will actually run with.
+     *
+     * Mirrors `num(inject.coreBudget, 4000, 4000, 20000)` in `config.js` — the
+     * same type check, rounding and bounds — so the card cannot drift from the
+     * value `normalizeConfig` derives. A non-number is not clamped to the bound,
+     * it falls back to the default, which is also what the runtime does.
+     */
+    function effectiveCoreBudget(stored) {
+      if (typeof stored !== 'number' || !Number.isFinite(stored)) return CORE_BUDGET_MIN
+      return Math.round(Math.min(Math.max(stored, CORE_BUDGET_MIN), CORE_BUDGET_MAX))
+    }
+
     // ── copy ────────────────────────────────────────────────────────────────
     //
     // Every user-visible string lives in these two dictionaries and is reached
@@ -183,9 +210,9 @@ window.__ModuleLoader__.load({
       'settings.fullText': '全文编辑',
       'settings.fullTextHint': '允许在面板里直接改整份文件。关闭后只能逐条或按小节编辑。',
       'settings.userLimit': '用户记忆上限',
-      'settings.userLimitHint': '分层模式下只决定这一路源开不开（0 = 不注入），真正的上限是下面的常驻预算。整份（full）模式与 legacy 文件才按这个字符数截断。',
+      'settings.userLimitHint': '分层模式下只决定这一路源开不开（0 = 不注入），真正的上限是下面的常驻预算；但它同时是「蒸馏阈值」的默认基准（默认 = 本值 × 2），所以调小本值会让同一个文件更早被判定该蒸馏。整份（full）模式与 legacy 文件才按这个字符数截断。',
       'settings.distillAbove': '蒸馏阈值',
-      'settings.distillAboveHint': '用户记忆超过这个字符数时，规则里会要求按主题蒸馏。只在整份（full）模式生效。0 = 上限的两倍。',
+      'settings.distillAboveHint': '用户记忆超过这个字符数时就会提示该按主题蒸馏：分层模式下写在主题目录里（带真实字数），整份（full）模式下写在规则块里。默认 0 = 用户记忆上限的两倍；分层下同样生效，把用户记忆上限设为 0 可以关掉整个用户来源。',
       'settings.projectLimit': '项目记忆上限',
       'settings.projectLimitHint': '整份（full）模式与 legacy 文件注入到上下文的最大字符数。分层模式下只决定这一路源开不开（0 = 不注入）。',
       'settings.injectMode': '注入模式',
@@ -245,7 +272,7 @@ window.__ModuleLoader__.load({
       'code.archive_capacity': '这次归档的文件太多，分批处理。',
       'code.layering_confirmation_required': '这个旧文件还没有划分「常驻记忆 / 按需主题」，直接把条目写进核心等于替用户重排记忆。请用面板的「粘贴草案」或「源码模式」整份保存一次，确认划分后再写入。',
       'code.receipt_capacity': '操作回执已满（未决 100 条或总计 2000 条），新的写入会被拒绝。已完成的回执可在 {receiptsDir} 清理；未决（applying / partial / outcome_unknown）的回执是「某次写入结果未知」的唯一证据，删之前请先人工核实。',
-      'code.backup_required': '备份保留数是 0，破坏性改写被拒绝（没有退路就不覆盖）。把「备份保留数」调到 1 以上再试；普通追加不受影响。',
+      'code.backup_required': '备份保留数是 0，破坏性改写被拒绝（没有退路就不覆盖）。请到插件配置里把 `write.backupKeep` 设为 1 以上：profile 的 cordis.patch.yml 中该条目的 `config:` 段（面板里没有这个控件），改完重载插件再试；普通追加不受影响。',
       'code.backup_name_collision': '备份文件名连续撞车，写入被拒绝。稍后重试；如果一直出现，检查备份目录是否被外部工具占满。',
       'code.archive_failed': '归档过程出错，源文件没有被移动。稍后重试同一份计划。',
       'code.rename_failed': '这个日期文件移动失败（可能被占用或权限不足），其余文件的状态见结果里的明细。',
@@ -556,9 +583,9 @@ window.__ModuleLoader__.load({
       'settings.fullText': 'Full-text editing',
       'settings.fullTextHint': 'Allow rewriting a whole file in the panel. Off leaves entry and section editing only.',
       'settings.userLimit': 'User memory limit',
-      'settings.userLimitHint': 'In layered mode this only decides whether the source is on at all (0 = off); the real ceiling is the always-on budget below. Only whole-file (full) mode and legacy files are cut at this many characters.',
+      'settings.userLimitHint': 'In layered mode this only decides whether the source is on at all (0 = off); the real ceiling is the always-on budget below. It is also the base the distillation threshold defaults to (default = this × 2), so lowering it makes the same file count as due for distillation sooner. Only whole-file (full) mode and legacy files are cut at this many characters.',
       'settings.distillAbove': 'Distillation threshold',
-      'settings.distillAboveHint': 'When user memory exceeds this many characters, the rules ask for a by-topic distillation. Whole-file (full) mode only. 0 = twice the limit.',
+      'settings.distillAboveHint': 'Past this many characters of user memory the plugin says the file is due for a by-topic distillation: in layered mode in the topic directory (with the real size), in whole-file (full) mode in the rules block. Default 0 = twice the user memory limit. It applies in layered mode too; set the user memory limit to 0 to turn the whole source off.',
       'settings.projectLimit': 'Project memory limit',
       'settings.projectLimitHint': 'Characters of the project MEMORY.md injected in whole-file (full) mode and for legacy files. In layered mode it only decides whether the source is on (0 = off).',
       'settings.injectMode': 'Injection mode',
@@ -617,7 +644,7 @@ window.__ModuleLoader__.load({
       'code.archive_capacity': 'Too many files for one archive run; do it in batches.',
       'code.layering_confirmation_required': 'This older file has no "core memory / on-demand topic" split yet, and writing entries into the core would re-arrange someone\'s memory for them. Save it once through the panel\'s draft or source mode to confirm the split, then write.',
       'code.receipt_capacity': 'The operation receipt store is full (100 unresolved or 2000 total), so new writes are refused. Finished receipts can be cleared from {receiptsDir}; unresolved ones (applying / partial / outcome_unknown) are the only evidence that some write\'s outcome is unknown, so check them before deleting.',
-      'code.backup_required': 'The backup count is 0, so a destructive rewrite is refused (no overwrite without a way back). Raise the backup count to at least 1; an ordinary append is unaffected.',
+      'code.backup_required': 'The backup count is 0, so a destructive rewrite is refused (no overwrite without a way back). Set `write.backupKeep` to at least 1 in the plugin config — the `config:` block of that entry in the profile\'s cordis.patch.yml (there is no control for it in the panel) — then reload the plugin; an ordinary append is unaffected.',
       'code.backup_name_collision': 'Backup names collided repeatedly, so the write was refused. Try again shortly; if it keeps happening, check whether the backup directory is full.',
       'code.archive_failed': 'Archiving failed and no source file was moved. Retry the same plan.',
       'code.rename_failed': 'This dated file could not be moved (in use, or not permitted). The per-file detail in the result says what happened to the rest.',
@@ -1355,11 +1382,12 @@ window.__ModuleLoader__.load({
             h(NumberField, {
               label: t('settings.coreBudget'),
               hint: t('settings.coreBudgetHint'),
-              // The schema clamps to this range, so a field that accepted 1000
-              // would silently store 4000 and look like it had worked.
-              value: inject.coreBudget ?? 4000,
-              min: 4000,
-              max: 20000,
+              // Shown clamped, because the schema does not clamp: see
+              // `effectiveCoreBudget`. A stored 1000 runs at 4000, so the field
+              // has to show 4000 rather than a number that is not in force.
+              value: effectiveCoreBudget(inject.coreBudget),
+              min: CORE_BUDGET_MIN,
+              max: CORE_BUDGET_MAX,
               disabled: !writable,
               onCommit: (next) => commit('inject.coreBudget', next),
             }),

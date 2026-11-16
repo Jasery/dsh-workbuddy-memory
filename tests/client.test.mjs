@@ -10,6 +10,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { normalizeConfig } from '../src/config.js'
+
 /** Capture the module the host would have loaded. */
 function loadClient() {
   let exported
@@ -312,7 +314,12 @@ test('the refusals with a way out say what that way is', () => {
   // backslash the shell would have to fix.
   assert.match(describeCode('receipt_capacity', { stateDir: '/home/me/.dsh/state' }), /\/home\/me\/\.dsh\/state\/receipts/)
 
+  // `backup_required` used to send people to a "backup count" control that the
+  // panel never had, so the exit was a dead end. It has to name the config key
+  // a person can actually change, not a label that does not exist.
   assert.match(describeCode('backup_required'), /backupKeep|备份/)
+  assert.match(describeCode('backup_required'), /write\.backupKeep|配置|config/)
+  assert.doesNotMatch(describeCode('backup_required'), /「备份保留数」|"backup count"/, 'no control with that name exists')
   assert.match(describeCode('plan_required'), /计划|预览/)
   assert.match(describeCode('plan_conflict'), /计划|预览/)
   assert.match(describeCode('operation_mismatch'), /操作 ID|operation/)
@@ -516,12 +523,44 @@ test('the mode is a closed choice, so a typo cannot look like it saved', () => {
   select.props.onChange({ target: { value: 'full' } })
   assert.deepEqual(calls.at(-1), ['inject.mode', 'full'], 'the mode is committed to inject.mode')
 
-  // The budget's range is on the control itself, so the browser refuses 1000
-  // before it ever reaches the schema clamp.
+  // The budget's range is on the control itself, and the card clamps what it
+  // renders to the same bounds `normalizeConfig` applies — see the out-of-range
+  // test below for why the control alone is not enough.
   const budget = walk(tree).find((node) => node.type === 'input' && node.props.type === 'number' && String(node.props.value) === '4000')
   assert.ok(budget, 'the budget field is rendered')
   assert.equal(budget.props.min, 4000)
   assert.equal(budget.props.max, 20000)
+})
+
+test('an out-of-range budget shows the value that is actually in force', () => {
+  // The schema does not clamp: a stored 1000 stays 1000 in the snapshot, and
+  // `normalizeConfig` is what turns it into 4000 at run time. So a card that
+  // rendered the stored value would show 1000 while the plugin ran at 4000 —
+  // the exact "it looked like it worked" failure the range is meant to prevent.
+  // `<input min max>` does not help: it constrains validity, not input or blur.
+  assert.equal(normalizeConfig({ inject: { coreBudget: 1000 } }).inject.coreBudget, 4000)
+  assert.equal(normalizeConfig({ inject: { coreBudget: 25000 } }).inject.coreBudget, 20000)
+
+  for (const [stored, effective] of [[1000, 4000], [25000, 20000]]) {
+    const tree = expand(
+      SettingsCard({
+        form: fakeForm(
+          snapshot({
+            value: { inject: { enabled: true, coreBudget: stored, limits: { user: 8000 } }, write: {}, search: {}, guard: {}, ui: {} },
+          }),
+        ),
+      }),
+    )
+    const budget = walk(tree).find(
+      (node) => node.type === 'input' && node.props.type === 'number' && node.props.min === 4000 && node.props.max === 20000,
+    )
+    assert.ok(budget, `the budget field is rendered for a stored ${stored}`)
+    assert.equal(
+      String(budget.props.value),
+      String(effective),
+      `a stored ${stored} is shown as the ${effective} that normalizeConfig applies`,
+    )
+  }
 })
 
 test('the user-limit hint says it only bounds the full and legacy paths', () => {
@@ -531,6 +570,21 @@ test('the user-limit hint says it only bounds the full and legacy paths', () => 
   const body = text(expand(SettingsCard({ form: fakeForm(snapshot()) })))
   assert.match(body, /分层/, 'the hint names the mode where the key does not cap the block')
   assert.match(body, /常驻预算|coreBudget/, 'the hint points at the real ceiling')
+})
+
+test('the distillation hint matches where the threshold actually applies', () => {
+  // `render.js` reads `inject.distillAbove` in the layered directory as well as
+  // in the full-mode rules, so "full mode only" was false. And because the
+  // threshold defaults to `2 × limits.user`, the limit is not a pure switch in
+  // layered mode either — the two hints have to agree with the code and with
+  // each other.
+  const body = text(expand(SettingsCard({ form: fakeForm(snapshot()) })))
+  assert.doesNotMatch(body, /只在整份|只.*full.*模式生效/, 'the threshold is not full-mode only')
+  assert.match(body, /分层/, 'the hint names both modes the threshold applies to')
+  assert.match(body, /目录|提示/, 'and says what the layered mode does with it')
+  // The derivation is stated where a person tunes the limit, not only in the
+  // threshold field: changing the limit alone moves the threshold.
+  assert.match(body, /两倍|×\s*2|x\s*2|两 倍|2 倍/, 'the default threshold is named as twice the limit')
 })
 
 test('a stored 0 for the threshold is displayed as twice the limit', () => {

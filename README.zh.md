@@ -12,8 +12,8 @@
 - **主题清单**列出其余 `##` 小节名（以及用户画像入口），模型知道有什么，但不必背着全部正文。清单被截断时会说明还有更多。
 - **预算**：`inject.coreBudget` 默认 **4000**，可设 4000–20000，单位是 **UTF-16 码元**，包装也算在内。它按 37.5% / 37.5% / 12.5% / 12.5% 分给项目核心、用户核心、固定规则、主题目录加兼容提示。包装、完整条目、代理对都算进这份额度，任何一处都不会从字符中间切断。
 - `inject.mode: 'full'` 是兼容与排障回退：每个文件按自己的 `inject.limits.*` 整份注入，和早先的版本一样。**在插件页配置卡的「注入模式」里切换**，不要去改 profile 的 YAML——见[配置](#配置)。
-  分层模式下 `inject.limits.project` / `.user` 只决定这一路源开不开（0 等于关掉），真正的上限是 `coreBudget`。一处例外值得知道：面板的「已超注入限额」标签仍按 `inject.limits.project` 比较文件大小，那是体积告警，不是在说实际注入了多少。
-- 分层模式下，文件超过自己的份额时，主题目录里会带真实字数说明（例如「用户记忆（WorkBuddy） 9903 字符，常驻只取核心，其余请按需查询」）；超过 `inject.distillAbove` 时还会说明该蒸馏了。这条提示放在主题目录里，不放进核心块：常驻文本里带字数会让每次保存都改写提示词前缀。
+  分层模式下 `inject.limits.project` / `.user` 只决定这一路源开不开（0 等于关掉），真正的上限是 `coreBudget`。两处例外值得知道：`limits.user` 同时是 `inject.distillAbove` 默认值的基准（它的两倍），调小它会让同一个文件更早被判为该蒸馏；面板的「已超注入限额」标签仍按 `inject.limits.project` 比较文件大小，那是体积告警，不是在说实际注入了多少。
+- 分层模式下，文件超过自己的份额时，主题目录里会带真实字数说明（例如「用户记忆（WorkBuddy） 9903 字符，常驻只取核心，其余请按需查询」）；超过 `inject.distillAbove` 时还会说明该蒸馏了。这条提示放在主题目录里，不放进核心块：常驻文本里带字数会让每次保存都改写提示词前缀。同一个阈值也驱动 full 模式的规则提示——两种模式超过阈值都会说「该蒸馏」，区别只在提示落在哪里。
 - 文件**没有**核心小节时，保持 legacy 兼容整份注入（按自己的 `inject.limits.*` 截断），并在 `memory_status` 里显示为 `legacy:missing_core` / `legacy:ambiguous_core` / `legacy:invalid_core` / `legacy:non_entry_content`。legacy 正文**不**计入 `coreBudget`。插件**不会自己**重排旧文件：哪条进核心、哪条留在长尾，是用户的决定，在面板里做。
 - **保守降级，以及它的代价。** 主题小节的正文只能写 `- ` 条目（加缩进 2 空格以上的续行）和空行。只要掺进别的——一句说明、一个 `###` 子标题、一段代码围栏、一行只缩进 1 个空格的续行——**整个文件**就会退回 legacy 整份注入：实测加一句说明就从 40 字符涨到 5511 字符常驻。删除核心小节同理（同一组实测里从 33 涨到 5042）。这是故意的（分不干净的就不硬分），降级也可见（`legacy:non_entry_content` / `legacy:missing_core`），但它是最容易被误认为「插件坏了」的行为：主题正文只写条目，或者接受整份文件一起进来。
 - 空核心小节是合法的，不算兼容状态：块里只有标题、没有条目。核心小节重复则视为有歧义，退回 legacy，不去猜用哪一个。
@@ -107,8 +107,8 @@ node scripts/dev-install.mjs web
 | `inject.mode` | `layered` | `full` 是兼容回退；在配置卡里切换 |
 | `inject.coreBudget` | `4000` | 分层的 UTF-16 码元预算，4000–20000；在配置卡里改 |
 | `inject.refresh` | `on-change` | `first-turn` 为每个会话冻结一份快照 |
-| `inject.limits.*` | 10000 / 2000 / 8000 / 2000 | `full` 模式与 legacy 文件的各块上限（项目 / 规则 / 用户 / 画像）；`0` 在任何模式下都关掉该块 |
-| `inject.distillAbove` | `0` → `limits.user` 的两倍 | 只在 `inject.mode: 'full'` 下生效：用户记忆超过这个字符数时，规则里会要求按主题蒸馏；一旦超过 `limits.user` 本身，规则会先给「已超注入上限、部分内容读不到」的警告 |
+| `inject.limits.*` | 10000 / 2000 / 8000 / 2000 | `full` 模式与 legacy 文件的各块上限（项目 / 规则 / 用户 / 画像）；`0` 在任何模式下都关掉该块。分层下 `limits.user` 同时决定 `inject.distillAbove` 的默认值（本值的两倍） |
+| `inject.distillAbove` | `0` → `limits.user` 的两倍 | 用户记忆超过这个字符数时就会提示该按主题蒸馏：分层模式下写在主题目录里，整份（full）模式下写在规则块里。`0` 表示取 `limits.user` 的两倍，所以分层下 `limits.user` 既决定这一路源开不开，也决定这个默认阈值；一旦超过 `limits.user` 本身，full 的规则会先给「已超注入上限、部分内容读不到」的警告 |
 | `inject.profileFile` / `inject.profileUid` | `''` | 显式指定画像文件，或按账号 uid 挑一个候选 |
 | `inject.sanitizePaths` | `true` | 注入文本里把 home 前缀换成 `~` |
 | `write.enabled` | `true` | 关掉后一切写入返回 `write_disabled` |
@@ -135,7 +135,7 @@ node scripts/dev-install.mjs web
 |---|---|---|
 | `layering_confirmation_required` | 文件里还是整份记忆，这次写入会把已有条目挪进「常驻记忆」小节下面。这个划分是用户的决定，不该由一次编辑顺带完成。 | 用面板的**粘贴草案**或**源码模式**整份保存一次，确认划分；之后写入就通了。最常见的触发方式：在一个还没划分的旧文件上新建一个叫「常驻记忆」/「Core Memory」的小节。 |
 | `receipt_capacity` | 操作回执满了（未决 100 条，或总计 2000 条），所有带 `operationId` 的写入都被拒绝——面板每次点击都算。 | 已完成的回执可以从 `<stateDir>/receipts/` 删掉（默认 `~/.dsh/workbuddy-memory/receipts/`）。**先核实未决的**：`applying` / `partial` / `outcome_unknown` 的回执是「某次写入结果未知」的唯一证据。 |
-| `backup_required` | `write.backupKeep` 是 `0`，破坏性改写因为没有退路被拒绝。 | 把备份保留数调到 1 以上。0 的时候普通追加仍然允许。 |
+| `backup_required` | `write.backupKeep` 是 `0`，破坏性改写因为没有退路被拒绝。 | 到插件配置里把 `write.backupKeep` 设为 1 以上——即 profile 的 `cordis.patch.yml` 中该条目的 `config:` 段（见[配置](#配置)）；面板里没有这个控件。0 的时候普通追加仍然允许。 |
 | `plan_required` | 归档执行没有带上预览产生的计划。 | 重新预览一次归档，再从那份预览执行。 |
 | `plan_conflict` | 计划过期了，或者预览之后日期文件集合变了。 | 重新出计划；预览之后才出现的文件故意不会被扫走。 |
 | `operation_mismatch` | 这个 `operationId` 已经属于另一个请求，所以没有重放。 | 真正的新写入换一个 id；同一个 id 只用来重试完全相同的请求。 |
