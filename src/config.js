@@ -76,8 +76,8 @@ export const Config = z.object({
       // No `conflictPolicy`: a revision mismatch is always refused. The key used
       // to offer `fail | merge | overwrite` and nothing ever read it, so a person
       // who set `overwrite` still got `fail` — a switch that lies is worse than
-      // no switch. `overwrite` is available where it is legible: the panel's
-      // conflict dialog drops `expectedRevision` for one explicit click.
+      // no switch. The panel's conflict dialog offers reload, keep-the-draft and
+      // the on-disk diff instead, deliberately without an overwrite exit.
       lockWaitMs: z.number().default(3000).volatile(),
       // Memory tidy-up is a burst of small edits, which is exactly the case that
       // burns through a short rotation. Backups are plain text, so keeping more

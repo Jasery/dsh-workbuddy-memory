@@ -1164,13 +1164,28 @@ test('a conflict during a source save is answered by the conflict dialog, not a 
     // version to pick here.
     assert.equal(shown.includes('重新选版本'), false, 'no advice to pick a version')
 
-    // The diff exit is live, not just a label: it reads the disk copy. (The rows
-    // it renders are the dialog's own state; this harness mounts one component,
-    // so what it can prove is that the click reaches the read and opens nothing
-    // else — the rows themselves are covered by the shared `diffBlock` tests.)
+    // The line the inline editor keeps after the dialog closes. This is the one
+    // surface the dialog cannot speak for: `history.stale` ("pick a version
+    // again") is the history dialog's copy and would be wrong here, so the
+    // editor has to carry `code.conflict` — the fact that the file moved on.
+    const banner = text(expand(tree))
+    assert.match(banner, /文件在你编辑期间被改过/, 'the editor banner says the file moved on')
+    assert.equal(banner.includes('重新选版本'), false, 'and never sends source mode to a version picker')
+
+    // The diff exit is live, not just a label: clicking it reads the disk copy.
+    // The count has to be a delta — this flow has already read `/content` several
+    // times (opening the project, entering source mode), so a plain `some(...)`
+    // was satisfied before the click and asserted nothing. The rows the dialog
+    // then renders are `ConflictDialog`'s own inline JSX, not `diffBlock`; the
+    // pure diff arithmetic is covered by the `lineDiff` cases in
+    // `client.test.mjs`, and this harness mounts one component, so what it can
+    // prove here is that the click reaches the read and opens nothing else.
+    const contentReads = () =>
+      calls.gets.filter((url) => url.includes('/content?') && url.includes('target=project-memory')).length
+    const readsBefore = contentReads()
     const viewDiff = walk(expand(tree)).find((node) => node.type === 'button' && text(node) === '查看磁盘差异')
     tree = await runtime.fire(viewDiff, 'onClick', MemoryOverviewPanel, {})
-    assert.ok(calls.gets.some((url) => url.includes('/content?') && url.includes('target=project-memory')), 'the diff exit asks the disk')
+    assert.equal(contentReads(), readsBefore + 1, 'the diff exit asks the disk exactly once')
     assert.equal(modalNodes(tree).length, 1, 'and it stays the only mask')
     assert.equal(onlyModalText(tree).includes('读取'), false, 'and the read did not fail')
 

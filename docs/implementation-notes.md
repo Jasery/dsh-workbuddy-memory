@@ -153,11 +153,11 @@ npm-prefix-bin=$(dirname $(which node))/node      # 换成 runtime 的 node.exe
 
 ### 12.1 `req` 是可读流，不需要宿主提供 body 解析
 
-`webServer.register({kind:'prefix'})` 的 handler 拿到的是标准 `IncomingMessage`，`req.on('data')` / `on('end')` 直接可用。所以 `/action` 自己读 body，带 64 KB 硬上限并在超限时 `req.destroy()`，不依赖任何未公开的宿主中间件。
+`webServer.register({kind:'prefix'})` 的 handler 拿到的是标准 `IncomingMessage`，`req.on('data')` / `on('end')` 直接可用。所以 `/action` 自己读 body，带硬上限并在超限时 `req.destroy()`，不依赖任何未公开的宿主中间件。上限最初是 64 KB，L3 整份文件写入把它提到 512 KB（`MAX_ACTION_BYTES`，见 §14.6）；读路由的正文上限仍是 2 MB、显示截断 256 KB（`MAX_BODY_BYTES` / `MAX_TEXT_CHARS`）。
 
 ### 12.2 状态码按「人接下来能做什么」定
 
-`conflict` → 409（重新读一遍再决定）、`read_only` / `write_disabled` / `write_actions_disabled` → 403、`no_store` / `no_revision` / `not_found` → 404、`lock_timeout` → 423，其余 400。客户端只把这些 code 翻成一句话（`describeCode`），不在 UI 里判断业务。
+`conflict` → 409（重新读一遍再决定）、`read_only` / `write_disabled` / `write_actions_disabled` / `full_text_disabled` → 403、`no_store` / `no_revision` / `not_found` → 404、`too_large` → 413、`lock_timeout` → 423，其余 400。客户端只把这些 code 翻成一句话（`describeCode`），不在 UI 里判断业务。
 
 ### 12.3 行号比文本匹配适合面板
 
@@ -167,7 +167,7 @@ npm-prefix-bin=$(dirname $(which node))/node      # 换成 runtime 的 node.exe
 
 早期版本有个 `consolidate`：把 30 天前的日期条目**原样**按 `## YYYY-MM-DD` 成节 append 进 `MEMORY.md` 再清源行。这是错的——WorkBuddy 的 30 天维护是**提示词指令**，由模型按主题**蒸馏**进 MEMORY 后**删除旧文件**，靠语义压缩控制体积；原样搬运只会撑爆 10000 字符注入限额。
 
-现已改为 `prune`（工具 `memory_prune` / 面板「归档旧日期」）：只把旧日期文件 `rename` 到 `memory/archive/`，**绝不写 MEMORY.md**。蒸馏交给模型（注入规则里写明先蒸馏再归档）。移动而非删除，原始流水可找回；`dryRun` 默认 true 先出计划。注入规则同步改为「先蒸馏进 MEMORY，再 memory_prune 归档；不要原样搬流水」。
+现已改为 `prune`：只把旧日期文件 `rename` 到 `memory/archive/`，**绝不写 MEMORY.md**。蒸馏交给模型（注入规则里写明先蒸馏再归档）。移动而非删除，原始流水可找回；`dryRun` 默认 true 先出计划。注入规则同步改为「先蒸馏进 MEMORY，再归档；不要原样搬流水」。当时还给了模型一个 `memory_prune` 工具，后来随管理工具一起撤出模型目录，入口只剩面板「归档旧日期」（见 §15.6）。
 
 ### 12.5 面板测试需要一个 hooks 运行时
 
@@ -247,3 +247,99 @@ L3 会带整份文件，`POST /action` 的 body 上限从 64 KB 提到 512 KB；
 ### 14.7 编辑默认值与二次确认
 
 `ui.allowWriteActions` 与 `ui.allowFullTextEdit` 现在默认 `true`。设置卡里把全文编辑从关到开会先弹确认；面板第一次进入源码模式也会弹一次（`sessionStorage` 记住本次浏览器会话）。两处都只是 UI 确认，真正的写入仍然经过锁、CAS、备份和账本。
+
+## 15. 分层注入与写链（2026-11-16 优化，实测）
+
+本节记录当前实现，全部结论都能在 `src/` 与 `tests/` 里找到对应代码或用例。未验证的项在 §15.9 单独列出。
+
+### 15.1 分层识别规则（`src/layers.js`）
+
+- 只认 **H2**：`## 常驻记忆` / `## Core Memory`（大小写不敏感，`toLocaleLowerCase` 比较）。代码围栏内的行不参与标题扫描，围栏用 ``` / ~~~ 配对，且只认同一种标记。
+- 核心小节必须**恰好一个**。0 个 → `legacy:missing_core`；多个 → `legacy:ambiguous_core`。
+- 核心正文按条目解析：`- ` 开头的非空行开启一条；缩进 ≥2 且非空的行是上一条的续行；其它任何非空行（散文、子标题）→ `legacy:invalid_core`。
+- 其余每个 H2 小节同样按条目解析，解析失败 → `legacy:non_entry_content`；空正文不算失败。与核心同名的第二个 H2 不重复计入主题。
+- 第一个 H2 之前的非标题、非空文本会成为一个「未分节」主题（`heading: null`），渲染时用 `t('unsectioned')` 显示。
+- 空核心正文合法：`entries: []`，`mode: 'layered'`。
+
+### 15.2 预算切分与「前缀」语义（`src/render.js`）
+
+- `coreBudget` 默认 4000，`normalizeConfig` 夹到 4000–20000。
+- 切分：项目核心 `floor(coreBudget × 0.375)`、用户核心同样 37.5%、规则 12.5%、主题目录 + 兼容提示 12.5%（合计 100%）。
+- 核心条目是文件**前缀**：第一条放不下就停止，不会跳过它去捡后面更短的条目——跳过会让模型分不清「漏掉的」和「被删掉的」。溢出提示的槽位在任何条目落位前预留，且按最坏情况（位数最多）预留，所以加提示永远不会把块顶出预算。
+- 少放了条目时状态写成 `layered:core-over-budget(N)`，并进入 `compatibility`；`NORMAL_STATES` 之外的任何状态都算「这块不是全部」。
+- 规则块在分层下不用 `inject.limits.rules` 的长度，而是 `coreBudget × 0.125`，整行取舍；**蒸馏/超限提示只在 `inject.mode: 'full'` 下注入**（`hint = layered ? '' : …`）。判据是配置模式，不是某个文件是否退回 legacy——所以 legacy 文件跑在默认分层配置下同样没有这段提示。分层下用户记忆超限的可见性由主题目录与 `memory_status` 的 `compatibility` 承担。
+- `limits.project` / `.user` 在分层下只当开关用（`> 0` 才启用），不参与预算。
+- 主题目录的 section 名沿用 `workbuddy-memory:profile`（与画像块共名），所以状态从 `states.directory` 读，不从名字推断。
+- `inject.mode: 'full'`：每块按自己的 `limits.*` 整份渲染，UTF-16 码元计量，包装/前缀/截断提示都算在内；`prefix.length >= limit` 时**不产出任何块**，状态记 `full:too-small`（不记 `full`，否则「注入了」是谎话）。
+- 混合状态：只要有一路源退回 legacy，整体 `mode` 报 `mixed`，否则 `layered`；`full` 模式报 `full`。
+
+### 15.3 会话快照作用域（`src/inject.js`）
+
+- 四个 section provider 共用一次 `stateFor(context)`：
+  - `on-change`（默认）：`perAssembly` 是 `WeakMap<context, state>`，一次装配算一次；提交事件或 `invalidate()` 会换掉整张表（`generation += 1`）。
+  - `first-turn`：`firstTurn` 是 `WeakMap<session, {cwd, generation, configSignature, state}>`。**按会话对象**冻结，不是按 cwd——同一项目的另一个会话读到的是文件此刻的样子，这正是「刚改完模型还读旧内容」的成因。
+- 文件内容走 `createFileCache()`（有界 64 文件 / 8 MB / 单文件 2 MB，按 `mtime+ctime+size` 失效，读后再 stat 一次，不一致就放弃这次快照）。提交事件会 `invalidate(path)` 对应文件并 bump generation。
+- `lastAssembly(session)` 只在 `generation` 与 `configSignature` 都还一致时返回，且带 `measuredAs: 'plugin-contribution'`。它是本插件的贡献（UTF-16 码元），不是宿主最终提示词，也不是 token；`memory_status` 的描述里写明这一点。
+
+### 15.4 写入链锁序（`src/write/store.js`、`src/write/fslock.js`）
+
+固定顺序，任何新入口都必须照此排队，否则会死锁或丢更新：
+
+```
+operation lock（op-<hash>.lock，只有带 operationId 时）
+  → receipts 事务锁（<stateDir>/locks/receipts.lock）
+    → 文件锁（pathKey 派生，Windows 下 identity() 折叠大小写与分隔符）
+      → CAS（expectedRevision 比对）
+        → transform / prepare（纯内存）
+        → 备份（独占创建，时间 + randomUUID）
+          → 回执 applying（必须在破坏性动作**之前**落盘）
+            → 原子替换（同目录临时文件 + rename）
+              → 写后读回校验（revision 必须等于计划值）
+```
+
+归档（`prune`）的锁序是：operation → receipts → archive 目录锁 → 按日期排序的源文件锁（全部取完再动任何一个文件）。所有事件（`onCommit`）都在锁释放之后发出，监听器抛错或 reject 不会改变写入结果。
+
+### 15.5 回执状态机与 ABA 保守策略（`src/write/receipts.js`）
+
+- 状态：`applying` → `committed` / `partial` / `outcome_unknown`。只有 `committed` 会过期（24h）；`applying` / `partial` / `outcome_unknown` 属于未决，永远保留、计入未决上限（100）。
+- 上限：总记录 2000 条、未决 100 条、单条 1 MB。到达上限时**拒绝新操作**，不删未决记录腾位；结构不合法的回执同样按未决计（删掉一个含义不明的记录可能删掉唯一证据）。
+- 读、过期清扫、容量准入、写入都在同一把跨进程锁内完成，所以两个进程不会同时看到「还剩最后 1 个未决槽」。
+- 重放：带同一个 `operationId` 且指纹一致时，`committed` 直接返回原结果 + `duplicate: true`；`applying` 则比较磁盘 revision：
+  - 等于记录的 `after` → 认定是崩溃前那次提交，补记 `committed`（补记失败则如实报 `outcome_unknown` + `committed: true`）。
+  - 等于记录的 `before` → **保守拒绝**：文件可能被改到 `after` 又改回来，无法证明写入没跑过，于是把回执标成 `outcome_unknown` 并返回 `outcome_unknown`（`reason: applying_unverified`）。这就是 ABA 的取舍：宁可让人来判，不自动重做。
+  - 两者都不是 → 同样 `outcome_unknown`。
+- 指纹 = `{action, 规范化后的目标路径集合, 请求体（键排序）}` 的 hash。所以同一个 id 用在别的目标或别的请求上是 `operation_mismatch`，不会返回另一个写入的结果。
+- 无 `operationId` 的调用不写回执，也就没有回执级去重（CAS 仍在）。`operationLog: false` 只关掉统计台账，不影响回执。
+
+### 15.6 归档计划绑定与 partial 恢复（`src/write/archive.js`、`store.prune`）
+
+- 预览是纯内存：计划存在进程内，最多 100 份、TTL 10 分钟、单次最多 1000 个文件；**不创建** state 目录、archive 目录或回执。
+- 执行必须有 `operationId`（否则 `operation_required`）、有 `planId`（否则 `plan_required`）、有非空日期列表。计划绑定 `canonicalPath(projectDir)`、日期集合与每个候选的 revision；`plan_conflict` 的 reason 区分 `project` / `expired` / `unknown_date` / `changed` / `missing`。
+- 第一批移动前把 manifest（每个日期 + 目标路径 + 状态）写进回执 `applying`；之后每个文件的状态变化都更新回执。回执 update 失败立刻停手并返回 `partial`（带已移动/失败清单），绝不继续移动。
+- 重放按 manifest 逐项判定，而不是重新枚举：`moved` 项复查目标 hash；源和目标都存在、或都不存在 → `outcome_unknown`（不猜）；只有目标存在且 hash 对得上 → 认定已移动。全部成功才 `committed`，有失败则 `partial` 并保留可重试的 manifest。
+- 最终状态写入失败时绝不报 `ok`：`outcome_unknown` 或 `partial`，且把文件变更事件照样发出去。
+- 已知取舍：归档不写 MEMORY.md，也不提供模型侧入口；归档没有配套的一键「移回」——原始流水在 `memory/archive/` 里，人工可取回。
+
+### 15.7 五个模型工具与 UI 承接
+
+- 注册集合固定为 `memory_status` / `memory_read` / `memory_search` / `memory_append` / `memory_edit`。`search.enabled: false` 时 `memory_search` 整个不注册；已撤的四个工具（`memory_prune`、`memory_replace_section`、`memory_list_revisions`、`memory_restore`）没有任何别名空壳。
+- 所有工具结果过一层 `lossless()`：`undefined` → `null`，非有限数 → `null`，`-0` → `null`。宿主对 tool result 做 lossless 快照，任一非法值会判整份非法，而写入此时已经落盘——所以兜底放在注册处而不是各工具里。
+- 面板承接（`POST /workbuddy-memory/action` + `GET /state|/content|/revisions|/revision`）：`add`/`edit`/`remove`/`replace-section`/`replace-document`/`remove-section`/`restore`/`prune`。请求走宿主信任栅栏 `connection.requestRejection`（拿不到该服务时降级为本地 origin 检查），`/action` 还要求 `application/json`。
+- 面板与工具共用同一个 `store` 实例，所以两条路径在同一把锁上排队；`ui.allowWriteActions` 是面板写操作的总开关，`ui.allowFullTextEdit` 单独管整份文件写（`replace-document` 与草案）。
+- 冲突出口只有三条（重载 / 保留草稿 / 查看磁盘差异），没有「覆盖」。恢复（`restore`）必须带当前 revision，且会先把当前文件备份一次，所以恢复本身也可撤销。
+
+### 15.8 已知限制
+
+- 锁只对**协作方**有效。外部编辑器（WorkBuddy 自己的 `Edit`、任意文本编辑器）不认这把锁，只靠 revision 比对兜；同一毫秒窗口里的竞争写可能撞车，靠备份 + 写后 revision 变成「可恢复」而不是「可避免」。两个引擎同时驱动同一批文件不在支持范围（不加路径前缀做隔离）。
+- 无面板时模型只能读、搜、追加、单条编辑；归档与历史恢复必须由人在面板点。
+- `backupKeep: 0` 时破坏性改写返回 `backup_required`，普通追加仍允许。
+- 去重只在窗口内：已提交回执 24h / 2000 条，未决 100 条；过了窗口同一个 id 就是新请求。
+- `memory_status` 不估 token、不估注入字符数；`lastAssembly` 只是插件贡献（UTF-16 码元，脱敏后测量）。
+- `src/tools/status.js` 里的 `describe()`（详细探针）当前没有调用方——面板 `/state` 用的是 `routes.js` 自己的 `describe(path)`。它保留未删，`tests/` 也不覆盖它，所以覆盖率里 `status.js` 偏低（47%）。**未验证**：这段代码是否还有用途，未做决定。
+- 分层下的「超限/蒸馏提示」不再注入（见 §15.2）；用户记忆超限的可见性依赖主题目录与 `memory_status` 的兼容状态。这是有意的取舍，不是遗漏。
+
+### 15.9 本轮未验证
+
+- 只在 Windows 11 + Node 24.14.0 上跑过；Linux 与 Node 20 未运行，不能宣称跨平台通过。
+- 未在本机真实 DSH profile 上做 live UI 复验（不安装 profile、不动真实记忆是用户本轮的约束），面板行为由 `tests/panel.test.mjs`（真实组件 + 桩 React + 桩 fetch）验证。
+- 未测最低宿主版本（0.2.0）与新宿主的组合；未测实际模型费用，不提供「省了多少 token」的承诺——分层的收益无法在没有真实 LLM 计费的实验里量化。
