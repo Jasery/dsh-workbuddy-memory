@@ -1,6 +1,6 @@
 /** Small filesystem helpers shared by the probe, the snapshot cache and the tools. */
 
-import { accessSync, closeSync, constants, openSync, readFileSync, readSync, statSync } from 'node:fs'
+import { accessSync, closeSync, constants, fstatSync, openSync, readSync, statSync } from 'node:fs'
 
 /** `stat` that reports failure instead of throwing. */
 export function statSafe(path) {
@@ -27,6 +27,21 @@ export function isWritable(path) {
 /**
  * Read a UTF-8 file, reporting rather than throwing.
  *
+ * With `maxBytes`, the read is bounded at the descriptor itself: whatever the
+ * first `stat` claimed, at most `maxBytes` are ever allocated or read, and one
+ * probe byte after the cap tells whether the file continues. The old path chose
+ * "bounded" from a stat taken before the read, so a file that grew in between
+ * was loaded in full under a cap that promised otherwise.
+ *
+ * The caller also learns whether the file was stable during the read. A file
+ * that changed below the cap yields `ok: false, error: 'changed'` instead of a
+ * snapshot nobody can safely hash; a file that reached the cap stays
+ * `truncated: true` so a reader can refuse it without trusting a prefix.
+ *
+ * Without `maxBytes` this is a snapshot read of the size seen on the open
+ * descriptor, which is what write callers want: a torn read can only produce a
+ * revision that conflicts, never one that matches the rewritten file.
+ *
  * @param {string} path - absolute path.
  * @param {{ maxBytes?: number }} [options]
  * @returns {{ ok: boolean, text: string, bytes: number, mtimeMs: number, truncated: boolean, error?: string }}
@@ -34,43 +49,85 @@ export function isWritable(path) {
 export function readTextSafe(path, options = {}) {
   const empty = { ok: false, text: '', bytes: 0, mtimeMs: 0, truncated: false }
   if (!path) return { ...empty, error: 'no_path' }
-  try {
-    const stat = statSync(path)
-    if (!stat.isFile()) return { ...empty, error: 'not_a_file' }
-    const maxBytes = options.maxBytes
-    const bounded = typeof maxBytes === 'number' && maxBytes > 0 && stat.size > maxBytes
 
-    // Read at most `maxBytes` from the descriptor. The old path loaded the whole
-    // file and sliced the decoded string, so a 2 MiB "cap" still allocated the
-    // entire file — on a memory file that is exactly the case the cap exists for.
-    let text = bounded ? readHead(path, maxBytes) : readFileSync(path, 'utf8')
-    return { ok: true, text, bytes: stat.size, mtimeMs: stat.mtimeMs, truncated: bounded }
+  const maxBytes = options.maxBytes
+  const bounded = typeof maxBytes === 'number' && Number.isFinite(maxBytes) && maxBytes > 0
+  const cap = bounded ? Math.floor(maxBytes) : 0
+
+  let fd
+  try {
+    fd = openSync(path, 'r')
+    const before = fstatSync(fd)
+    if (!before.isFile()) return { ...empty, error: 'not_a_file' }
+
+    if (!bounded) {
+      const buffer = readBytes(fd, before.size)
+      return {
+        ok: true,
+        text: decodeUtf8Prefix(buffer),
+        bytes: before.size,
+        mtimeMs: before.mtimeMs,
+        truncated: false,
+      }
+    }
+
+    const buffer = readBytes(fd, cap)
+    let truncated = before.size > cap
+    if (!truncated && buffer.length === cap) {
+      // One byte past the cap is enough to know the file did not end there. It
+      // is never decoded, so no unread content leaks into the returned text.
+      truncated = readSync(fd, Buffer.allocUnsafe(1), 0, 1, cap) > 0
+    }
+
+    const after = fstatSync(fd)
+    const changed = after.size !== before.size || after.mtimeMs !== before.mtimeMs
+    if (changed && !truncated) {
+      return {
+        ok: false,
+        text: '',
+        bytes: after.size,
+        mtimeMs: after.mtimeMs,
+        truncated: false,
+        error: 'changed',
+      }
+    }
+
+    return {
+      ok: true,
+      text: decodeUtf8Prefix(buffer),
+      bytes: after.size,
+      mtimeMs: after.mtimeMs,
+      truncated,
+    }
   } catch (error) {
     return { ...empty, error: error?.code ?? String(error) }
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd)
+      } catch {
+        // A failed close must not replace the read result.
+      }
+    }
   }
 }
 
 /**
- * Read the first `maxBytes` bytes and drop a trailing incomplete UTF-8 sequence.
+ * Read at most `limit` bytes from `fd`, stopping at the first short read.
  *
- * @param {string} path
- * @param {number} maxBytes
- * @returns {string}
+ * @param {number} fd
+ * @param {number} limit
+ * @returns {Buffer}
  */
-function readHead(path, maxBytes) {
-  const buffer = Buffer.allocUnsafe(maxBytes)
-  const fd = openSync(path, 'r')
+function readBytes(fd, limit) {
+  const buffer = Buffer.allocUnsafe(limit)
   let total = 0
-  try {
-    while (total < maxBytes) {
-      const read = readSync(fd, buffer, total, maxBytes - total, total)
-      if (read <= 0) break
-      total += read
-    }
-  } finally {
-    closeSync(fd)
+  while (total < limit) {
+    const read = readSync(fd, buffer, total, limit - total, total)
+    if (read <= 0) break
+    total += read
   }
-  return decodeUtf8Prefix(buffer.subarray(0, total))
+  return buffer.subarray(0, total)
 }
 
 /**

@@ -1,7 +1,8 @@
 /** The six memory tools, exercised through their real definitions. */
 
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import fs, { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -606,6 +607,90 @@ test('memory_read refuses a 2 MiB target instead of hashing a fragment', async (
   assert.equal(result.revision, null)
   assert.equal(result.writable, false)
   assert.equal(result.bytes, 2 * 1024 * 1024 + 1)
+})
+
+/** See tests/paths.test.mjs: patch `node:fs` so the race is not timing-based. */
+function patchFs(overrides) {
+  const saved = {}
+  for (const [name, replacement] of Object.entries(overrides)) {
+    saved[name] = fs[name]
+    fs[name] = replacement
+  }
+  syncBuiltinESMExports()
+  return () => {
+    for (const [name, original] of Object.entries(saved)) fs[name] = original
+    syncBuiltinESMExports()
+  }
+}
+
+test('memory_read refuses a stale small stat instead of hashing a fragment', async () => {
+  const { home, tools, exec } = fixture()
+  const target = join(home, 'MEMORY.md')
+  const grown = 2 * 1024 * 1024 + 16
+  writeFileSync(target, 'a'.repeat(grown), 'utf8')
+
+  const realStatSync = fs.statSync
+  // The file is already large; the pre-check still sees the old 16 bytes. The
+  // read itself must notice and refuse, not hash the first 2 MiB.
+  const restore = patchFs({
+    statSync(path, ...rest) {
+      const real = realStatSync(path, ...rest)
+      if (String(path) !== target) return real
+      return { size: 16, mtimeMs: real.mtimeMs, isFile: () => true, isDirectory: () => false }
+    },
+  })
+
+  try {
+    const body = await tools.read.execute({ target: 'user-memory' }, exec)
+    assert.equal(body.ok, false)
+    assert.equal(body.code, 'too_large')
+    assert.equal(body.revision, null)
+    assert.equal(body.writable, false)
+    assert.equal(body.bytes, grown)
+
+    const only = await tools.read.execute({ target: 'user-memory', sectionsOnly: true }, exec)
+    assert.equal(only.code, 'too_large')
+    assert.equal(only.revision, null)
+  } finally {
+    restore()
+  }
+})
+
+test('memory_read reports a conflict when the file changes during the read', async () => {
+  const { home, tools, exec } = fixture()
+  const target = join(home, 'MEMORY.md')
+  writeFileSync(target, '- a\n', 'utf8')
+  const realReadSync = fs.readSync
+
+  let changedOnce = false
+  const restore = patchFs({
+    readSync(fd, buffer, offset, length, position) {
+      if (!changedOnce) {
+        changedOnce = true
+        appendFileSync(target, '- b\n')
+      }
+      return realReadSync(fd, buffer, offset, length, position)
+    },
+  })
+
+  try {
+    const result = await tools.read.execute({ target: 'user-memory' }, exec)
+    assert.equal(result.ok, false)
+    assert.equal(result.code, 'read_conflict')
+    assert.equal(result.revision, null)
+    assert.equal(result.writable, false)
+  } finally {
+    restore()
+  }
+})
+
+test('memory_read refuses an offset inside a surrogate pair', async () => {
+  const { home, tools, exec } = fixture()
+  writeFileSync(join(home, 'MEMORY.md'), '😀😀', 'utf8')
+
+  const result = await tools.read.execute({ target: 'user-memory', offset: 1 }, exec)
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'bad_offset')
 })
 
 test('memory_read returns a single user profile with the uid from its directory', async () => {

@@ -18,6 +18,20 @@ const MAX_READ_BYTES = 2 * 1024 * 1024
 const DEFAULT_LIMIT = 20000
 const MAX_LIMIT = 200000
 
+/** Refusal shared by the pre-check and the post-read check. */
+function tooLargeResult(path, bytes) {
+  return {
+    ok: false,
+    code: 'too_large',
+    path,
+    bytes,
+    limitBytes: MAX_READ_BYTES,
+    revision: null,
+    writable: false,
+    hint: 'open the file outside the tool; a revision computed from a partial read would allow the write to destroy the rest',
+  }
+}
+
 /**
  * Targets a read may name.
  *
@@ -57,13 +71,16 @@ function resolveLimit(value) {
  * can continue exactly where this page stopped. When the limit would cut an
  * emoji in half the page gives up one unit; when the very first character is
  * that emoji it includes the pair instead of returning an empty page forever.
+ * An offset inside a pair is not a position the file has, so it is refused
+ * rather than silently moved: the caller's cursor would otherwise advance to a
+ * place it never asked for.
  */
 function pageText(text, requested, limitValue, t) {
   const offset = requested === undefined ? 0 : requested
   if (!Number.isInteger(offset) || offset < 0 || offset > text.length) return { error: 'bad_offset' }
+  if (offset < text.length && isLow(text.charCodeAt(offset))) return { error: 'bad_offset' }
 
-  let start = offset
-  if (start < text.length && isLow(text.charCodeAt(start))) start += 1
+  const start = offset
 
   const limit = resolveLimit(limitValue)
   let end = Math.min(start + limit, text.length)
@@ -127,21 +144,29 @@ export function readTool({ cfg, t }) {
       }
 
       const stat = statSafe(resolved.path)
-      if (stat && stat.size >= MAX_READ_BYTES) {
-        return {
-          ok: false,
-          code: 'too_large',
-          path: resolved.path,
-          bytes: stat.size,
-          limitBytes: MAX_READ_BYTES,
-          revision: null,
-          writable: false,
-          hint: 'open the file outside the tool; a revision computed from a partial read would allow the write to destroy the rest',
-        }
-      }
+      if (stat && stat.size >= MAX_READ_BYTES) return tooLargeResult(resolved.path, stat.size)
 
       const file = readTextSafe(resolved.path, { maxBytes: MAX_READ_BYTES })
-      if (!file.ok) return { ok: false, code: 'unreadable', path: resolved.path, error: file.error }
+      if (!file.ok) {
+        // A file that grew after the stat above must not be reported as a
+        // clean snapshot of what the caller is about to edit.
+        if (file.error === 'changed') {
+          return {
+            ok: false,
+            code: 'read_conflict',
+            path: resolved.path,
+            bytes: file.bytes,
+            revision: null,
+            writable: false,
+            hint: 'the file changed while it was being read; read it again before writing',
+          }
+        }
+        return { ok: false, code: 'unreadable', path: resolved.path, error: file.error }
+      }
+      // The stat above is only an early exit. The read is the authority: it
+      // knows whether it stopped at the cap. Hashing a prefix here would hand
+      // out a revision that deletes everything the read never saw.
+      if (file.truncated || file.bytes >= MAX_READ_BYTES) return tooLargeResult(resolved.path, file.bytes)
 
       const revision = contentRevision(file.text)
       const sections = parseSections(file.text).map((section) => ({

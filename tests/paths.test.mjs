@@ -17,7 +17,8 @@ import {
 import { truncateChars, truncateHead, readTextSafe } from '../src/fsx.js'
 import { redact } from '../src/render.js'
 import { pathKey } from '../src/write/fslock.js'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import fs, { appendFileSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 
 const HOME = resolve('/home/tester')
@@ -133,4 +134,81 @@ test('readTextSafe reads at most maxBytes and cuts on a UTF-8 boundary', () => {
   const whole = readTextSafe(file, { maxBytes: 99 })
   assert.equal(whole.text, text)
   assert.equal(whole.truncated, false)
+})
+
+/**
+ * Swap named `node:fs` exports for one test. `syncBuiltinESMExports` pushes the
+ * patch into the ESM bindings `src/fsx.js` already imported, so the race can be
+ * reproduced deterministically instead of hoping a timer lands in a window.
+ */
+function patchFs(overrides) {
+  const saved = {}
+  for (const [name, replacement] of Object.entries(overrides)) {
+    saved[name] = fs[name]
+    fs[name] = replacement
+  }
+  syncBuiltinESMExports()
+  return () => {
+    for (const [name, original] of Object.entries(saved)) fs[name] = original
+    syncBuiltinESMExports()
+  }
+}
+
+test('readTextSafe stays bounded when the file grows after the first stat', () => {
+  const root = mkdtempSync(join(tmpdir(), 'wbm-race-'))
+  const file = join(root, 'grow.md')
+  writeFileSync(file, 'x'.repeat(16), 'utf8')
+  const grown = 2 * 1024 * 1024 + 16
+  const realReadSync = fs.readSync
+
+  let grownOnce = false
+  const restore = patchFs({
+    readSync(fd, buffer, offset, length, position) {
+      if (!grownOnce) {
+        grownOnce = true
+        appendFileSync(file, 'y'.repeat(grown - 16))
+      }
+      return realReadSync(fd, buffer, offset, length, position)
+    },
+  })
+
+  try {
+    // Old code chose "bounded" from the 16-byte stat and then read the whole
+    // grown file; the cap has to hold no matter what the first stat said.
+    const result = readTextSafe(file, { maxBytes: 64 })
+    assert.equal(result.ok, true)
+    assert.equal(result.truncated, true)
+    assert.equal(result.bytes, grown)
+    assert.equal(Buffer.byteLength(result.text), 64)
+    assert.equal(result.text.includes('\ufffd'), false)
+  } finally {
+    restore()
+  }
+})
+
+test('readTextSafe reports a change it saw while reading, not a clean snapshot', () => {
+  const root = mkdtempSync(join(tmpdir(), 'wbm-race-'))
+  const file = join(root, 'grow-small.md')
+  writeFileSync(file, 'x'.repeat(16), 'utf8')
+  const realReadSync = fs.readSync
+
+  let grownOnce = false
+  const restore = patchFs({
+    readSync(fd, buffer, offset, length, position) {
+      if (!grownOnce) {
+        grownOnce = true
+        appendFileSync(file, '- late\n')
+      }
+      return realReadSync(fd, buffer, offset, length, position)
+    },
+  })
+
+  try {
+    const result = readTextSafe(file, { maxBytes: 1024 })
+    assert.equal(result.ok, false)
+    assert.equal(result.error, 'changed')
+    assert.equal(result.bytes, 23)
+  } finally {
+    restore()
+  }
 })
