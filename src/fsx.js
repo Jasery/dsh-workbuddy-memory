@@ -38,9 +38,13 @@ export function isWritable(path) {
  * snapshot nobody can safely hash; a file that reached the cap stays
  * `truncated: true` so a reader can refuse it without trusting a prefix.
  *
- * Without `maxBytes` this is a snapshot read of the size seen on the open
- * descriptor, which is what write callers want: a torn read can only produce a
- * revision that conflicts, never one that matches the rewritten file.
+ * Without `maxBytes` the read is still a snapshot of the size seen on the open
+ * descriptor, but it is checked: the same descriptor is f-stat'ed again after
+ * the read, and any change to size or mtime yields `ok: false, error: 'changed'`
+ * with no text. A write caller's CAS then refuses instead of hashing a prefix
+ * that happens to equal the revision it was given. The check covers changes the
+ * read itself could see; a write landing after the final `fstat` is outside what
+ * this helper can detect.
  *
  * @param {string} path - absolute path.
  * @param {{ maxBytes?: number }} [options]
@@ -62,11 +66,22 @@ export function readTextSafe(path, options = {}) {
 
     if (!bounded) {
       const buffer = readBytes(fd, before.size)
+      const after = fstatSync(fd)
+      if (after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
+        return {
+          ok: false,
+          text: '',
+          bytes: after.size,
+          mtimeMs: after.mtimeMs,
+          truncated: false,
+          error: 'changed',
+        }
+      }
       return {
         ok: true,
         text: decodeUtf8Prefix(buffer),
-        bytes: before.size,
-        mtimeMs: before.mtimeMs,
+        bytes: after.size,
+        mtimeMs: after.mtimeMs,
         truncated: false,
       }
     }

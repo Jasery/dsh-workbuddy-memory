@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import fs, { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import test from 'node:test'
@@ -93,6 +94,65 @@ test('the current revision is accepted', async () => {
   )
   assert.equal(result.ok, true)
   assert.ok(readFileSync(file, 'utf8').includes('- two'))
+  // The post-write read is the revision the caller stores. An ordinary append
+  // must return the whole file's revision, not a snapshot of a prefix.
+  assert.equal(result.revision, contentRevision(readFileSync(file, 'utf8')))
+})
+
+/**
+ * Replace one `node:fs` export for the duration of a test and push the patch to
+ * the ESM bindings `src/fsx.js` already imported, so the window is deterministic.
+ */
+function patchFs(overrides) {
+  const saved = {}
+  for (const [name, replacement] of Object.entries(overrides)) {
+    saved[name] = fs[name]
+    fs[name] = replacement
+  }
+  syncBuiltinESMExports()
+  return () => {
+    for (const [name, original] of Object.entries(saved)) fs[name] = original
+    syncBuiltinESMExports()
+  }
+}
+
+test('an append raced by an external writer is refused, not written over it', async () => {
+  const s = setup({ write: { enabled: true, backupKeep: 2 } })
+  const file = join(s.memoryDir, 'MEMORY.md')
+  const before = '## Notes\n- original\n'
+  writeFileSync(file, before, 'utf8')
+  const expectedRevision = contentRevision(before)
+  const realReadSync = fs.readSync
+
+  // The write path fstats the file at 20 bytes, then this hook appends 30 bytes
+  // before the first actual read starts. The read still asks for the old 20
+  // bytes, so a helper that trusts the first stat hands the CAS the original
+  // prefix and the stale revision "wins".
+  let raced = false
+  const restore = patchFs({
+    readSync(fd, buffer, offset, length, position) {
+      if (!raced) {
+        raced = true
+        appendFileSync(file, '- external-before-actual-read\n')
+      }
+      return realReadSync(fd, buffer, offset, length, position)
+    },
+  })
+
+  try {
+    const result = await s.store.append(
+      { target: 'project-memory', section: 'Notes', text: 'own-write', expectedRevision },
+      s.probe,
+    )
+    assert.equal(raced, true, 'the racing write happened before the first read')
+    assert.equal(result.ok, false, 'a read that saw the file change must not pass CAS')
+    assert.equal(result.error, 'changed')
+    const text = readFileSync(file, 'utf8')
+    assert.ok(text.includes('- external-before-actual-read'), 'the external append survives')
+    assert.equal(text.includes('- own-write'), false, 'the stale append did not overwrite the file')
+  } finally {
+    restore()
+  }
 })
 
 test('read-only refuses before touching anything', async () => {
