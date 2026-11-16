@@ -363,6 +363,10 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
       limits: cfg.inject.limits,
       backupKeep: cfg.write.backupKeep,
       dataFolderName: cfg.dataFolderName || '.workbuddy',
+      // Where the operation receipts live. The panel needs it to tell a person
+      // which directory to clean once `receipt_capacity` starts refusing every
+      // write; it is the same kind of read-only path as `home.path` below.
+      stateDir: stateDir || null,
       home: { path: probe.home.path, source: probe.home.source, detail: probe.home.detail },
       stores: {
         project: {

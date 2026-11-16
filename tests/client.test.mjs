@@ -257,6 +257,80 @@ test('a refusal code becomes a sentence a person can act on', () => {
   assert.equal(describeCode('weird_new_code'), 'weird_new_code')
 })
 
+test('every refusal the host can return has copy, not a bare code', async () => {
+  // The panel renders `describeCode(result.code)`, so an unmapped code shows the
+  // caller an English identifier. Two of them are on the most-travelled paths:
+  // `layering_confirmation_required` fires when someone adds a section named
+  // "Core Memory" to an unsplit file, and `receipt_capacity` fires on *every*
+  // click once the receipt store is full — a dead end nobody can read.
+  const { readdirSync, readFileSync } = await import('node:fs')
+  const { join } = await import('node:path')
+
+  const walk = (dir) =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+      entry.isDirectory() ? walk(join(dir, entry.name)) : [join(dir, entry.name)],
+    )
+
+  // `issues[].code` is a structural sub-code: the panel renders the line number
+  // of each issue, never the code itself, so these four are not top-level
+  // refusals.
+  const ISSUE_CODES = new Set(['heading', 'not_entry', 'nul', 'unclosed_fence'])
+  const found = new Set()
+  for (const file of walk('src')) {
+    if (!file.endsWith('.js') || file.endsWith('client.js')) continue
+    const source = readFileSync(file, 'utf8')
+    for (const pattern of [/code:\s*'([a-z0-9_]+)'/g, /fail\(\s*'([a-z0-9_]+)'/g, /error:\s*'([a-z0-9_]+)'/g]) {
+      for (const match of source.matchAll(pattern)) found.add(match[1])
+    }
+  }
+  // Codes that reach `fail()` through a transform's `reason` rather than a
+  // literal at the refusal site.
+  for (const reason of ['no_match', 'ambiguous', 'stale_line', 'not_an_entry', 'invalid_body', 'no_section', 'ambiguous_section', 'empty_text', 'multiline_text', 'empty_heading']) {
+    found.add(reason)
+  }
+  found.delete('read_only')
+  found.delete('truncated')
+  found.delete('changed')
+
+  const unmapped = [...found].filter((code) => !ISSUE_CODES.has(code) && describeCode(code) === code).sort()
+  assert.deepEqual(unmapped, [], `these codes would reach the panel as English identifiers: ${unmapped.join(', ')}`)
+})
+
+test('the refusals with a way out say what that way is', () => {
+  // "Failed" is not an instruction. Each of these has exactly one exit and the
+  // copy has to name it.
+  assert.match(describeCode('layering_confirmation_required'), /常驻|核心/)
+  assert.match(describeCode('layering_confirmation_required'), /草案|源码|面板/)
+
+  const capacity = describeCode('receipt_capacity', { stateDir: 'C:\\state' })
+  assert.match(capacity, /C:\\state\\receipts/, 'the receipt dead end names the directory to clean')
+  assert.match(capacity, /回执/)
+  assert.match(capacity, /未决/, 'unresolved receipts are not safe to delete blindly')
+  // Without a state directory on screen the copy still says where it lives.
+  assert.match(describeCode('receipt_capacity'), /\.dsh\/workbuddy-memory\/receipts/)
+  // A POSIX state directory keeps its own separator instead of gaining a
+  // backslash the shell would have to fix.
+  assert.match(describeCode('receipt_capacity', { stateDir: '/home/me/.dsh/state' }), /\/home\/me\/\.dsh\/state\/receipts/)
+
+  assert.match(describeCode('backup_required'), /backupKeep|备份/)
+  assert.match(describeCode('plan_required'), /计划|预览/)
+  assert.match(describeCode('plan_conflict'), /计划|预览/)
+  assert.match(describeCode('operation_mismatch'), /操作 ID|operation/)
+  assert.match(describeCode('operation_required'), /操作 ID|operation/)
+  assert.match(describeCode('operation_id_too_long'), /200/)
+  assert.match(describeCode('outcome_unknown'), /同一个|same/)
+  assert.match(describeCode('partial'), /重试|retry/)
+  assert.match(describeCode('archive_capacity'), /分批|batch/)
+  assert.match(describeCode('revision_required'), /revision/)
+  assert.match(describeCode('read_conflict'), /重新读|read/)
+  assert.match(describeCode('bad_offset'), /offset|偏移/)
+  assert.match(describeCode('profile_not_found'), /画像|profile/)
+  assert.match(describeCode('ambiguous_profile'), /profileUid|候选/)
+  assert.match(describeCode('too_large'), /256|KB|MB|太大/)
+  assert.match(describeCode('full_text_disabled'), /全文编辑/)
+  assert.match(describeCode('invalid_structure'), /结构|围栏/)
+})
+
 test('paths in the status bar keep their tail, not their depth', () => {
   assert.equal(shortPath(String.raw`C:\Users\admin\.workbuddy`), '…/admin/.workbuddy')
   assert.equal(shortPath('D:/git/x'), 'D:/git/x')
@@ -368,6 +442,95 @@ test('an empty snapshot still shows the effective defaults for the limits', () =
   // `distillAbove: 0` means "twice the limit", so the field shows 16000 — the
   // threshold actually in force. Showing the raw 0 would read as "off".
   assert.ok(numbers.includes('16000'), `the threshold shows its effective value, got ${JSON.stringify(numbers)}`)
+})
+
+test('the card exposes the injection mode and the layered budget', () => {
+  // These two keys decide what reaches the prompt by default, and `full` is the
+  // documented troubleshooting exit. A schema key with no control is reachable
+  // only by hand-editing the profile YAML — which the README tells people not
+  // to do, because the inserted entry and the card's entry then collide.
+  const tree = expand(
+    SettingsCard({
+      form: fakeForm(
+        snapshot({
+          value: {
+            inject: { enabled: true, mode: 'full', coreBudget: 6000, limits: { user: 8000 } },
+            write: {},
+            search: {},
+            guard: {},
+            ui: { allowWriteActions: true },
+          },
+        }),
+      ),
+    }),
+  )
+  const body = text(tree)
+
+  assert.match(body, /注入模式/, 'the mode control is labelled')
+  assert.match(body, /常驻预算/, 'the budget control is labelled')
+  assert.match(body, /UTF-16/, 'the budget says which unit it counts')
+  assert.match(body, /4000/, 'the budget states its range')
+  assert.match(body, /20000/, 'the budget states its upper bound')
+
+  const select = walk(tree).find((node) => node.type === 'select')
+  assert.ok(select, 'the mode is a choice, not a free-text field')
+  assert.equal(select.props.value, 'full', 'the stored mode is the one shown')
+  assert.equal(select.props.disabled, false)
+  const options = walk(select).filter((node) => node.type === 'option').map((node) => node.props.value)
+  assert.deepEqual(options, ['layered', 'full'], 'both modes are offered')
+  assert.match(text(select), /分层/)
+  assert.match(text(select), /full/)
+
+  const numbers = walk(tree)
+    .filter((node) => node.type === 'input' && node.props.type === 'number')
+    .map((node) => node.props)
+  const budget = numbers.find((props) => String(props.value) === '6000')
+  assert.ok(budget, `the budget shows its stored value, got ${JSON.stringify(numbers.map((n) => n.value))}`)
+  assert.equal(budget.min, 4000)
+  assert.equal(budget.max, 20000)
+})
+
+test('the mode is a closed choice, so a typo cannot look like it saved', () => {
+  const calls = []
+  const form = {
+    getSnapshot: () =>
+      snapshot({
+        value: {
+          inject: { enabled: true, mode: 'layered', coreBudget: 4000, limits: { user: 8000 } },
+          write: {},
+          search: {},
+          guard: {},
+          ui: { allowWriteActions: true },
+        },
+      }),
+    subscribe: () => () => {},
+    set: async (field, next) => {
+      calls.push([field, next])
+      return true
+    },
+  }
+  const tree = expand(SettingsCard({ form }))
+
+  const select = walk(tree).find((node) => node.type === 'select')
+  assert.ok(select, 'the mode is a select, not a text field')
+  select.props.onChange({ target: { value: 'full' } })
+  assert.deepEqual(calls.at(-1), ['inject.mode', 'full'], 'the mode is committed to inject.mode')
+
+  // The budget's range is on the control itself, so the browser refuses 1000
+  // before it ever reaches the schema clamp.
+  const budget = walk(tree).find((node) => node.type === 'input' && node.props.type === 'number' && String(node.props.value) === '4000')
+  assert.ok(budget, 'the budget field is rendered')
+  assert.equal(budget.props.min, 4000)
+  assert.equal(budget.props.max, 20000)
+})
+
+test('the user-limit hint says it only bounds the full and legacy paths', () => {
+  // In layered mode `limits.user` is an on/off switch: the real ceiling is
+  // coreBudget. A hint that still promised "the maximum injected characters"
+  // would be wrong on the default configuration.
+  const body = text(expand(SettingsCard({ form: fakeForm(snapshot()) })))
+  assert.match(body, /分层/, 'the hint names the mode where the key does not cap the block')
+  assert.match(body, /常驻预算|coreBudget/, 'the hint points at the real ceiling')
 })
 
 test('a stored 0 for the threshold is displayed as twice the limit', () => {

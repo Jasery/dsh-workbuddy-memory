@@ -33,9 +33,31 @@ const fileState = (block) => (block ? 'full' : 'full:too-small')
 /** Whether a source fell back to whole-file injection, which makes the mode mixed. */
 const isLegacy = (state) => String(state).startsWith('legacy:')
 
+/**
+ * A readable gloss for a compatibility state.
+ *
+ * `user=legacy:missing_core` is a state name, not an explanation: a model
+ * reading it cannot tell whether the block in front of it is whole. The gloss
+ * says what the state means for what was injected.
+ *
+ * @param {string} state
+ * @param {(key: string) => string} t
+ * @returns {string} an empty string when the state needs no gloss.
+ */
+function stateGloss(state, t) {
+  const value = String(state ?? '')
+  if (value.startsWith('legacy:')) return t('gloss.legacy')
+  if (value.startsWith('layered:core-over-budget')) return t('gloss.coreOverBudget')
+  if (value.startsWith('directory-truncated')) return t('gloss.directoryTruncated')
+  if (value === 'full:too-small') return t('gloss.tooSmall')
+  return ''
+}
+
 export function renderSections({ cfg, probe, t, readFile }) {
   const sections = []
   const states = {}
+  /** Sources that carry more than their layered share; reported in the directory. */
+  const overShare = []
   const read = readFile ?? ((path, maxBytes = 2 * 1024 * 1024) => {
     const file = readTextSafe(path, { maxBytes })
     return file.ok && !file.truncated ? file.text : ''
@@ -61,6 +83,12 @@ export function renderSections({ cfg, probe, t, readFile }) {
       const block = renderFileBlock({ label, raw, limit, sanitize, t })
       if (block) sections.push({ name: `workbuddy-memory:${key}`, order: SECTION_ORDER[key], text: block })
       states[key] = `legacy:${parsed.reason}`
+      // A legacy file is injected whole under its own limit, so it is not
+      // squeezed by `coreBudget` — but it is still cut, and a cut nobody is told
+      // about reads as a complete file. Reported against the limit it is
+      // actually cut at, with wording that does not promise a core split it
+      // does not have.
+      if (limit > 0 && raw.length > limit) overShare.push({ key, label, chars: raw.length, legacy: limit })
       return
     }
     const budget = Math.floor(cfg.inject.coreBudget * 0.375)
@@ -71,6 +99,19 @@ export function renderSections({ cfg, probe, t, readFile }) {
     // An over-budget core is not a normal state: the model has to know that the
     // entries it can read are a prefix, not the whole file.
     states[key] = core.dropped > 0 ? `layered:core-over-budget(${core.dropped})` : 'layered'
+    // The layered signal a full-mode session gets from the distillation hint,
+    // expressed as a size instead of an instruction. It goes in the directory,
+    // never in the core block: a count inside the always-on text would change
+    // the prompt on every save, and a prompt that jitters is worse than one
+    // that is slightly too quiet.
+    //
+    // Two conditions, because two different things are being promised: past the
+    // core's *share* the model is reading a subset, and past `distillAbove` the
+    // file has reached the size the plugin itself calls "time to distil".
+    const distillAbove = key === 'user' ? Number(cfg.inject.distillAbove) || 0 : 0
+    if (raw.length > budget || (distillAbove > 0 && raw.length > distillAbove)) {
+      overShare.push({ key, label, chars: raw.length, distill: distillAbove > 0 && raw.length > distillAbove })
+    }
     return parsed.topics.map((topic) => topic.heading ?? t('unsectioned'))
   }
 
@@ -113,9 +154,25 @@ export function renderSections({ cfg, probe, t, readFile }) {
     const extra = [...(projectTopics ?? []), ...(userTopics ?? []), ...profileTopics]
     // A compatibility note is a non-normal state, not only a `legacy:` one: an
     // over-budget core also means the model is reading a subset.
-    const warnings = Object.entries(states).filter(([, state]) => !NORMAL_STATES.has(state)).map(([key, state]) => `${key}=${state}`)
+    const warnings = Object.entries(states).filter(([, state]) => !NORMAL_STATES.has(state))
     const entries = []
-    if (warnings.length) entries.push(`${t('compatibility')}: ${warnings.join(', ')}`)
+    if (warnings.length) {
+      // The state name stays (it is what `memory_status` reports and what a
+      // search finds), and each distinct meaning gets one gloss — deduplicated,
+      // because two sources can fall back for the same reason and repeating the
+      // sentence would spend the budget saying the same thing twice.
+      entries.push(`${t('compatibility')}: ${warnings.map(([key, state]) => `${key}=${state}`).join(', ')}`)
+      const glosses = [...new Set(warnings.map(([, state]) => stateGloss(state, t)).filter(Boolean))]
+      for (const gloss of glosses) entries.push(`- ${gloss}`)
+    }
+    // A file larger than its layered share is the one signal a full-mode
+    // session gets from the distillation hint and a layered session otherwise
+    // loses. The count is the file's real size, so it does not move when the
+    // core is re-cut; it only changes when someone edits the file.
+    for (const item of overShare) {
+      const key = item.legacy ? 'overShareLegacy' : item.distill ? 'overShareDistill' : 'overShare'
+      entries.push(`- ${t(key, { label: item.label, chars: item.chars, limit: item.legacy ?? 0 })}`)
+    }
     if (cfg.inject.profile && cfg.inject.limits.profile > 0 && probe.profile.ambiguous) entries.push(t('ambiguousProfile'))
     // Sanitize before measuring: redaction only shortens, so the budget still
     // holds, and a home path must not reach the prompt through a topic heading.

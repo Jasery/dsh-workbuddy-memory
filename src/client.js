@@ -183,11 +183,17 @@ window.__ModuleLoader__.load({
       'settings.fullText': '全文编辑',
       'settings.fullTextHint': '允许在面板里直接改整份文件。关闭后只能逐条或按小节编辑。',
       'settings.userLimit': '用户记忆上限',
-      'settings.userLimitHint': '注入到上下文的最大字符数。超出部分本会话读不到。0 = 不注入该块。',
+      'settings.userLimitHint': '分层模式下只决定这一路源开不开（0 = 不注入），真正的上限是下面的常驻预算。整份（full）模式与 legacy 文件才按这个字符数截断。',
       'settings.distillAbove': '蒸馏阈值',
-      'settings.distillAboveHint': '用户记忆超过这个字符数时，规则里会要求按主题蒸馏。0 = 上限的两倍。',
+      'settings.distillAboveHint': '用户记忆超过这个字符数时，规则里会要求按主题蒸馏。只在整份（full）模式生效。0 = 上限的两倍。',
       'settings.projectLimit': '项目记忆上限',
-      'settings.projectLimitHint': '项目 MEMORY.md 注入到上下文的最大字符数。0 = 不注入该块。',
+      'settings.projectLimitHint': '整份（full）模式与 legacy 文件注入到上下文的最大字符数。分层模式下只决定这一路源开不开（0 = 不注入）。',
+      'settings.injectMode': '注入模式',
+      'settings.injectModeHint': '分层：少量核心常驻，其余按需查询（默认）。整份（full）：每个文件按自己的上限整份注入，是兼容与排障回退。',
+      'settings.injectModeLayered': '分层',
+      'settings.injectModeFull': '整份（full）',
+      'settings.coreBudget': '常驻预算',
+      'settings.coreBudgetHint': '分层注入的总预算，单位是 UTF-16 码元，可设 4000–20000。按 37.5% / 37.5% / 12.5% / 12.5% 分给项目核心、用户核心、固定规则与主题目录；包装也计入。',
       'settings.hostRejected': '宿主拒绝了这次修改（值不合法或已被更高层覆盖）',
       'settings.noWriteAccess': '当前连接无法写入宿主配置。请直接编辑 profile 的 cordis.patch.yml 后重载插件。',
       'settings.confirmFullText': '全文编辑会绕过条目模型，只保留结构校验。确定开启？',
@@ -237,6 +243,29 @@ window.__ModuleLoader__.load({
       'code.operation_required': '缺少操作 ID，无法安全地重试归档。',
       'code.no_revision': '这个备份已经不在列表里了，刷新后重选。',
       'code.archive_capacity': '这次归档的文件太多，分批处理。',
+      'code.layering_confirmation_required': '这个旧文件还没有划分「常驻记忆 / 按需主题」，直接把条目写进核心等于替用户重排记忆。请用面板的「粘贴草案」或「源码模式」整份保存一次，确认划分后再写入。',
+      'code.receipt_capacity': '操作回执已满（未决 100 条或总计 2000 条），新的写入会被拒绝。已完成的回执可在 {receiptsDir} 清理；未决（applying / partial / outcome_unknown）的回执是「某次写入结果未知」的唯一证据，删之前请先人工核实。',
+      'code.backup_required': '备份保留数是 0，破坏性改写被拒绝（没有退路就不覆盖）。把「备份保留数」调到 1 以上再试；普通追加不受影响。',
+      'code.backup_name_collision': '备份文件名连续撞车，写入被拒绝。稍后重试；如果一直出现，检查备份目录是否被外部工具占满。',
+      'code.archive_failed': '归档过程出错，源文件没有被移动。稍后重试同一份计划。',
+      'code.rename_failed': '这个日期文件移动失败（可能被占用或权限不足），其余文件的状态见结果里的明细。',
+      'code.operation_id_too_long': '操作 ID 超过 200 个字符。换一个短一些的 ID；面板自己生成的 ID 都很短。',
+      'code.read_conflict': '读取期间文件被改动了，这份内容不能作为写入基线。重新读一遍再改。',
+      'code.bad_offset': '分页偏移不合法：要么超出文件范围，要么落在代理对中间。改用上一页返回的 nextOffset 继续读。',
+      'code.profile_not_found': '没有找到用户画像文件（USER.md）。指定 profileUid，或让 WorkBuddy 生成一份画像。',
+      'code.unknown_target': '不认识这个目标。可选值见结果里的 targets 列表。',
+      'code.bad_target': '这个目标不能这样改写（例如日期笔记只支持追加）。换一个动作或目标。',
+      'code.bad_section': '小节名不合法：不能为空，也不能包含换行。',
+      'code.bad_date': '日期格式不对，需要 YYYY-MM-DD。',
+      'code.bad_request': '请求读不出来，重试一次；持续出现说明面板与宿主版本不匹配。',
+      'code.bad_json': '请求体不是合法 JSON。重新加载面板后再试。',
+      'code.internal': '插件内部出错，这次操作没有完成。稍后重试，持续出现请带上日志反馈。',
+      'code.method_not_allowed': '这个接口不接受该请求方法。重新加载面板后再试。',
+      'code.empty_query': '搜索关键词是空的，填一个再搜。',
+      'code.search_disabled': '检索开关是关的：到设置页打开「启用检索」。',
+      'code.no_path': '没有解析到文件路径。检查 WorkBuddy 主目录与项目记忆目录名。',
+      'code.not_a_file': '这个路径不是普通文件（可能是目录或链接）。',
+      'code.no_match': '没有找到要改的那一行：文件可能已经改过了，重新加载后再选。',
 
       // settings card, second block
       'settings.loadingConfig': '读取配置…',
@@ -527,11 +556,17 @@ window.__ModuleLoader__.load({
       'settings.fullText': 'Full-text editing',
       'settings.fullTextHint': 'Allow rewriting a whole file in the panel. Off leaves entry and section editing only.',
       'settings.userLimit': 'User memory limit',
-      'settings.userLimitHint': 'Characters injected into context. Anything past this is unreadable in the session. 0 = do not inject this block.',
+      'settings.userLimitHint': 'In layered mode this only decides whether the source is on at all (0 = off); the real ceiling is the always-on budget below. Only whole-file (full) mode and legacy files are cut at this many characters.',
       'settings.distillAbove': 'Distillation threshold',
-      'settings.distillAboveHint': 'When user memory exceeds this many characters, the rules ask for a by-topic distillation. 0 = twice the limit.',
+      'settings.distillAboveHint': 'When user memory exceeds this many characters, the rules ask for a by-topic distillation. Whole-file (full) mode only. 0 = twice the limit.',
       'settings.projectLimit': 'Project memory limit',
-      'settings.projectLimitHint': 'Characters of the project MEMORY.md injected into context. 0 = do not inject this block.',
+      'settings.projectLimitHint': 'Characters of the project MEMORY.md injected in whole-file (full) mode and for legacy files. In layered mode it only decides whether the source is on (0 = off).',
+      'settings.injectMode': 'Injection mode',
+      'settings.injectModeHint': 'Layered: a small always-on core, the rest read on demand (default). Whole file (full): every file is injected whole under its own limit — the compatibility and troubleshooting fallback.',
+      'settings.injectModeLayered': 'Layered',
+      'settings.injectModeFull': 'Whole file (full)',
+      'settings.coreBudget': 'Always-on budget',
+      'settings.coreBudgetHint': 'Total budget for layered injection, in UTF-16 code units, 4000–20000. Split 37.5% / 37.5% / 12.5% / 12.5% across the project core, the user core, the fixed rules and the topic directory; wrappers count.',
       'settings.hostRejected': 'The host refused this change (invalid value, or overridden by a higher layer)',
       'settings.noWriteAccess': 'This connection cannot write host config. Edit the profile cordis.patch.yml and reload the plugin.',
       'settings.confirmFullText': 'Full-text editing bypasses the entry model and keeps only structural checks. Turn it on?',
@@ -580,6 +615,29 @@ window.__ModuleLoader__.load({
       'code.operation_required': 'An operation id is required to retry an archive safely.',
       'code.no_revision': 'That backup is no longer in the list; refresh and pick again.',
       'code.archive_capacity': 'Too many files for one archive run; do it in batches.',
+      'code.layering_confirmation_required': 'This older file has no "core memory / on-demand topic" split yet, and writing entries into the core would re-arrange someone\'s memory for them. Save it once through the panel\'s draft or source mode to confirm the split, then write.',
+      'code.receipt_capacity': 'The operation receipt store is full (100 unresolved or 2000 total), so new writes are refused. Finished receipts can be cleared from {receiptsDir}; unresolved ones (applying / partial / outcome_unknown) are the only evidence that some write\'s outcome is unknown, so check them before deleting.',
+      'code.backup_required': 'The backup count is 0, so a destructive rewrite is refused (no overwrite without a way back). Raise the backup count to at least 1; an ordinary append is unaffected.',
+      'code.backup_name_collision': 'Backup names collided repeatedly, so the write was refused. Try again shortly; if it keeps happening, check whether the backup directory is full.',
+      'code.archive_failed': 'Archiving failed and no source file was moved. Retry the same plan.',
+      'code.rename_failed': 'This dated file could not be moved (in use, or not permitted). The per-file detail in the result says what happened to the rest.',
+      'code.operation_id_too_long': 'The operation id is longer than 200 characters. Use a shorter one; the panel\'s own ids are short.',
+      'code.read_conflict': 'The file changed while it was being read, so this content cannot serve as a write base. Read it again before editing.',
+      'code.bad_offset': 'Invalid paging offset: past the end of the file, or inside a surrogate pair. Continue from the nextOffset the previous page returned.',
+      'code.profile_not_found': 'No user profile (USER.md) was found. Set profileUid, or have WorkBuddy produce a profile.',
+      'code.unknown_target': 'Unknown target. The allowed values are listed in the result.',
+      'code.bad_target': 'This target cannot be rewritten that way (a dated note is append-only, for example). Pick another action or target.',
+      'code.bad_section': 'Invalid section name: it cannot be empty or contain a newline.',
+      'code.bad_date': 'Wrong date format; it must be YYYY-MM-DD.',
+      'code.bad_request': 'The request could not be read. Retry; if it keeps happening, the panel and the host disagree on the protocol.',
+      'code.bad_json': 'The request body is not valid JSON. Reload the panel and try again.',
+      'code.internal': 'The plugin hit an internal error and the action did not complete. Retry; if it persists, report it with the log.',
+      'code.method_not_allowed': 'This route does not accept that method. Reload the panel and try again.',
+      'code.empty_query': 'The search query is empty; type something first.',
+      'code.search_disabled': 'Search is off: turn on "Enable search" in settings.',
+      'code.no_path': 'No file path could be resolved. Check the WorkBuddy home and the project memory folder name.',
+      'code.not_a_file': 'That path is not a regular file (it may be a directory or a link).',
+      'code.no_match': 'The line to change was not found; the file may have changed. Reload and pick the row again.',
 
       'settings.loadingConfig': "Loading configuration…",
       'settings.guardSection': "Block bare writes",
@@ -1141,6 +1199,35 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * A closed set of choices.
+     *
+     * `inject.mode` has exactly two values and the schema rejects anything else,
+     * so a free-text field would let a person save a value the plugin silently
+     * normalizes back to `layered` — the control would look like it worked.
+     *
+     * @param {object} props
+     * @param {{ value: string, label: string }[]} props.options
+     */
+    function SelectField({ label, hint, value, options, disabled, onChange }) {
+      return h(
+        'label',
+        { style: S.row },
+        h('span', { style: S.label }, label),
+        hint ? h('span', { style: S.hint }, hint) : null,
+        h(
+          'select',
+          {
+            style: S.input,
+            value: value ?? '',
+            disabled,
+            onChange: (event) => onChange(event.target.value),
+          },
+          options.map((option) => h('option', { key: option.value, value: option.value }, option.label)),
+        ),
+      )
+    }
+
     function Switch({ label, hint, checked, disabled, onChange }) {
       return h(
         'label',
@@ -1253,6 +1340,28 @@ window.__ModuleLoader__.load({
               checked: inject.enabled,
               disabled: !writable,
               onChange: (next) => commit('inject.enabled', next),
+            }),
+            h(SelectField, {
+              label: t('settings.injectMode'),
+              hint: t('settings.injectModeHint'),
+              value: inject.mode ?? 'layered',
+              options: [
+                { value: 'layered', label: t('settings.injectModeLayered') },
+                { value: 'full', label: t('settings.injectModeFull') },
+              ],
+              disabled: !writable,
+              onChange: (next) => commit('inject.mode', next),
+            }),
+            h(NumberField, {
+              label: t('settings.coreBudget'),
+              hint: t('settings.coreBudgetHint'),
+              // The schema clamps to this range, so a field that accepted 1000
+              // would silently store 4000 and look like it had worked.
+              value: inject.coreBudget ?? 4000,
+              min: 4000,
+              max: 20000,
+              disabled: !writable,
+              onCommit: (next) => commit('inject.coreBudget', next),
             }),
             h(NumberField, {
               label: t('settings.userLimit'),
@@ -1551,11 +1660,63 @@ window.__ModuleLoader__.load({
       operation_required: 'code.operation_required',
       no_revision: 'code.no_revision',
       archive_capacity: 'code.archive_capacity',
+      archive_failed: 'code.archive_failed',
+      rename_failed: 'code.rename_failed',
+      backup_required: 'code.backup_required',
+      backup_name_collision: 'code.backup_name_collision',
+      layering_confirmation_required: 'code.layering_confirmation_required',
+      receipt_capacity: 'code.receipt_capacity',
+      operation_id_too_long: 'code.operation_id_too_long',
+      read_conflict: 'code.read_conflict',
+      bad_offset: 'code.bad_offset',
+      profile_not_found: 'code.profile_not_found',
+      unknown_target: 'code.unknown_target',
+      bad_target: 'code.bad_target',
+      bad_section: 'code.bad_section',
+      bad_date: 'code.bad_date',
+      bad_request: 'code.bad_request',
+      bad_json: 'code.bad_json',
+      internal: 'code.internal',
+      method_not_allowed: 'code.method_not_allowed',
+      empty_query: 'code.empty_query',
+      search_disabled: 'code.search_disabled',
+      no_path: 'code.no_path',
+      not_a_file: 'code.not_a_file',
+      no_match: 'code.no_match',
     }
 
-    function describeCode(code) {
+    /**
+     * The receipt directory, with the separator the path itself uses.
+     *
+     * The message is read by someone who is about to open that folder, so a
+     * Windows path with a forward slash glued on is a path they have to fix
+     * before it works.
+     *
+     * @param {string|undefined} stateDir
+     * @returns {string}
+     */
+    function receiptsDir(stateDir) {
+      const base = String(stateDir || '').trim().replace(/[\\/]+$/, '')
+      if (!base) return '~/.dsh/workbuddy-memory/receipts/'
+      const separator = /\\|^[a-zA-Z]:/.test(base) ? '\\' : '/'
+      return `${base}${separator}receipts${separator}`
+    }
+
+    /**
+     * Refusal copy, with the one variable a few of them need.
+     *
+     * `receipt_capacity` is the only refusal a person cannot get past by
+     * retrying: the receipt store is full and every further write is refused
+     * until something is cleaned up. Naming the directory is the difference
+     * between "the plugin is broken" and "delete the finished receipts".
+     *
+     * @param {string} code
+     * @param {{ stateDir?: string }} [vars]
+     */
+    function describeCode(code, vars = {}) {
       const key = MESSAGES[code]
-      return key ? t(key) : String(code ?? t('state.unknownError'))
+      if (!key) return String(code ?? t('state.unknownError'))
+      return t(key, { receiptsDir: receiptsDir(vars.stateDir) })
     }
 
     /**
@@ -2261,7 +2422,7 @@ window.__ModuleLoader__.load({
           }
           if (owned) return result
           const detail = result.issues?.length ? t('misc.issuesDetail', { lines: result.issues.map((row) => row.line).join(', ') }) : ''
-          setError(`${describeCode(result.code)}${detail}`)
+          setError(`${describeCode(result.code, { stateDir: state?.stateDir })}${detail}`)
           return result
         } catch (cause) {
           if (!owned) setError(String(cause?.message ?? cause))

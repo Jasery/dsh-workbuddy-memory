@@ -480,6 +480,100 @@ test('zero limit disables a source and its entries in every mode', () => {
   assert.equal(sections.some((item) => item.name === 'workbuddy-memory:profile'), false)
 })
 
+test('layered mode says when a file outgrew its share, in the directory, with the count', () => {
+  // In layered mode `render.js` used to drop the distillation hint entirely, so
+  // a 9903-character user file produced only a truncation note at the end of a
+  // block that was capped at its share: the model could see *that* it was cut
+  // and had nothing telling it the file had outgrown what a core is for. The
+  // signal has to come back, but not in the core block — a per-write character
+  // count inside the always-on text changes the prompt on every save.
+  const user = `# User\n\n## 常驻记忆\n- user core\n\n## Accounts\n- acct\n\n${Array.from({ length: 100 }, (_, index) => `- 记录 ${index} ${'细节'.repeat(30)}`).join('\n')}\n`
+  const { cfg, probe } = fixture({ project: '# Memory\n\n## 常驻记忆\n- core\n', user, config: { inject: { mode: 'layered', coreBudget: 4000 } } })
+  const sections = renderSections({ cfg, probe, t })
+  const directory = sections.find((item) => item.name === 'workbuddy-memory:profile')
+  const userBlock = sections.find((item) => item.name === 'workbuddy-memory:user')
+  const chars = user.length
+  const share = Math.floor(cfg.inject.coreBudget * 0.375)
+
+  assert.ok(chars > share, `the fixture is past the user share: ${chars} > ${share}`)
+  assert.match(directory.text, /用户记忆/, 'the directory names the source that outgrew its share')
+  assert.ok(directory.text.includes(String(chars)), `the directory carries the real size ${chars}: ${directory.text}`)
+  assert.match(directory.text, /按需/, 'and says the rest is read on demand')
+  assert.equal(userBlock.text.includes(String(chars)), false, 'the core block stays free of the per-write count')
+  assert.ok(directory.text.length <= Math.floor(cfg.inject.coreBudget * 0.125), `the directory is ${directory.text.length} units`)
+})
+
+test('a file that fits its share gets no over-share note', () => {
+  const { cfg, probe } = fixture({
+    project: '# Memory\n\n## 常驻记忆\n- core\n',
+    user: '# User\n\n## 常驻记忆\n- one\n\n## Accounts\n- acct\n',
+    config: { inject: { mode: 'layered' } },
+  })
+  const directory = renderSections({ cfg, probe, t }).find((item) => item.name === 'workbuddy-memory:profile')
+  // The directory heading itself says "on demand", so the negative assertion
+  // has to name the note rather than the word.
+  assert.doesNotMatch(directory.text, /常驻只取核心/, 'nothing is said when nothing is out of budget')
+})
+
+test('a legacy state in the directory carries a readable gloss, not a bare code', () => {
+  // `user=legacy:missing_core` is a state name, not an explanation. The model
+  // reading it learns nothing about whether the block in front of it is whole.
+  const { cfg, probe } = fixture({ project: '## Old\n- legacy\n', user: '# User\n\n## Core Memory\n- core\n' })
+  const layered = normalizeConfig({ workbuddyHome: probe.home.path, inject: { mode: 'layered' } })
+  const sections = renderSections({ cfg: layered, probe, t })
+  const directory = sections.find((item) => item.name === 'workbuddy-memory:profile')
+
+  assert.match(directory.text, /project=legacy:missing_core/, 'the machine-readable state is still there')
+  assert.match(directory.text, /未划分|未注入/, 'and a person can read what it means')
+  assert.ok(directory.text.length <= Math.floor(layered.inject.coreBudget * 0.125), `the directory is ${directory.text.length} units`)
+  void cfg
+})
+
+test('the compatibility line is stable across renders of the same file', () => {
+  // A jittery hint is worse than none: it rewrites the prompt prefix on every
+  // turn for a file nobody touched.
+  const user = `# User\n\n## 常驻记忆\n- core\n\n${Array.from({ length: 60 }, (_, index) => `- ${'x'.repeat(60)}`).join('\n')}\n`
+  const { cfg, probe } = fixture({ project: '# Memory\n\n## 常驻记忆\n- core\n', user, config: { inject: { mode: 'layered' } } })
+  const first = renderSections({ cfg, probe, t }).find((item) => item.name === 'workbuddy-memory:profile').text
+  const second = renderSections({ cfg, probe, t }).find((item) => item.name === 'workbuddy-memory:profile').text
+  assert.equal(first, second)
+})
+
+test('layered mode still names the distillation threshold when the file crosses it', () => {
+  // The full-mode hint says "distil". In layered mode the count and the word
+  // "distil" both used to disappear, so a file the plugin itself had declared
+  // overdue looked exactly like one that was simply long.
+  const user = `# User\n\n## 常驻记忆\n- core\n\n${Array.from({ length: 120 }, (_, index) => `- ${'x'.repeat(80)}`).join('\n')}\n`
+  const { cfg, probe } = fixture({
+    project: '# Memory\n\n## 常驻记忆\n- core\n',
+    user,
+    // `resolveDistillAbove` clamps the threshold to at least `limits.user + 1`,
+    // so the fixture states both explicitly instead of deriving a number that
+    // lands below the clamp.
+    config: { inject: { mode: 'layered', coreBudget: 4000, limits: { user: 8000 }, distillAbove: 9000 } },
+  })
+  const directory = renderSections({ cfg, probe, t }).find((item) => item.name === 'workbuddy-memory:profile')
+
+  assert.ok(user.length > cfg.inject.distillAbove, `the fixture is past the threshold: ${user.length} > ${cfg.inject.distillAbove}`)
+  assert.match(directory.text, /蒸馏/, 'the layered directory says the file is due for distillation')
+  assert.ok(directory.text.includes(String(user.length)), 'and carries the size that made it due')
+  assert.ok(directory.text.length <= Math.floor(cfg.inject.coreBudget * 0.125), `the directory is ${directory.text.length} units`)
+})
+
+test('a legacy file past its own limit says so without promising a core split', () => {
+  // A legacy file has no core, so "only the core stays always-on" would be a
+  // false statement about it. It is still cut, and a cut nobody mentions reads
+  // as a complete file.
+  const body = `# U\n\n${Array.from({ length: 60 }, (_, index) => `- 记录 ${index} ${'x'.repeat(80)}`).join('\n')}\n`
+  const { cfg, probe } = fixture({ project: '# Memory\n\n## 常驻记忆\n- core\n', user: body, config: { inject: { mode: 'layered', limits: { user: 2000 } } } })
+  const directory = renderSections({ cfg, probe, t }).find((item) => item.name === 'workbuddy-memory:profile')
+
+  assert.ok(body.length > cfg.inject.limits.user, `the fixture is past the limit: ${body.length}`)
+  assert.ok(directory.text.includes(String(body.length)), 'the directory carries the real size')
+  assert.match(directory.text, /限额/, 'it names the limit the file is cut at')
+  assert.doesNotMatch(directory.text, /常驻只取核心/, 'a legacy file has no core to speak of')
+})
+
 test('backupKeep defaults to a tidy-up-sized window', () => {
   assert.equal(normalizeConfig({}).write.backupKeep, 20)
 })

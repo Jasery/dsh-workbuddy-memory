@@ -11,9 +11,11 @@ By default the plugin injects **layered**: a small always-on core plus a directo
 - **Core** is the file's single `## 常驻记忆` (or `## Core Memory`, case-insensitive) section. Only complete bullet entries are injected, and the section is a *prefix*: the scan stops at the first entry that does not fit instead of skipping ahead. When entries are left out, the block says how many.
 - **Topic directory** lists the remaining `##` headings (plus the user-profile entry), so the model knows what exists without carrying it. A truncated list says it is truncated.
 - **Budget**: `inject.coreBudget` defaults to **4000** and accepts 4000–20000, measured in **UTF-16 code units** including every wrapper. It is split 37.5% / 37.5% / 12.5% / 12.5% across the project core, the user core, the fixed rules, and the topic directory plus compatibility notes. Wrappers, complete entries and surrogate pairs all count against that share; nothing is cut mid-character.
-- `inject.mode: 'full'` is the compatibility and troubleshooting fallback: each file is injected whole under its own `inject.limits.*` value, the way earlier versions did.
+- `inject.mode: 'full'` is the compatibility and troubleshooting fallback: each file is injected whole under its own `inject.limits.*` value, the way earlier versions did. **Switch it in the plugin page's config card** (`Injection mode`), not by editing the profile YAML — see [Configuration](#configuration).
   In layered mode `inject.limits.project` / `.user` only decide whether that source is on at all (0 turns it off); the real ceiling is `coreBudget`. One exception worth knowing: the panel's "over limit" chip still compares the file against `inject.limits.project`, which is a size warning, not a statement about what was injected.
+- When a layered file is bigger than its share of the budget, the topic directory says so with the real size (`User memory (WorkBuddy) 9903 chars; only the core stays always-on, the rest is read on demand`), and past `inject.distillAbove` it also says the file is due for distillation. That note lives in the directory, never in the core block: a count inside the always-on text would rewrite the prompt on every save.
 - A file **without** a core section keeps legacy whole-file injection under its own `inject.limits.*` and is reported as `legacy:missing_core` / `legacy:ambiguous_core` / `legacy:invalid_core` / `legacy:non_entry_content` in `memory_status`. Legacy text is deliberately **not** counted against `coreBudget`. Nothing rewrites an old file on its own: the split is the user's decision, made in the panel.
+- **Conservative downgrade, and what it costs you.** A topic section's body may only contain `- ` entries (plus continuation lines indented 2+ spaces) and blank lines. Add *anything* else — one prose sentence, an `###` sub-heading, a fenced code block, a continuation line indented by a single space — and the **whole file** falls back to legacy whole-file injection: measured 40 → 5511 characters always-on for one added sentence. Deleting the core section does the same thing (33 → 5042 in the same test). This is deliberate (a file that cannot be split reliably is not split), and the fallback is visible as `legacy:non_entry_content` / `legacy:missing_core`, but it is the behaviour most likely to look like a bug: keep topic bodies to entries, or accept the whole file coming along.
 - An empty core section is valid and is not a compatibility state: the block carries the heading and no entries. A duplicated core section is ambiguous and falls back to legacy rather than guessing which one is meant.
 
 `inject.refresh` stays `on-change` by default: the blocks are recomputed for each assembly, the file cache re-checks `mtime`/`ctime`/`size` on every read, and a committed write invalidates that file's cached text. `first-turn` freezes one snapshot per session instead.
@@ -98,7 +100,7 @@ locale service, so switching DSH's language switches the panel too.
 
 ## Configuration
 
-Common keys (the plugin page lists all of them):
+Common keys (the plugin page's config card covers the ones you change often; the rest are in this table):
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -106,8 +108,8 @@ Common keys (the plugin page lists all of them):
 | `workbuddyHome` | `''` | empty follows the environment |
 | `dataFolderName` | `''` | empty follows `WORKBUDDY_DATA_FOLDER_NAME`, then `.workbuddy` |
 | `inject.enabled` | `true` | when off, nothing is injected at all |
-| `inject.mode` | `layered` | `full` is the compatibility fallback |
-| `inject.coreBudget` | `4000` | layered budget in UTF-16 code units, 4000–20000 |
+| `inject.mode` | `layered` | `full` is the compatibility fallback; switch it in the config card |
+| `inject.coreBudget` | `4000` | layered budget in UTF-16 code units, 4000–20000; in the config card |
 | `inject.refresh` | `on-change` | `first-turn` freezes one snapshot per session |
 | `inject.limits.*` | 10000 / 2000 / 8000 / 2000 | per-block limits for `full` mode and for legacy files (project / rules / user / profile); `0` disables that block in every mode |
 | `inject.distillAbove` | `0` → twice `limits.user` | `inject.mode: 'full'` only: user memory size that makes the rules ask for a by-topic distillation; past `limits.user` itself the rules first warn that part of the file is unreadable |
@@ -129,6 +131,33 @@ Common keys (the plugin page lists all of them):
 
 `stateDir` and `locale` need a reload and stay YAML-only.
 
+## Refusal codes and what to do about them
+
+The tools return these codes to the model; the panel shows the same explanation in your language. The full list is in the panel's copy table — these are the ones with a step attached.
+
+| Code | What happened | What to do |
+|---|---|---|
+| `layering_confirmation_required` | The file still holds whole-file memory and the write would move those entries under the always-on core section. That split is your decision, not a side effect of an edit. | Save the file once through the panel's **draft** or **source mode** to confirm the split; the write then goes through. Adding a section literally named `常驻记忆` / `Core Memory` to an unsplit file is the usual way to hit this. |
+| `receipt_capacity` | The operation receipt store is full (100 unresolved, or 2000 total), so every write with an `operationId` is refused — including every panel click. | Finished receipts can be deleted from `<stateDir>/receipts/` (default `~/.dsh/workbuddy-memory/receipts/`). **Check unresolved ones first**: an `applying` / `partial` / `outcome_unknown` receipt is the only evidence that some write's outcome is unknown. |
+| `backup_required` | `write.backupKeep` is `0`, and a destructive rewrite is refused because there would be no way back. | Raise the backup count to at least 1. An ordinary append is still allowed at 0. |
+| `plan_required` | An archive apply arrived without the plan a preview produced. | Preview the archive again, then apply from that preview. |
+| `plan_conflict` | The plan expired, or the set of dated files changed since it was previewed. | Recompute the plan; files that appeared after the preview are deliberately not swept up. |
+| `operation_mismatch` | That `operationId` already belongs to a different request, so it was not replayed. | Use a fresh id for a genuinely new write; reuse the same id only to retry the identical request. |
+| `outcome_unknown` | The previous write's outcome could not be confirmed. | Retry with the **same** operation id — that is safe. A new id may run it twice. |
+| `read_conflict` / `conflict` | The file changed while it was being read or written. | Read it again, then decide. There is no "overwrite anyway" by design. |
+| `too_large` | The file is past the panel's read or edit cap (256 KB of text). | Use an external editor, or edit entries rather than the whole file. |
+| `full_text_disabled` | Whole-file editing (source mode / drafts) is switched off. | Turn on **Full-text editing** in the config card. |
+
+## Coexisting with other memory plugins
+
+Do **not** run two plugins that take over the same set of memory files in one profile. There is no coordination between them, and the failure modes are all quiet or confusing:
+
+- **Tool name collisions.** Two plugins registering `memory_read` in the same scope make the second registration fail. This plugin reports the exact conflicting tool name and rolls back what it had already registered — it never replaces another plugin's definition. The other plugin may not be so careful, so which definition wins can depend on load order.
+- **Double writes to one file.** Two engines both believe they own `MEMORY.md`. Each one's lock means nothing to the other, and each one's revision check only catches what it happened to see, so a write can silently overwrite the other's.
+- **The same memory injected twice.** Both plugins read the same files into the prompt, so every entry costs context twice and the model sees two copies that can drift apart.
+
+Pick one plugin per set of memory files. There is no prefix option and no compatibility promise between engines in this version.
+
 ## Boundaries
 
 Stated as they are, not as a security claim:
@@ -136,7 +165,7 @@ Stated as they are, not as a security claim:
 - **Without the panel** (headless, or `ui.enabled: false`) the model can read, search, append and edit single entries. Archiving old daily notes and restoring a historical version need the panel — there is no tool for them, by design.
 - **`write.backupKeep: 0`** refuses destructive rewrites with `backup_required` (no way back, no rewrite). An ordinary append is still allowed: adding bytes cannot truncate what is already there.
 - **Deduplication is bounded**: a committed receipt is remembered for 24 hours, up to 2000 records, with at most 100 unresolved ones. Past that window the same `operationId` is simply a new request.
-- **External editors do not take this plugin's lock.** DSH against DSH is serialized; DSH against a non-locking editor (WorkBuddy's own `Edit`, a plain text editor) is only protected by the revision check, which catches changes it can see. Two writes landing inside the same few milliseconds can still collide, and the backup plus the recorded post-write revision are what make that recoverable rather than silent. One plugin instance owns a file at a time; two engines driving the same file is not supported.
+- **External editors do not take this plugin's lock.** The lock only coordinates writers that agree to obey it: this plugin against itself is serialized. DSH against a non-locking editor (WorkBuddy's own `Edit`, a plain text editor) is only protected by the revision check, which catches changes it can see. Two writes landing inside the same few milliseconds can still collide, and the backup plus the recorded post-write revision are what make that recoverable rather than silent — there is no way to *prevent* that collision from inside this plugin. One plugin instance owns a file at a time; two engines driving the same file is not supported.
 - **`memory_status` does not report tokens.** `lastAssembly` is this plugin's own contribution in UTF-16 code units, measured after redaction, and it says so (`measuredAs: 'plugin-contribution'`). It is not the host's final prompt and not a token count or a cost.
 - Read failures degrade to "inject nothing"; they never break a turn.
 - The project block is skipped when the session working directory is unknown — it never falls back to `process.cwd()`.

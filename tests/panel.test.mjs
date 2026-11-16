@@ -889,6 +889,36 @@ test('a refused draft apply explains itself in the dialog, not behind the mask',
   }
 })
 
+test('a refused write shows a sentence, never the raw code', async () => {
+  // The two refusals a person actually reaches from the panel: creating a
+  // section called "Core Memory" on an unsplit file, and clicking at all once
+  // the receipt store is full. Both used to render as the bare identifier.
+  const state = stateFor({ stateDir: 'C:\\Users\\me\\.dsh\\workbuddy-memory' })
+  for (const code of ['layering_confirmation_required', 'receipt_capacity']) {
+    runtime.reset()
+    const calls = installFetch({ state, actionResult: () => ({ ok: false, code }) })
+    const restore = installTimers()
+    try {
+      const tree = await openProject()
+      const remove = walk(tree).find((node) => node.props?.title === '删除')
+      assert.ok(remove, `${code}: a writable entry offers delete`)
+      const after = await runtime.fire(remove, 'onClick', MemoryOverviewPanel, {})
+
+      assert.equal(calls.actions.length, 1, `${code}: one write was attempted`)
+      const body = text(expand(after))
+      assert.equal(body.includes(code), false, `${code}: the code is translated, not printed raw`)
+      assert.match(body, code === 'receipt_capacity' ? /回执/ : /常驻|核心/, `${code}: the refusal names the reason`)
+      if (code === 'receipt_capacity') {
+        // The one refusal that cannot be retried has to say where the receipts
+        // are, or the person is stuck with no next step.
+        assert.match(body, /receipts/, 'the receipt dead end names the directory to clean')
+      }
+    } finally {
+      restore()
+    }
+  }
+})
+
 test('a refused restore explains itself in the history dialog', async () => {
   for (const code of ['too_large', 'invalid_structure', 'lock_timeout']) {
     runtime.reset()
