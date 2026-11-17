@@ -6,6 +6,7 @@
   "coreHeading": "Core Memory",
   "coreOverBudget": "({count} more core entries did not fit the budget and are not injected)",
   "topicDirectory": "On-demand topics",
+  "topicHint": "Past the core: memory_read(target=<prefix>-memory, section=NAME); memory_search for one fact.",
   "directoryMore": "(more topics exist; read the section list for the rest)",
   "unsectioned": "Unsectioned content",
   "compatibility": "Compatibility",

@@ -6,6 +6,7 @@
   "coreHeading": "常驻记忆",
   "coreOverBudget": "（另有 {count} 条核心条目超出预算，未注入）",
   "topicDirectory": "可按需查询的主题",
+  "topicHint": "常驻没写的先看这里：memory_read(target=前缀-memory, section=主题名) 读整节；单个事实用 memory_search。",
   "directoryMore": "（还有更多主题，可用章节列表读取）",
   "unsectioned": "未分节内容",
   "compatibility": "兼容状态",

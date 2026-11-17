@@ -112,7 +112,11 @@ export function renderSections({ cfg, probe, t, readFile }) {
     if (raw.length > budget || (distillAbove > 0 && raw.length > distillAbove)) {
       overShare.push({ key, label, chars: raw.length, distill: distillAbove > 0 && raw.length > distillAbove })
     }
-    return parsed.topics.map((topic) => topic.heading ?? t('unsectioned'))
+    // The topic name is not enough on its own: `memory_read` needs a target as
+    // well as a section, and a name like `Git 配置` exists in whichever file it
+    // was written in. Carrying the source here is what lets the directory be
+    // actionable instead of a list of words the model has to guess a target for.
+    return parsed.topics.map((topic) => ({ source: key, name: topic.heading ?? t('unsectioned') }))
   }
 
   const projectTopics = cfg.inject.project && probe.project.memoryExists
@@ -151,7 +155,7 @@ export function renderSections({ cfg, probe, t, readFile }) {
   } else states.profile = 'unavailable'
 
   if (layered) {
-    const extra = [...(projectTopics ?? []), ...(userTopics ?? []), ...profileTopics]
+    const extra = [...(projectTopics ?? []), ...(userTopics ?? [])]
     // A compatibility note is a non-normal state, not only a `legacy:` one: an
     // over-budget core also means the model is reading a subset.
     const warnings = Object.entries(states).filter(([, state]) => !NORMAL_STATES.has(state))
@@ -174,9 +178,39 @@ export function renderSections({ cfg, probe, t, readFile }) {
       entries.push(`- ${t(key, { label: item.label, chars: item.chars, limit: item.legacy ?? 0 })}`)
     }
     if (cfg.inject.profile && cfg.inject.limits.profile > 0 && probe.profile.ambiguous) entries.push(t('ambiguousProfile'))
+    // How to read a topic, first, because `fitText` drops whole lines from the
+    // end: the one line that makes the rest of the list usable has to be the one
+    // that cannot be cut. A directory of nouns with no verb is a list the model
+    // can recognise but not act on — it has the topic name and still has to
+    // guess whether that is a `section` argument or a search string.
+    //
+    // Only when there is a topic to read: a directory of nothing but
+    // compatibility notes and the profile line has no `NAME` for the sentence to
+    // refer to, and an instruction pointing at nothing is worse than silence.
+    if (extra.length) entries.push(`- ${t('topicHint')}`)
     // Sanitize before measuring: redaction only shortens, so the budget still
     // holds, and a home path must not reach the prompt through a topic heading.
-    for (const topic of [...new Set(extra)]) entries.push(`${t('topicDirectory')}: ${sanitize(topic)}`)
+    //
+    // One line per topic, `<source>/<name>`. The heading above already says "on
+    // demand topics", so repeating that phrase on every line spent 10 of the 500
+    // units this block has (18 in English) saying nothing at all; the source
+    // prefix costs less than that and carries the one fact a bare topic name
+    // cannot: which file the section lives in. `memory_read` needs a target as
+    // well as a section, and a name like `Git 配置` exists in whichever file it
+    // was written in — without the prefix the model has to guess, and a wrong
+    // guess is a `no_section` round trip.
+    //
+    // A flat list rather than per-source groups on purpose: `fitText` drops whole
+    // lines from the end, so a group header could survive while every topic under
+    // it was cut, leaving a heading with nothing beneath it.
+    const seen = new Set()
+    for (const topic of extra) {
+      const key = `${topic.source}\u0000${topic.name}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      entries.push(`- ${topic.source}/${sanitize(topic.name)}`)
+    }
+    for (const hint of profileTopics) entries.push(`- ${hint}`)
     const budget = Math.floor(cfg.inject.coreBudget * 0.125)
     const tail = entries.length ? fitText(`### ${t('topicDirectory')}\n\n${entries.join('\n')}`, budget, { notice: t('directoryMore') }) : { text: '', dropped: 0 }
     if (tail.text) {

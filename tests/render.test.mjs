@@ -609,3 +609,82 @@ test('in layered mode limits.user still moves the distillation threshold it deri
   assert.doesNotMatch(wide.text, /蒸馏/, 'the wide limit leaves the file under its threshold')
   assert.match(narrow.text, /蒸馏/, 'the narrow limit brings the distillation sentence back')
 })
+
+test('a topic line names the file it lives in, so the model can pick a target', () => {
+  // The directory used to be a bare list of topic names. `memory_read` needs a
+  // target as well as a section, and a heading like `Accounts` exists in
+  // whichever file it was written in: without the source the model guesses, and
+  // a wrong guess is a `no_section` round trip it has to pay for.
+  const { cfg, probe } = fixture({
+    project: '# Memory\n\n## 常驻记忆\n- core\n\n## Accounts\n- a\n',
+    user: '# User\n\n## 常驻记忆\n- ucore\n\n## Accounts\n- b\n\n## Network\n- c\n',
+    config: { inject: { mode: 'layered' } },
+  })
+  const directory = renderSections({ cfg, probe, t }).find((item) => item.name === 'workbuddy-memory:profile')
+
+  assert.match(directory.text, /^- project\/Accounts$/m, 'a project topic carries its source')
+  assert.match(directory.text, /^- user\/Network$/m, 'a user topic carries its source')
+  // The same heading in both files is two different sections, so it must appear
+  // twice. Deduplicating on the name alone would hide one of them.
+  const accounts = directory.text.split('\n').filter((line) => line.endsWith('/Accounts'))
+  assert.equal(accounts.length, 2, `both Accounts sections are listed: ${directory.text}`)
+})
+
+test('the topic directory says how to read a topic, and never loses that line', () => {
+  // A list of nouns with no verb is recognisable but not actionable. The line
+  // that turns it into a call has to come first: `fitText` drops whole lines
+  // from the end, so a hint placed after the topics would be the first thing cut
+  // on a long list — exactly when it is most needed.
+  const topics = Array.from({ length: 40 }, (_, index) => `## 主题${index} ${'很长的名字'.repeat(3)}\n- t\n`).join('\n')
+  const { cfg, probe } = fixture({ project: `# Memory\n\n## 常驻记忆\n- core\n\n${topics}`, config: { inject: { mode: 'layered' } } })
+  const sections = renderSections({ cfg, probe, t })
+  const directory = sections.find((item) => item.name === 'workbuddy-memory:profile')
+
+  assert.match(directory.text, /memory_read\(target=前缀-memory, section=主题名\)/, 'the directory names the call')
+  assert.match(directory.text, /memory_search/, 'and the search tool for a single fact')
+  assert.match(String(sections.states.directory), /^directory-truncated\(\d+\)$/, 'the fixture really is truncated')
+  // The hint survives the truncation: it is placed before the topics.
+  const hintAt = directory.text.indexOf('memory_read(target=前缀-memory')
+  const firstTopicAt = directory.text.indexOf('主题0')
+  assert.ok(hintAt >= 0 && firstTopicAt > hintAt, 'the hint comes before the topics it explains')
+})
+
+test('an empty topic list gets no reading hint', () => {
+  // A sentence pointing at a `主题名` that does not exist is worse than silence:
+  // the model would call memory_read with a name it invented from the sentence.
+  const { cfg, probe } = fixture({
+    project: '# Memory\n\n## 常驻记忆\n- core\n',
+    user: '# User\n\n## 常驻记忆\n- ucore\n',
+    config: { inject: { mode: 'layered', profile: false } },
+  })
+  const sections = renderSections({ cfg, probe, t })
+  const directory = sections.find((item) => item.name === 'workbuddy-memory:profile')
+  // No topics and no profile line means no directory at all.
+  if (directory) assert.doesNotMatch(directory.text, /memory_read\(target=前缀-memory/, 'no hint without a topic to point at')
+})
+
+test('the reading hint is English in an English session', () => {
+  const en = createTranslator('en')
+  const { cfg, probe } = fixture({ project: '# Memory\n\n## Core Memory\n- core\n\n## Network\n- n\n', config: { inject: { mode: 'layered' } } })
+  const directory = renderSections({ cfg, probe, t: en }).find((item) => item.name === 'workbuddy-memory:profile')
+  assert.match(directory.text, /memory_read\(target=<prefix>-memory, section=NAME\)/)
+  assert.match(directory.text, /^- project\/Network$/m)
+  assert.doesNotMatch(directory.text, /前缀|主题名/, 'no Chinese leaks into an English block')
+})
+
+test('a long topic list still fits the directory budget with the hint and the source prefix', () => {
+  // The prefix and the hint both spend the same 500 units, so the two have to be
+  // measured together: a block that overflows is a block whose tail is silently
+  // dropped, and the dropped tail here is the topic list itself.
+  const topics = Array.from({ length: 60 }, (_, index) => `## Topic ${index} ${'long name '.repeat(4)}\n- t\n`).join('\n')
+  for (const locale of ['zh', 'en']) {
+    const translator = createTranslator(locale)
+    const { cfg, probe } = fixture({ project: `# Memory\n\n## 常驻记忆\n- core\n\n${topics}`, config: { inject: { mode: 'layered' } } })
+    const sections = renderSections({ cfg, probe, t: translator })
+    const directory = sections.find((item) => item.name === 'workbuddy-memory:profile')
+    const budget = Math.floor(cfg.inject.coreBudget * 0.125)
+    assert.ok(directory.text.length <= budget, `${locale}: the directory is ${directory.text.length} units against ${budget}`)
+    assert.match(String(sections.states.directory), /^directory-truncated\(\d+\)$/, `${locale}: and it says the list is partial`)
+    assert.match(directory.text, /还有更多|more topics/, `${locale}: the shortfall is stated in the block`)
+  }
+})
