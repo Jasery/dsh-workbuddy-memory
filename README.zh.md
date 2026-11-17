@@ -1,5 +1,7 @@
 # dsh-workbuddy-memory
 
+[![CI](https://github.com/Jasery/dsh-workbuddy-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/Jasery/dsh-workbuddy-memory/actions/workflows/ci.yml)
+
 [English](README.md) | 中文
 
 让 DSH 直接共用 WorkBuddy 已经写好的记忆文件，不另存一份，也不用先装 WorkBuddy。

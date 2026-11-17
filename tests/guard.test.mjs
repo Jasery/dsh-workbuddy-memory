@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
 
 import { normalizeConfig } from '../src/config.js'
@@ -57,6 +57,23 @@ test('canon resolves what exists and falls back to the absolute path', () => {
   const missing = join(cwd, 'nope', 'gone.md')
   assert.equal(canon(missing).toLowerCase().endsWith('gone.md'), true)
   assert.equal(canon(''), '')
+})
+
+test('canon canonicalises a path that does not exist yet, like its parent', () => {
+  // The regression: a file about to be created used to keep the caller's
+  // spelling. On a Windows runner whose TEMP is an 8.3 short name
+  // (`RUNNER~1`), that spelling never matched the canonicalised parent, so
+  // `isMemoryTarget` said "not memory" for a new file in the memory directory —
+  // the exact write the guard exists to refuse.
+  const { cwd } = fixture()
+  const parent = canon(join(cwd, '.workbuddy', 'memory'))
+  const unborn = canon(join(cwd, '.workbuddy', 'memory', 'NEW.md'))
+  assert.equal(dirname(unborn), parent, 'the missing tail is re-appended to the real parent')
+  assert.equal(unborn.endsWith('NEW.md'), true)
+
+  // Nested missing directories resolve the same way.
+  const nested = canon(join(cwd, '.workbuddy', 'memory', 'a', 'b', 'c.md'))
+  assert.equal(nested, join(parent, 'a', 'b', 'c.md'))
 })
 
 test('isUnder is segment-aware', () => {
@@ -215,4 +232,20 @@ test('a differently-cased memory path is still refused on Windows', () => {
   const denied = captured.guard({ name: 'write', arguments: { file_path: variant }, agent })
   if (process.platform === 'win32') assert.match(denied ?? '', /memory_append/)
   else assert.equal(denied, undefined)
+})
+
+test('a file the memory directory does not have yet is still refused', () => {
+  // The guard used to protect only paths that already existed: `canon()`
+  // resolved the caller's spelling for anything about to be created, so a new
+  // note written straight into the memory directory walked past it. This is the
+  // ordinary shape of a first daily note.
+  const { cfg, cwd } = fixture()
+  const { ctx, captured } = fakeCtx()
+  registerWriteGuard(ctx, { cfg, t })
+  const agent = { session: { header: { cwd } } }
+
+  for (const name of ['2026-11-18.md', 'brand-new.md']) {
+    const denied = captured.guard({ name: 'write', arguments: { file_path: join(cwd, '.workbuddy', 'memory', name) }, agent })
+    assert.match(denied ?? '', /memory_append/, `${name} does not exist yet and is still memory`)
+  }
 })

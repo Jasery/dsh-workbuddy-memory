@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url'
 
 import { normalizeConfig } from '../src/config.js'
 import { probeEnvironment } from '../src/env.js'
-import { contentRevision, pathKey } from '../src/write/fslock.js'
+import { contentRevision, pathKey, resolveLink } from '../src/write/fslock.js'
 import { RECEIPT_LIMITS, createReceiptStore } from '../src/write/receipts.js'
 import { createStore } from '../src/write/store.js'
 
@@ -34,6 +34,25 @@ function workspace() {
   writeFileSync(join(home, 'memory', 'MEMORY.md'), '- 全局条目\n', 'utf8')
   return { root, cwd, memoryDir, home }
 }
+
+/**
+ * Whether a path is inside the receipt directory.
+ *
+ * `writeFileAtomic` resolves the target before renaming, so the path it hands
+ * to `renameSync` is canonical — while `stateDir` is whatever spelling
+ * `mkdtemp` returned. On a Windows runner `TEMP` is an 8.3 short name
+ * (`RUNNER~1`), so a plain `startsWith` never matched and the injected failure
+ * fired zero times. Comparing canonical forms is what the assertion means.
+ */
+function isReceiptPath(candidate, stateDir) {
+  const receipts = join(stateDir, 'receipts')
+  const left = canonical(String(candidate))
+  const right = canonical(receipts)
+  return left === right || left.startsWith(`${right}\\`) || left.startsWith(`${right}/`)
+}
+
+/** The same rule the product uses, so the test cannot drift from it. */
+const canonical = (path) => resolveLink(path)
 
 function setup(overrides = {}, hooks = {}) {
   const space = workspace()
@@ -293,6 +312,27 @@ test('a receipt that cannot be created refuses the write before the source chang
   assert.equal(readFileSync(file, 'utf8'), before)
 })
 
+test('replaying an id is a duplicate even though the first write created the file', async () => {
+  // The fingerprint hashes the canonical path, and a path that does not exist
+  // yet has to canonicalise like its parent. When it did not, the first call
+  // hashed the caller's spelling and the replay hashed the real one, so the
+  // same `operationId` was refused as `operation_mismatch` instead of answering
+  // `duplicate` — the replay safety the receipt exists for.
+  const s = setup()
+  const input = { target: 'project-daily', date: '2026-09-07', text: '只追加一次', operationId: 'op-create-then-replay' }
+  const file = join(s.memoryDir, '2026-09-07.md')
+  assert.equal(existsSync(file), false, 'the first call is what creates the file')
+
+  const first = await s.store.append(input, s.probe)
+  assert.equal(first.ok, true, JSON.stringify(first))
+  assert.equal(existsSync(file), true)
+
+  const replay = await s.store.append(input, s.probe)
+  assert.equal(replay.ok, true, JSON.stringify(replay))
+  assert.equal(replay.duplicate, true, 'the replay is recognised, not refused')
+  assert.equal(readFileSync(file, 'utf8').split('只追加一次').length - 1, 1, 'written once')
+})
+
 test('commits notify once, after locks are released, and listener failures are isolated', async () => {
   const seen = []
   let observedLock = 'unset'
@@ -530,7 +570,7 @@ test('a failed receipt update is not a commit, and does not revive a deleted ent
   const realRename = fs.renameSync
   let injected = 0
   fs.renameSync = (from, to) => {
-    if (String(to).startsWith(join(s.stateDir, 'receipts'))) {
+    if (isReceiptPath(to, s.stateDir)) {
       injected += 1
       throw Object.assign(new Error('deterministic receipt update EACCES'), { code: 'EACCES' })
     }
@@ -639,7 +679,7 @@ test('an archive receipt update failure stops before more items move, then resum
   const realRename = fs.renameSync
   let updates = 0
   fs.renameSync = (from, to) => {
-    if (String(to).startsWith(join(s.stateDir, 'receipts'))) {
+    if (isReceiptPath(to, s.stateDir)) {
       updates += 1
       if (updates === 2) throw Object.assign(new Error('deterministic receipt update EACCES'), { code: 'EACCES' })
     }
@@ -684,7 +724,7 @@ test('a failed final archive receipt update is never reported ok', async () => {
   const realRename = fs.renameSync
   let updates = 0
   fs.renameSync = (from, to) => {
-    if (String(to).startsWith(join(s.stateDir, 'receipts'))) {
+    if (isReceiptPath(to, s.stateDir)) {
       updates += 1
       // The per-item manifest write is first; fail the final status write.
       if (updates === 2) throw Object.assign(new Error('deterministic final receipt EACCES'), { code: 'EACCES' })

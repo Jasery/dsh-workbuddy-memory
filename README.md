@@ -1,5 +1,7 @@
 # dsh-workbuddy-memory
 
+[![CI](https://github.com/Jasery/dsh-workbuddy-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/Jasery/dsh-workbuddy-memory/actions/workflows/ci.yml)
+
 English | [中文](README.zh.md)
 
 Let DSH share the memory files WorkBuddy already writes — no second copy, no

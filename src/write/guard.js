@@ -11,10 +11,10 @@
  * this is a guard against accidents, not a security boundary.
  */
 
-import { realpathSync } from 'node:fs'
 import { isAbsolute, resolve, sep } from 'node:path'
 import { probeEnvironment } from '../env.js'
 import { resolveCwd } from '../inject.js'
+import { resolveLink } from './fslock.js'
 
 const BARE_WRITERS = new Set(['write', 'edit', 'str_replace_editor', 'apply_patch'])
 
@@ -43,18 +43,25 @@ export function writeTargets(name, args) {
   return typeof raw === 'string' && raw.trim() ? [raw.trim()] : []
 }
 
-/** Resolve a path as far as it exists, so links are compared by target. */
+/**
+ * Resolve a path as far as it exists, so links are compared by target.
+ *
+ * A path that does not exist yet still has to canonicalise like its parent.
+ * Resolving only complete paths meant `canon()` returned the caller's spelling
+ * for anything about to be created — a Windows 8.3 short name (`RUNNER~1`), or
+ * a differently-cased directory — and that spelling never matched the
+ * canonicalised parent. `isMemoryTarget()` then answered "not memory" for a new
+ * file in the memory directory, which is exactly the case the guard exists for.
+ *
+ * `resolveLink()` in `fslock.js` is the same rule and the same reason, so it is
+ * the implementation rather than a second copy that can drift.
+ *
+ * @param {string} path
+ * @returns {string} absolute, canonical where anything along the way exists.
+ */
 export function canon(path) {
   if (!path) return ''
-  try {
-    return realpathSync.native(path)
-  } catch {
-    try {
-      return realpathSync(path)
-    } catch {
-      return resolve(path)
-    }
-  }
+  return resolveLink(path)
 }
 
 /** Fold the parts of a path the platform itself ignores. */
