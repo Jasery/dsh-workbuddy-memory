@@ -426,9 +426,13 @@ test('layered mode injects complete core entries within the per-source budget an
 
 test('compact rules are complete in both locales and remain under 500 UTF-16 units', () => {
   const en = createTranslator('en')
+  const zh = createTranslator('zh')
   const { cfg, probe } = fixture({ config: { inject: { mode: 'layered' } } })
   const english = renderSections({ cfg, probe, t: en }).find((item) => item.name === 'workbuddy-memory:rules').text
-  const chinese = renderSections({ cfg, probe, t }).find((item) => item.name === 'workbuddy-memory:rules').text
+  // `t` is the Chinese translator: using it for both would have compared the
+  // Chinese block with itself, so the English assertions below never ran against
+  // English text.
+  const chinese = renderSections({ cfg, probe, t: zh }).find((item) => item.name === 'workbuddy-memory:rules').text
   assert.ok(english.length <= 500, `English rules are ${english.length} chars`)
   assert.ok(chinese.length <= 500, `Chinese rules are ${chinese.length} chars`)
   assert.match(english, /task-shaped work/)
@@ -437,6 +441,12 @@ test('compact rules are complete in both locales and remain under 500 UTF-16 uni
   assert.match(chinese, /收尾前检查/)
   assert.match(chinese, /memory_read/)
   assert.match(chinese, /面板操作/)
+  assert.doesNotMatch(chinese, /task-shaped/, 'no English leaks into the Chinese block')
+
+  // Appending is not a decision to hand back to the user: the rule has to say so,
+  // or the model asks "shall I record this?" at the end of every task.
+  assert.match(english, /Just append/, 'the English block says to append without asking')
+  assert.match(chinese, /直接做，不必问/, 'the Chinese block says the same')
 })
 
 test('full-mode rules keep every numbered rule inside limits.rules, hint included, in both locales', () => {
