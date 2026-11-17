@@ -12,6 +12,12 @@ import test from 'node:test'
 import { readFile } from 'node:fs/promises'
 
 import { Config, normalizeConfig } from '../src/config.js'
+import { pinNavigator } from './helpers/locale.mjs'
+
+// The copy assertions below are Chinese. Without a pinned language they assert
+// against whatever locale the runner happens to have — English on CI, and on
+// Node 20 not even that, since the runtime has no `navigator` at all.
+pinNavigator('zh-CN')
 
 /** Capture the module the host would have loaded. */
 function loadClient() {

@@ -14,6 +14,13 @@ import { join } from 'node:path'
 import test, { beforeEach } from 'node:test'
 
 import { createRuntime, text, tick, walk } from './helpers/react.mjs'
+import { pinNavigator } from './helpers/locale.mjs'
+
+// Every assertion below reads Chinese copy out of the real components. The
+// panel resolves its language from the host or, absent one, from
+// `navigator.language` — so without pinning it these tests assert against the
+// runner's locale, which is English on CI and unavailable on Node 20.
+pinNavigator('zh-CN')
 
 const runtime = createRuntime()
 

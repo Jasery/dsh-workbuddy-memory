@@ -1,0 +1,110 @@
+name: Publish
+
+# Tag-driven: pushing a `v*` tag is the release decision, everything after it is
+# mechanical. Nothing here can run for a commit or a pull request, so a merge to
+# `main` never ships a version by accident.
+#
+# `workflow_dispatch` exists for two cases:
+#   * a release whose publish step failed — re-run it without deleting and
+#     re-pushing the tag, because the tag is the record and rewriting it would
+#     be a lie;
+#   * `dry_run: true` — rehearse the whole path (checks, install, tests,
+#     `npm publish --dry-run`, notes) against an existing tag without touching
+#     the registry or the release page.
+#
+# The npm token lives in the `NPM_TOKEN` repository secret. Without it the job
+# fails at the publish step and nothing is released, which is the safe default.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to release or rehearse, e.g. v0.2.3'
+        required: true
+        type: string
+      dry_run:
+        description: 'Rehearse: publish with --dry-run and skip the release page'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: publish-${{ inputs.tag || github.ref_name }}
+  # Never cancel a publish midway: npm stages a version before it commits it,
+  # and a cancelled run can leave the version staged.
+  cancel-in-progress: false
+
+permissions:
+  contents: write # creating the release
+  id-token: write # provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      DRY_RUN: ${{ inputs.dry_run || false }}
+    steps:
+      # `fetch-depth: 0` is required: the notes script asks git for the previous
+      # tag to build the compare link.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+
+      # The tag, the manifest and both changelogs are three separate statements
+      # about which version this is, and nothing else compares them.
+      - name: Refuse a tag that disagrees with the manifest or the changelog
+        id: check
+        run: |
+          set -o pipefail
+          node scripts/check-release.mjs "${TAG#v}" --allow-published | tee check.txt
+          echo "published=$(sed -n 's/^already-published: //p' check.txt)" >> "$GITHUB_OUTPUT"
+
+      # Tests run against the exact commit the tag points at: a tag can be
+      # pushed for a commit that never went through CI on `main`.
+      - run: npm ci
+      - run: npm test
+
+      - name: Publish to npm
+        if: steps.check.outputs.published != 'true' && env.DRY_RUN != 'true'
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Rehearse the publish
+        if: steps.check.outputs.published != 'true' && env.DRY_RUN == 'true'
+        run: npm publish --access public --dry-run
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Skip the publish, the version is already on npm
+        if: steps.check.outputs.published == 'true'
+        run: echo "::notice::${TAG#v} is already on npm; only the release notes are (re)created"
+
+      - name: Write the release notes
+        run: node scripts/release-notes.mjs "${TAG#v}" --out notes.md --title-out title.txt
+
+      - name: Show the release body
+        run: cat notes.md
+
+      - name: Create or update the GitHub release
+        if: env.DRY_RUN != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -o pipefail
+          title="$(cat title.txt)"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$title" --notes-file notes.md
+          else
+            gh release create "$TAG" --title "$title" --notes-file notes.md --verify-tag --latest
+          fi

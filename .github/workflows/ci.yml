@@ -1,0 +1,109 @@
+name: CI
+
+# Everything that runs on a commit or a pull request. Publishing lives in
+# `publish.yml` and only runs for a `v*` tag, so a merge to `main` can never
+# ship a version by accident.
+
+on:
+  push:
+    branches: [main]
+    tags-ignore: ['v*']
+  pull_request:
+
+# A new push to the same branch makes the previous run obsolete. Tags are
+# excluded because `publish.yml` owns them.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test / node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 is the floor `engines.node` promises; 24 is what the desktop
+        # runtime ships. Windows is included because the file layout, the lock
+        # directory and the panel's path handling all have a Windows branch.
+        include:
+          - { os: ubuntu-latest, node: '20' }
+          - { os: ubuntu-latest, node: '22' }
+          - { os: ubuntu-latest, node: '24' }
+          - { os: windows-latest, node: '24' }
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # `npm ci` refuses a lockfile that disagrees with the manifest, which is
+      # the point: a dependency edit without a lockfile update fails here
+      # instead of on a user's machine.
+      - run: npm ci
+
+      - run: npm test
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      # `--test-coverage-include` landed in Node 22; the matrix above proves the
+      # suite runs on 20, and this job measures it on 24. Node prints the report
+      # to stdout rather than writing files, so tee it into an artifact.
+      - run: npm run test:coverage | tee coverage.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage.txt
+          if-no-files-found: error
+
+  package:
+    name: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+
+      # What actually ships, not what the manifest claims: `npm pack` resolves
+      # the `files` list and prints every path. This is the check that catches a
+      # missing `locale/` or an accidentally included `tests/`.
+      - run: npm pack --dry-run
+
+      - run: npm pack
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tarball
+          path: '*.tgz'
+          if-no-files-found: error
+
+  # One required check to configure branch protection against, instead of five
+  # matrix entries whose names change whenever the matrix does.
+  ci:
+    name: ci
+    if: always()
+    needs: [test, coverage, package]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless every job succeeded
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "a required job did not succeed" >&2
+          exit 1
+      - run: echo "all jobs succeeded"
