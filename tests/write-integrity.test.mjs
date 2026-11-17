@@ -7,10 +7,10 @@
 
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import fs, { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import fs, { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -33,6 +33,38 @@ function workspace() {
   mkdirSync(join(home, 'memory'), { recursive: true })
   writeFileSync(join(home, 'memory', 'MEMORY.md'), '- 全局条目\n', 'utf8')
   return { root, cwd, memoryDir, home }
+}
+
+/**
+ * Whether a path is inside the receipt directory.
+ *
+ * `writeFileAtomic` resolves the target before renaming, so the path it hands
+ * to `renameSync` is canonical — while `stateDir` is whatever spelling
+ * `mkdtemp` returned. On a Windows runner `TEMP` is an 8.3 short name
+ * (`RUNNER~1`), so a plain `startsWith` never matched and the injected failure
+ * fired zero times. Comparing canonical forms is what the assertion means.
+ */
+function isReceiptPath(candidate, stateDir) {
+  const receipts = join(stateDir, 'receipts')
+  const left = canonical(String(candidate))
+  const right = canonical(receipts)
+  return left === right || left.startsWith(`${right}\\`) || left.startsWith(`${right}/`)
+}
+
+/** `realpath` of the longest existing prefix, with the rest re-appended. */
+function canonical(path) {
+  let current = resolve(path)
+  const missing = []
+  while (true) {
+    try {
+      return join(realpathSync.native(current), ...missing)
+    } catch {
+      const parent = dirname(current)
+      if (parent === current) return resolve(path)
+      missing.unshift(current.slice(parent.length).replace(/^[\\/]+/, ''))
+      current = parent
+    }
+  }
 }
 
 function setup(overrides = {}, hooks = {}) {
@@ -530,7 +562,7 @@ test('a failed receipt update is not a commit, and does not revive a deleted ent
   const realRename = fs.renameSync
   let injected = 0
   fs.renameSync = (from, to) => {
-    if (String(to).startsWith(join(s.stateDir, 'receipts'))) {
+    if (isReceiptPath(to, s.stateDir)) {
       injected += 1
       throw Object.assign(new Error('deterministic receipt update EACCES'), { code: 'EACCES' })
     }
@@ -639,7 +671,7 @@ test('an archive receipt update failure stops before more items move, then resum
   const realRename = fs.renameSync
   let updates = 0
   fs.renameSync = (from, to) => {
-    if (String(to).startsWith(join(s.stateDir, 'receipts'))) {
+    if (isReceiptPath(to, s.stateDir)) {
       updates += 1
       if (updates === 2) throw Object.assign(new Error('deterministic receipt update EACCES'), { code: 'EACCES' })
     }
@@ -684,7 +716,7 @@ test('a failed final archive receipt update is never reported ok', async () => {
   const realRename = fs.renameSync
   let updates = 0
   fs.renameSync = (from, to) => {
-    if (String(to).startsWith(join(s.stateDir, 'receipts'))) {
+    if (isReceiptPath(to, s.stateDir)) {
       updates += 1
       // The per-item manifest write is first; fail the final status write.
       if (updates === 2) throw Object.assign(new Error('deterministic final receipt EACCES'), { code: 'EACCES' })

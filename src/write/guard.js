@@ -12,7 +12,7 @@
  */
 
 import { realpathSync } from 'node:fs'
-import { isAbsolute, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { probeEnvironment } from '../env.js'
 import { resolveCwd } from '../inject.js'
 
@@ -43,16 +43,48 @@ export function writeTargets(name, args) {
   return typeof raw === 'string' && raw.trim() ? [raw.trim()] : []
 }
 
-/** Resolve a path as far as it exists, so links are compared by target. */
+/**
+ * Resolve a path as far as it exists, so links are compared by target.
+ *
+ * A path that does not exist yet still has to canonicalise like its parent.
+ * Resolving only complete paths meant `canon()` returned the caller's spelling
+ * for anything about to be created — a Windows 8.3 short name (`RUNNER~1`), or
+ * a differently-cased directory — and that spelling never matched the
+ * canonicalised parent. `isMemoryTarget()` then answered "not memory" for a new
+ * file in the memory directory, which is exactly the case the guard exists for.
+ *
+ * So: resolve the nearest existing ancestor and re-append the missing tail.
+ *
+ * @param {string} path
+ * @returns {string} absolute, canonical where anything along the way exists.
+ */
 export function canon(path) {
   if (!path) return ''
+  const absolute = resolve(path)
+  const direct = realpathOrNull(absolute)
+  if (direct) return direct
+
+  const missing = []
+  let current = absolute
+  while (true) {
+    const parent = dirname(current)
+    if (parent === current) return absolute
+    missing.unshift(basename(current))
+    current = parent
+    const real = realpathOrNull(current)
+    if (real) return join(real, ...missing)
+  }
+}
+
+/** `realpath` of an existing path, or null when nothing is there. */
+function realpathOrNull(path) {
   try {
     return realpathSync.native(path)
   } catch {
     try {
       return realpathSync(path)
     } catch {
-      return resolve(path)
+      return null
     }
   }
 }
