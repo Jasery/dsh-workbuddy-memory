@@ -9,7 +9,7 @@ import test from 'node:test'
 import { normalizeConfig, resolveDistillAbove } from '../src/config.js'
 import { probeEnvironment } from '../src/env.js'
 import { createTranslator } from '../src/locale.js'
-import { distillHint, isAbnormalState, redact, renderSections, SECTION_ORDER } from '../src/render.js'
+import { distillHint, isAbnormalState, LAYERED_SHARES, redact, renderSections, SECTION_ORDER, shareOf } from '../src/render.js'
 import { describeBrief } from '../src/tools/status.js'
 
 const t = createTranslator('zh')
@@ -424,7 +424,7 @@ test('layered mode injects complete core entries within the per-source budget an
   assert.equal(sections.mode, 'layered')
 })
 
-test('compact rules are complete in both locales and remain under 500 UTF-16 units', () => {
+test('compact rules are complete in both locales and remain inside the rules share', () => {
   const en = createTranslator('en')
   const zh = createTranslator('zh')
   const { cfg, probe } = fixture({ config: { inject: { mode: 'layered' } } })
@@ -433,8 +433,11 @@ test('compact rules are complete in both locales and remain under 500 UTF-16 uni
   // Chinese block with itself, so the English assertions below never ran against
   // English text.
   const chinese = renderSections({ cfg, probe, t: zh }).find((item) => item.name === 'workbuddy-memory:rules').text
-  assert.ok(english.length <= 500, `English rules are ${english.length} chars`)
-  assert.ok(chinese.length <= 500, `Chinese rules are ${chinese.length} chars`)
+  // Derived, not hard-coded: the share moved from 12.5% to 17.5% when the daily
+  // rule was added, and a literal here would have failed for the wrong reason.
+  const budget = shareOf(cfg.inject.coreBudget, 'rules')
+  assert.ok(english.length <= budget, `English rules are ${english.length} units against ${budget}`)
+  assert.ok(chinese.length <= budget, `Chinese rules are ${chinese.length} units against ${budget}`)
   assert.match(english, /task-shaped work/)
   assert.match(english, /memory_read/)
   assert.match(english, /panel/)
@@ -447,6 +450,17 @@ test('compact rules are complete in both locales and remain under 500 UTF-16 uni
   // or the model asks "shall I record this?" at the end of every task.
   assert.match(english, /Just append/, 'the English block says to append without asking')
   assert.match(chinese, /直接做，不必问/, 'the Chinese block says the same')
+
+  // Daily files are the case that exposed this: layered mode used to inject no
+  // rule about them at all, so a session could run a whole day and never write
+  // one. Every locale has to say they exist, that they are not injected, and what
+  // to do once they age out.
+  for (const [name, block] of [['en', english], ['zh', chinese]]) {
+    assert.match(block, /YYYY-MM-DD/, `${name}: names the daily file`)
+    assert.match(block, /30/, `${name}: says when to distil`)
+  }
+  assert.match(english, /never injected/, 'English says daily files are not injected')
+  assert.match(chinese, /不注入/, 'Chinese says the same')
 })
 
 test('full-mode rules keep every numbered rule inside limits.rules, hint included, in both locales', () => {
@@ -732,20 +746,57 @@ test('block headings carry no product name, and the rules say where the file com
   assert.match(rules, /数据|data/, 'the data-not-instructions rule survives the rewrite')
 })
 
-test('the English compact rules keep real headroom after the provenance rewrite', () => {
-  // The block is capped at 12.5% of `coreBudget` = 500 units, and `fitText`
-  // drops whole lines from the end: a rule that overflows is a rule the model
-  // never reads, while the block still looks complete. 16 units of headroom is
-  // the margin this rewrite settled on; anything tighter has to be re-measured
-  // before it ships.
+test('the English compact rules keep real headroom inside the rules share', () => {
+  // The block is capped at its share of `coreBudget`, and `fitText` drops whole
+  // lines from the end: a rule that overflows is a rule the model never reads,
+  // while the block still looks complete. That is exactly how layered mode lost
+  // the daily-file rule once already. The share is read from `LAYERED_SHARES`
+  // rather than hard-coded, so moving the split cannot silently disable this.
   const en = createTranslator('en')
   const { cfg, probe } = fixture({ config: { inject: { mode: 'layered' } } })
   const english = renderSections({ cfg, probe, t: en }).find((item) => item.name === 'workbuddy-memory:rules').text
-  const budget = Math.floor(cfg.inject.coreBudget * 0.125)
+  const budget = shareOf(cfg.inject.coreBudget, 'rules')
+  assert.equal(budget, Math.floor(cfg.inject.coreBudget * LAYERED_SHARES.rules))
   assert.ok(english.length <= budget, `English rules are ${english.length} units against ${budget}`)
   assert.ok(budget - english.length >= 10, `only ${budget - english.length} units of headroom left`)
   const declared = en('compactRules')
   for (let index = 0; index < declared.length; index += 1) {
     assert.ok(english.includes(`${index + 1}. ${declared[index]}`), `rule ${index + 1} survives whole`)
+  }
+})
+
+test('the layered shares add up and scale with coreBudget', () => {
+  // Four blocks, one budget: the ratios have to sum to 1, or the promise "4000
+  // units total" is either a lie (over) or leaves room nobody can use (under).
+  const total = LAYERED_SHARES.project + LAYERED_SHARES.user + LAYERED_SHARES.rules + LAYERED_SHARES.directory
+  assert.equal(Math.round(total * 1000) / 1000, 1, `the shares sum to ${total}`)
+
+  for (const coreBudget of [4000, 8000, 20000]) {
+    const sum = ['project', 'user', 'rules', 'directory'].reduce((acc, block) => acc + shareOf(coreBudget, block), 0)
+    assert.ok(sum <= coreBudget, `coreBudget ${coreBudget}: the shares ask for ${sum}`)
+    // Flooring each share loses at most a unit per block.
+    assert.ok(coreBudget - sum <= 4, `coreBudget ${coreBudget}: ${coreBudget - sum} units unallocated`)
+  }
+})
+
+test('the rules share is sized for English, not just Chinese', () => {
+  // The bug this guards: at 12.5% the English rules block could not hold a
+  // daily-file rule, and `fitText` dropped it without a word — so English
+  // sessions never learned daily files exist while Chinese ones did. English
+  // needs ~660 units for the same five rules that cost Chinese ~410.
+  const en = createTranslator('en')
+  const zh = createTranslator('zh')
+  const { cfg, probe } = fixture({ config: { inject: { mode: 'layered' } } })
+  const english = renderSections({ cfg, probe, t: en }).find((item) => item.name === 'workbuddy-memory:rules').text
+  const chinese = renderSections({ cfg, probe, t: zh }).find((item) => item.name === 'workbuddy-memory:rules').text
+
+  assert.ok(english.length > 500, `English really is the long one: ${english.length} units`)
+  assert.ok(english.length <= shareOf(cfg.inject.coreBudget, 'rules'), 'and it still fits its share')
+  // Both languages must carry every rule, not just the ones that fit.
+  for (const [name, block] of [['en', english], ['zh', chinese]]) {
+    const declared = (name === 'en' ? en : zh)('compactRules')
+    for (let index = 0; index < declared.length; index += 1) {
+      assert.ok(block.includes(`${index + 1}. ${declared[index]}`), `${name}: rule ${index + 1} survives whole`)
+    }
   }
 })

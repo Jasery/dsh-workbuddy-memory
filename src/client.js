@@ -214,7 +214,7 @@ window.__ModuleLoader__.load({
       'settings.injectModeLayered': '分层',
       'settings.injectModeFull': '整份（full）',
       'settings.coreBudget': '常驻预算',
-      'settings.coreBudgetHint': '分层注入的总预算，单位是 UTF-16 码元，可设 4000–20000。按 37.5% / 37.5% / 12.5% / 12.5% 分给项目核心、用户核心、固定规则与主题目录；包装也计入。',
+      'settings.coreBudgetHint': '分层注入的总预算，单位是 UTF-16 码元，可设 4000–20000。按 35% / 35% / 17.5% / 12.5% 分给项目核心、用户核心、固定规则与主题目录；包装也计入。',
       'settings.hostRejected': '宿主拒绝了这次修改（值不合法或已被更高层覆盖）',
       'settings.noWriteAccess': '当前连接无法写入宿主配置。请直接编辑 profile 的 cordis.patch.yml 后重载插件。',
 
@@ -590,7 +590,7 @@ window.__ModuleLoader__.load({
       'settings.injectModeLayered': 'Layered',
       'settings.injectModeFull': 'Whole file (full)',
       'settings.coreBudget': 'Always-on budget',
-      'settings.coreBudgetHint': 'Total budget for layered injection, in UTF-16 code units, 4000–20000. Split 37.5% / 37.5% / 12.5% / 12.5% across the project core, the user core, the fixed rules and the topic directory; wrappers count.',
+      'settings.coreBudgetHint': 'Total budget for layered injection, in UTF-16 code units, 4000–20000. Split 35% / 35% / 17.5% / 12.5% across the project core, the user core, the fixed rules and the topic directory; wrappers count.',
       'settings.hostRejected': 'The host refused this change (invalid value, or overridden by a higher layer)',
       'settings.noWriteAccess': 'This connection cannot write host config. Edit the profile cordis.patch.yml and reload the plugin.',
 

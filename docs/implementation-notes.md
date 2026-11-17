@@ -264,10 +264,11 @@ L3 会带整份文件，`POST /action` 的 body 上限从 64 KB 提到 512 KB；
 ### 15.2 预算切分与「前缀」语义（`src/render.js`）
 
 - `coreBudget` 默认 4000，`normalizeConfig` 夹到 4000–20000。
-- 切分：项目核心 `floor(coreBudget × 0.375)`、用户核心同样 37.5%、规则 12.5%、主题目录 + 兼容提示 12.5%（合计 100%）。
+- 切分在 `render.js` 的 `LAYERED_SHARES` 里，单位是**比例**不是码元，所以随 `coreBudget` 缩放：项目核心 35%、用户核心 35%、规则 17.5%、主题目录 + 兼容提示 12.5%（合计 100%）。用 `shareOf(coreBudget, block)` 取某一块的额度，不要在别处重新写 `Math.floor(coreBudget * 0.xx)`——这三个数字原先散在三处，改一处漏两处。
+- **规则块的份额是按英文定的，不是按中文。** 同样五条规则，中文 411 码元、英文 657 码元。原先 12.5%（500）时英文装不下第 5 条日期文件规则，`fitText` 会静默丢掉它——结果英文会话完全不知道日期文件存在，中文会话知道。17.5%（700）让两种语言都装得下且都有余量（中 +289 / 英 +43）。改这个比例前先跑 `tests/render.test.mjs` 里那条「the rules share is sized for English」。
 - 核心条目是文件**前缀**：第一条放不下就停止，不会跳过它去捡后面更短的条目——跳过会让模型分不清「漏掉的」和「被删掉的」。溢出提示的槽位在任何条目落位前预留，且按最坏情况（位数最多）预留，所以加提示永远不会把块顶出预算。
 - 少放了条目时状态写成 `layered:core-over-budget(N)`，并进入 `compatibility`；`NORMAL_STATES` 之外的任何状态都算「这块不是全部」。
-- 规则块在分层下不用 `inject.limits.rules` 的长度，而是 `coreBudget × 0.125`，整行取舍；**规则块里的蒸馏/超限提示只在 `inject.mode: 'full'` 下注入**（`hint = layered ? '' : …`）。判据是配置模式，不是某个文件是否退回 legacy——所以 legacy 文件跑在默认分层配置下同样没有这段提示。分层下用户记忆超限的可见性由主题目录与 `memory_status` 的 `compatibility` 承担。
+- 规则块在分层下不用 `inject.limits.rules` 的长度，而是 `shareOf(coreBudget, 'rules')`，整行取舍；**规则块里的蒸馏/超限提示只在 `inject.mode: 'full'` 下注入**（`hint = layered ? '' : …`）。判据是配置模式，不是某个文件是否退回 legacy——所以 legacy 文件跑在默认分层配置下同样没有这段提示。分层下用户记忆超限的可见性由主题目录与 `memory_status` 的 `compatibility` 承担。
 - **但 `inject.distillAbove` 两种模式都生效**（M-3 起）：full 下写在规则块（`distillHint`），分层下写在主题目录（`render.js:111-114` 的 `overShare` 带 `distill` 标记 → `overShareDistill` 文案）。所以两种模式超过同一阈值都会说「该蒸馏」，区别只在提示落在哪一块。
 - `limits.project` / `.user` 在分层下只当**块上限**的开关用（`> 0` 才启用），不参与预算。但 `limits.user` 还有第二个作用：`distillAbove` 的默认值是 `2 × limits.user`（`resolveDistillAbove`），所以**分层下调小 `limits.user` 会让同一个文件更早被判为该蒸馏**。实测：同一份 5033 字符用户文件，`limits.user: 8000`（阈值 16000）只出「常驻只取核心」，`limits.user: 2000`（阈值 4000）多出「已超过蒸馏阈值……下次改动时先按主题蒸馏」。`limits.user: 0` 仍然关掉整个用户来源（`render.js:79` 先判 `> 0`，`distillAbove` 也随之变 0）。这条语义由 `tests/render.test.mjs` 的 `in layered mode limits.user still moves the distillation threshold it derives` 钉住，面板 hint 与 README 配置表按它写。
 - 主题目录的 section 名沿用 `workbuddy-memory:profile`（与画像块共名），所以状态从 `states.directory` 读，不从名字推断。

@@ -4,6 +4,24 @@ import { analyzeMemory } from './layers.js'
 export const SECTION_ORDER = { project: 200, rules: 210, user: 220, profile: 230 }
 
 /**
+ * How `inject.coreBudget` is divided between the four layered blocks.
+ *
+ * The rules share is the one that has to absorb a *language* difference, not just
+ * a size one: the same four or five rules cost 369 UTF-16 units in Chinese and 663
+ * in English, because English needs more words for the same content. At the old
+ * 12.5% (500 units) the English block could not hold a daily-file rule at all —
+ * `fitText` would have dropped it silently, and the model would never learn that
+ * daily files exist. 17.5% gives English room (700 units) while Chinese keeps
+ * headroom.
+ *
+ * These are ratios, not units, so they scale with `coreBudget`.
+ */
+export const LAYERED_SHARES = { project: 0.35, user: 0.35, rules: 0.175, directory: 0.125 }
+
+/** Units one layered block may use. */
+export const shareOf = (coreBudget, block) => Math.floor(coreBudget * LAYERED_SHARES[block])
+
+/**
  * States that mean "this source did what it was asked to do".
  *
  * Everything else — a legacy fallback, an over-budget core, a truncated topic
@@ -91,7 +109,7 @@ export function renderSections({ cfg, probe, t, readFile }) {
       if (limit > 0 && raw.length > limit) overShare.push({ key, label, chars: raw.length, legacy: limit })
       return
     }
-    const budget = Math.floor(cfg.inject.coreBudget * 0.375)
+    const budget = shareOf(cfg.inject.coreBudget, key === 'project' ? 'project' : 'user')
     const prefix = `### ${label}\n\n`
     const core = renderEntries(parsed.coreEntries, `## ${t('coreHeading')}`, Math.max(0, budget - prefix.length), t)
     const text = sanitize(`${prefix}${core.text}`)
@@ -128,7 +146,7 @@ export function renderSections({ cfg, probe, t, readFile }) {
     const rules = t(layered ? (cfg.readOnly ? 'compactRulesReadOnly' : 'compactRules') : (cfg.readOnly ? 'rulesReadOnly' : 'rules'))
     const lines = Array.isArray(rules) ? rules : []
     if (lines.length) {
-      const budget = layered ? Math.floor(cfg.inject.coreBudget * 0.125) : cfg.inject.limits.rules
+      const budget = layered ? shareOf(cfg.inject.coreBudget, 'rules') : cfg.inject.limits.rules
       const base = `### ${t('section.rules')}\n\n${lines.map((line, index) => `${index + 1}. ${line}`).join('\n')}`
       const hint = layered ? '' : cfg.readOnly ? '' : distillHint({ cfg, probe, t })
       const text = layered ? fitText(base, budget).text : `${truncateChars(base, Math.max(0, budget - hint.length))}${hint}`
@@ -211,7 +229,7 @@ export function renderSections({ cfg, probe, t, readFile }) {
       entries.push(`- ${topic.source}/${sanitize(topic.name)}`)
     }
     for (const hint of profileTopics) entries.push(`- ${hint}`)
-    const budget = Math.floor(cfg.inject.coreBudget * 0.125)
+    const budget = shareOf(cfg.inject.coreBudget, 'directory')
     const tail = entries.length ? fitText(`### ${t('topicDirectory')}\n\n${entries.join('\n')}`, budget, { notice: t('directoryMore') }) : { text: '', dropped: 0 }
     if (tail.text) {
       // A partial topic list has to say so: an 11-of-40 list read as the whole

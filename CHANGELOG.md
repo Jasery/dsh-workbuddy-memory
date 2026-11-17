@@ -2,6 +2,28 @@
 
 English | [中文](CHANGELOG.zh.md)
 
+## 0.2.1 — 2026-11-17
+
+- **Layered mode now tells the model that daily files exist.** The compact rules
+  covered when to write, what to write and how to edit, but never mentioned
+  `YYYY-MM-DD.md` — so a session could run a whole day without writing one, and
+  the "distil past 30 days, then archive" step had nothing pointing at it. A fifth
+  rule now says the daily file is append-only, is not injected, and what to do once
+  it ages out.
+- **The rules share of `coreBudget` grew from 12.5% to 17.5%** (project and user
+  cores drop 37.5% → 35% each) to make room for it. The share had been sized
+  against Chinese: the same five rules cost 411 units in Chinese but 657 in
+  English, so at 500 units the English block could not hold the new rule and
+  `fitText` would have dropped it silently — English sessions would have stayed
+  unaware while Chinese ones were told. The ratios now live in one place
+  (`LAYERED_SHARES` in `src/render.js`) instead of three literals.
+- **Appending an entry needs no permission.** Rule 2 now ends with
+  `Just append.` — it said when and what to write, but not that a single append
+  is the model's own call, so sessions ended with "shall I record this?" instead.
+- Fixed a test that compared the Chinese rules block with itself: it rendered
+  both locales with the same translator, so the English assertions never ran
+  against English text.
+
 ## 0.2.0 — 2026-11-17
 
 Layered injection, and four fewer tools. **Upgrading changes what reaches the
