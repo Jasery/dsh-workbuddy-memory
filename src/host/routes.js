@@ -17,7 +17,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { probeEnvironment, ageInDays } from '../env.js'
-import { parseSections } from '../markdown.js'
+import { parseSections, topSection } from '../markdown.js'
 import { summarizeMemory } from '../layers.js'
 import { readTextSafe } from '../fsx.js'
 import { contentRevision } from '../write/fslock.js'
@@ -151,13 +151,29 @@ function describe(path, limit = MAX_TEXT_CHARS) {
   // Entries are collected from each section's own line range rather than by
   // heading text: two sections can share a heading, and the panel must render
   // the rows that are actually there.
-  const sections = parseSections(text).map((section) => {
+  //
+  // The region above the first `##` is a section too. A daily note is often
+  // written as a plain bullet list with no headings at all — this file was, and
+  // the panel called it empty while it held 1.5 KB of text. `topSection` already
+  // models that region for the tools (`section: "(top)"`), so the panel uses the
+  // same shape instead of inventing a second answer.
+  const ranges = parseSections(text).map((section) => ({
+    heading: section.heading,
+    level: section.level,
+    line: section.line,
+    endLine: section.endLine,
+  }))
+  const top = topSection(text)
+  if (top) {
+    ranges.unshift({ heading: top.heading, level: top.level, line: top.line, endLine: top.endLine, top: true })
+  }
+  const sections = ranges.map((section) => {
     const entries = []
     for (let index = section.line + 1; index <= section.endLine; index += 1) {
       const match = /^([ \t]*)[-*][ \t]+(\S.*)$/.exec(lines[index] ?? '')
       if (match) entries.push({ line: index, text: match[2].trim() })
     }
-    return { heading: section.heading, level: section.level, line: section.line, endLine: section.endLine, entries }
+    return { heading: section.heading, level: section.level, line: section.line, endLine: section.endLine, entries, ...(section.top ? { top: true } : {}) }
   })
   return {
     path,

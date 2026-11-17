@@ -361,3 +361,65 @@ test('the layering summary never carries entry text into /state', async () => {
   const body = JSON.parse(response.body)
   assert.equal(body.stores.user.layering.mode, 'layered')
 })
+
+test('a daily note written as bare bullets is not reported as empty', async () => {
+  // The panel called a 1.5 KB daily note "still empty": `describe` counted
+  // entries only inside `parseSections` ranges, and a file with no `##` heading
+  // has none — so `entries === 0 && sections.length === 0` matched the empty-file
+  // branch. Daily notes are exactly the file most likely to be written that way.
+  //
+  // A daily note lives under the *project* directory, so the harness needs a cwd:
+  // with `recent.cwd: null` the project target resolves to no path at all.
+  const cwd = mkdtempSync(join(tmpdir(), 'wbm-daily-'))
+  const { call } = await harness({ recent: { cwd } })
+  const memDir = join(cwd, '.workbuddy', 'memory')
+  mkdirSync(memDir, { recursive: true })
+
+  const shapes = {
+    '- one\n- two\n- three\n': 3,
+    '# 2026-11-17\n\n- one\n- two\n': 2,
+    '## Progress\n- one\n- two\n': 2,
+    '- above\n\n## Progress\n- below\n': 2,
+    '': 0,
+  }
+  for (const [body, expected] of Object.entries(shapes)) {
+    writeFileSync(join(memDir, '2026-11-17.md'), body, 'utf8')
+    const parsed = JSON.parse((await call('/workbuddy-memory/content?target=project-daily&date=2026-11-17')).body)
+    assert.equal(parsed.ok, true)
+    assert.equal(parsed.entries, expected, `body ${JSON.stringify(body.slice(0, 30))} should have ${expected} entries, got ${parsed.entries}`)
+  }
+})
+
+test('the region above the first heading is a section the panel can address', async () => {
+  // It is reported with `top: true` and the `(top)` heading the tools already use,
+  // so the panel renders those rows instead of dropping them.
+  const cwd = mkdtempSync(join(tmpdir(), 'wbm-daily-'))
+  const { call } = await harness({ recent: { cwd } })
+  const memDir = join(cwd, '.workbuddy', 'memory')
+  mkdirSync(memDir, { recursive: true })
+  writeFileSync(join(memDir, '2026-11-17.md'), '- first\n- second\n\n## Later\n- third\n', 'utf8')
+
+  const parsed = JSON.parse((await call('/workbuddy-memory/content?target=project-daily&date=2026-11-17')).body)
+  const top = parsed.sections.find((section) => section.top)
+  assert.ok(top, 'the top region is reported')
+  assert.equal(top.heading, '(top)', 'with the same pseudo-heading the tools use')
+  assert.equal(top.entries.length, 2)
+  assert.equal(parsed.sections.find((section) => section.heading === 'Later').entries.length, 1)
+  // Line numbers must still point at the real rows: the section editor and the
+  // per-entry editor address rows by line.
+  assert.deepEqual(top.entries.map((entry) => entry.line), [0, 1])
+})
+
+test('an actually empty daily note still reports zero entries', async () => {
+  // The fix must not turn "nothing there" into a phantom section: the empty-state
+  // branch in the panel depends on this staying 0.
+  const cwd = mkdtempSync(join(tmpdir(), 'wbm-daily-'))
+  const { call } = await harness({ recent: { cwd } })
+  const memDir = join(cwd, '.workbuddy', 'memory')
+  mkdirSync(memDir, { recursive: true })
+  writeFileSync(join(memDir, '2026-11-17.md'), '', 'utf8')
+  const parsed = JSON.parse((await call('/workbuddy-memory/content?target=project-daily&date=2026-11-17')).body)
+  assert.equal(parsed.entries, 0)
+  assert.equal(parsed.sections.length, 0)
+})
+

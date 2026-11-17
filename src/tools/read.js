@@ -3,7 +3,7 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { existsSync } from 'node:fs'
 import { readTextSafe, statSafe } from '../fsx.js'
-import { findSections, parseSections } from '../markdown.js'
+import { parseSections, resolveSection, topSection } from '../markdown.js'
 import { contentRevision } from '../write/fslock.js'
 import { resolveTarget, TARGETS } from '../write/store.js'
 import { resolveCwd } from '../inject.js'
@@ -178,27 +178,50 @@ export function readTool({ cfg, t, ctx }) {
           .split(/\r?\n/)
           .filter((line) => /^[ \t]*[-*][ \t]+\S/.test(line)).length,
       }))
+      // A file can hold bullets above its first `##` — a daily note often is
+      // nothing but that. `parseSections` starts at level 2, so those rows were
+      // missing from the list entirely: `sectionsOnly` reported an empty file and
+      // the caller had no way to learn the entries were there. `topSection` names
+      // that region `(top)`, which is also what `memory_read(section: "(top)")`
+      // and the panel's row editor address.
+      const top = topSection(file.text)
+      if (top) {
+        sections.unshift({
+          heading: top.heading,
+          level: top.level,
+          line: top.line + 1,
+          entries: file.text
+            .slice(top.start, top.end)
+            .split(/\r?\n/)
+            .filter((line) => /^[ \t]*[-*][ \t]+\S/.test(line)).length,
+          top: true,
+        })
+      }
 
       if (args.sectionsOnly) {
         return { ok: true, path: resolved.path, revision, bytes: file.bytes, sections }
       }
 
       if (args.section) {
-        const matches = findSections(file.text, String(args.section))
-        if (matches.length === 0) return { ok: false, code: 'no_section', path: resolved.path, revision, sections }
-        // A duplicate heading is named rather than guessed at: the caller is
-        // looking at one of them and would otherwise silently get the other.
-        if (matches.length > 1) {
-          return {
-            ok: false,
-            code: 'ambiguous_section',
-            path: resolved.path,
-            revision,
-            sections,
-            lines: matches.map((section) => section.line + 1),
+        // `resolveSection` understands `(top)` and a document's own H1 title, which
+        // `findSections` does not. Using the plain lookup here meant `(top)`
+        // appeared in the section list and then answered `no_section` — a name the
+        // tool itself had just offered.
+        const resolvedSection = resolveSection(file.text, String(args.section))
+        if (!resolvedSection.ok) {
+          if (resolvedSection.reason === 'ambiguous_section') {
+            return {
+              ok: false,
+              code: 'ambiguous_section',
+              path: resolved.path,
+              revision,
+              sections,
+              lines: (resolvedSection.lines ?? []).map((line) => line + 1),
+            }
           }
+          return { ok: false, code: 'no_section', path: resolved.path, revision, sections }
         }
-        const match = matches[0]
+        const match = resolvedSection.section
         const page = pageText(file.text.slice(match.start, match.end), args.offset, args.limit, t)
         if (page.error) return { ok: false, code: page.error, path: resolved.path, revision, sections }
         return {

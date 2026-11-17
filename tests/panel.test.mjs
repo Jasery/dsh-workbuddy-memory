@@ -8,6 +8,9 @@
  */
 
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test, { beforeEach } from 'node:test'
 
 import { createRuntime, text, tick, walk } from './helpers/react.mjs'
@@ -1449,6 +1452,62 @@ test('the copy button puts the split prompt on the clipboard, and survives a hos
   } finally {
     if (original) Object.defineProperty(globalThis, 'navigator', original)
     else delete globalThis.navigator
+    restore()
+  }
+})
+
+test('the panel renders the entries of a daily note that has no headings', async () => {
+  // Counting them is only half the fix: the file view renders `doc.sections`, so
+  // a top region that is counted but not rendered would still look empty.
+  const cwd = mkdtempSync(join(tmpdir(), 'wbm-daily-panel-'))
+  const memDir = join(cwd, '.workbuddy', 'memory')
+  mkdirSync(memDir, { recursive: true })
+  const body = '- 第一条日记\n- 第二条日记\n'
+  writeFileSync(join(memDir, '2026-11-17.md'), body, 'utf8')
+
+  installFetch({
+    state: stateFor({
+      cwd,
+      selected: cwd,
+      projects: [{ ...stateFor().projects[0], key: 'proj-d', path: cwd, name: 'daily', title: 'daily', current: true, latestDaily: '2026-11-17' }],
+      stores: {
+        ...stateFor().stores,
+        project: { ...stateFor().stores.project, dir: memDir, memory: join(memDir, 'MEMORY.md'), daily: [{ name: '2026-11-17.md', date: '2026-11-17', bytes: body.length, ageDays: 0 }] },
+      },
+    }),
+    content: (url) =>
+      String(url).includes('target=project-daily')
+        ? {
+            ok: true,
+            target: 'project-daily',
+            date: '2026-11-17',
+            path: join(memDir, '2026-11-17.md'),
+            bytes: body.length,
+            revision: 'rev-daily',
+            entries: 2,
+            truncated: false,
+            text: body,
+            sections: [{ heading: '(top)', level: 1, line: -1, endLine: 1, top: true, entries: [{ line: 0, text: '第一条日记' }, { line: 1, text: '第二条日记' }] }],
+            writable: false,
+          }
+        : projectContent,
+  })
+  const restore = installTimers()
+  try {
+    let tree = await runtime.settle(MemoryWorkspace, { mode: 'overview', layout: 'wide' })
+    const row = walk(tree).find((node) => node.type === 'button' && String(node.props?.className ?? '').includes('wbm-project') && text(node).includes('daily'))
+    assert.ok(row, 'the project is listed')
+    tree = await runtime.fire(row, 'onClick', MemoryWorkspace, { mode: 'overview', layout: 'wide' })
+    // Selecting a project opens MEMORY.md when it exists; the daily note is the
+    // "latest" button next to it.
+    const daily = walk(tree).find((node) => node.type === 'button' && text(node).includes('2026-11-17'))
+    assert.ok(daily, 'the latest daily button is offered')
+    tree = await runtime.fire(daily, 'onClick', MemoryWorkspace, { mode: 'overview', layout: 'wide' })
+    const body2 = text(expand(tree))
+    assert.doesNotMatch(body2, /这个文件还是空的/, 'the empty-state must not appear for a file with entries')
+    assert.match(body2, /第一条日记/, 'the first entry is rendered')
+    assert.match(body2, /第二条日记/, 'and the second')
+  } finally {
     restore()
   }
 })

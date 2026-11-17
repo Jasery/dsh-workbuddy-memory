@@ -739,3 +739,40 @@ test('memory_read refuses an ambiguous profile instead of picking one', async ()
   assert.equal(result.code, 'ambiguous_profile')
   assert.equal(result.revision, undefined)
 })
+
+test('memory_read lists entries that sit above the first heading', async () => {
+  // A daily note is often a bare bullet list. `parseSections` starts at level 2,
+  // so `sectionsOnly` answered with an empty list for exactly the shape a daily
+  // note has — the caller concluded the file was empty.
+  const { dir, tools, exec } = fixture()
+  writeFileSync(join(dir, '2026-11-17.md'), '- 第一条\n- 第二条\n\n## 后来\n- 第三条\n', 'utf8')
+
+  const result = await tools.read.execute({ target: 'project-daily', date: '2026-11-17', sectionsOnly: true }, exec)
+  assert.equal(result.ok, true)
+  const top = result.sections.find((section) => section.top)
+  assert.ok(top, 'the top region is listed')
+  assert.equal(top.heading, '(top)', 'under the pseudo-heading the tools already use')
+  assert.equal(top.entries, 2, 'both bullets above the heading are counted')
+  assert.equal(result.sections.find((section) => section.heading === '后来').entries, 1)
+})
+
+test('memory_read on a heading-less file does not look empty', async () => {
+  const { dir, tools, exec } = fixture()
+  writeFileSync(join(dir, '2026-11-17.md'), '- one\n- two\n- three\n', 'utf8')
+  const result = await tools.read.execute({ target: 'project-daily', date: '2026-11-17', sectionsOnly: true }, exec)
+  assert.equal(result.ok, true)
+  assert.equal(result.sections.length, 1)
+  assert.equal(result.sections[0].heading, '(top)')
+  assert.equal(result.sections[0].entries, 3)
+})
+
+test('a heading-less file can still be read by section, through (top)', async () => {
+  // The listing is only useful if the rows it names can then be read: this is the
+  // call the model makes after seeing `(top)` in the section list.
+  const { dir, tools, exec } = fixture()
+  writeFileSync(join(dir, '2026-11-17.md'), '- alpha\n- beta\n', 'utf8')
+  const result = await tools.read.execute({ target: 'project-daily', date: '2026-11-17', section: '(top)' }, exec)
+  assert.equal(result.ok, true)
+  assert.match(result.content, /alpha/)
+  assert.match(result.content, /beta/)
+})
