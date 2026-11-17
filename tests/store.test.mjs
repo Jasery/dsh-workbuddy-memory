@@ -948,3 +948,68 @@ test('a sectioned daily note becomes visible to the section list', async () => {
   assert.deepEqual(parsed.map((section) => section.heading), ['进展'])
   assert.ok(topSection(readFileSync(daily, 'utf8')), 'the earlier bullet stays addressable as (top)')
 })
+
+test('an entry in a daily note can be corrected and removed', async () => {
+  // A daily note may carry sections now, so a typo in a log entry is worth fixing.
+  // `editAt` used to refuse the target outright (`bad_target`), which left the
+  // model with no way to correct what it had just written.
+  const s = setup()
+  const date = '2026-11-17'
+  const daily = join(s.memoryDir, `${date}.md`)
+  writeFileSync(daily, '## 进展\n\n- 第一条\n- 第二条\n- 第三条\n', 'utf8')
+
+  const before = readFileSync(daily, 'utf8')
+  const edited = await s.store.editAt(
+    { target: 'project-daily', date, section: '进展', line: 2, replacement: '第一条改', expectedRevision: contentRevision(before) },
+    s.probe,
+  )
+  assert.equal(edited.ok, true, `editAt should be allowed: ${edited.code}`)
+  assert.ok(edited.backup, 'an entry edit takes a backup')
+  assert.match(readFileSync(daily, 'utf8'), /- 第一条改/)
+
+  const beforeRemove = readFileSync(daily, 'utf8')
+  const removed = await s.store.remove(
+    { target: 'project-daily', date, section: '进展', line: 3, expectedRevision: contentRevision(beforeRemove) },
+    s.probe,
+  )
+  assert.equal(removed.ok, true, `remove should be allowed: ${removed.code}`)
+  const after = readFileSync(daily, 'utf8')
+  assert.doesNotMatch(after, /- 第二条/)
+  assert.match(after, /- 第一条改/)
+  assert.match(after, /- 第三条/)
+})
+
+test('a daily note still refuses the structural operations', async () => {
+  // Entry editing is allowed; rearranging the document is not. A log is appended
+  // to and corrected, never reordered — that is what keeps "daily note" meaning
+  // something different from MEMORY.md.
+  const s = setup()
+  const date = '2026-11-17'
+  const daily = join(s.memoryDir, `${date}.md`)
+  writeFileSync(daily, '## 进展\n\n- 一条\n', 'utf8')
+  const revision = () => contentRevision(readFileSync(daily, 'utf8'))
+
+  const cases = [
+    ['replaceSection', () => s.store.replaceSection({ target: 'project-daily', date, section: '进展', body: '- x\n', expectedRevision: revision() }, s.probe)],
+    ['removeSection', () => s.store.removeSection({ target: 'project-daily', date, section: '进展', expectedRevision: revision() }, s.probe)],
+    ['replaceDocument', () => s.store.replaceDocument({ target: 'project-daily', date, text: '- x\n', expectedRevision: revision() }, s.probe)],
+  ]
+  for (const [name, call] of cases) {
+    const result = await call()
+    assert.equal(result.ok, false, `${name} must be refused on a daily note`)
+    assert.equal(result.code, 'bad_target', `${name} says why: ${result.code}`)
+  }
+  // And the file is untouched by all three attempts.
+  assert.equal(readFileSync(daily, 'utf8'), '## 进展\n\n- 一条\n')
+})
+
+test('editing a daily entry still requires the revision', async () => {
+  // The CAS is what stops an edit from landing on a log another writer extended.
+  const s = setup()
+  const date = '2026-11-17'
+  const daily = join(s.memoryDir, `${date}.md`)
+  writeFileSync(daily, '## 进展\n\n- 一条\n', 'utf8')
+  const result = await s.store.editAt({ target: 'project-daily', date, section: '进展', line: 2, replacement: '改' }, s.probe)
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'revision_required')
+})

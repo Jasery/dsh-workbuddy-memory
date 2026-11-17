@@ -613,7 +613,14 @@ export function createStore({ cfg, stateDir, onCommit }) {
     if (!cfg.write.enabled) return fail('write_disabled')
 
     const resolved = resolveTarget(input.target, probe)
-    if (!resolved.path || resolved.mode !== 'rewrite') return fail('bad_target', { target: input.target })
+    // A daily note may be edited entry by entry: it can carry sections now, and a
+    // typo in a log entry is worth fixing. Everything that reorders or removes a
+    // *document* — `replaceSection`, `removeSection`, `replaceDocument`,
+    // `restore` — stays MEMORY.md-only, so a log is still a log: append and
+    // correct, never rearrange.
+    if (!resolved.path || (resolved.mode !== 'rewrite' && resolved.mode !== 'append')) {
+      return fail('bad_target', { target: input.target })
+    }
 
     return commitRewrite({
       action: input.mode === 'remove' ? 'remove' : 'edit',
@@ -631,7 +638,12 @@ export function createStore({ cfg, stateDir, onCommit }) {
         expectedRevision: input.expectedRevision ? String(input.expectedRevision) : null,
       },
       transform: (current) => {
-        const section = resolveCoreAlias(current, String(input.section ?? ''), coreHeadingFor(cfg))
+        // The core alias only exists in a memory document. A daily note keeps
+        // whatever heading the caller named, so `常驻记忆` is not rewritten into
+        // some other spelling there.
+        const section = resolved.mode === 'rewrite'
+          ? resolveCoreAlias(current, String(input.section ?? ''), coreHeadingFor(cfg))
+          : String(input.section ?? '')
         const result = editEntryAt(current, section, input.line, {
           replacement: input.replacement,
           mode: input.mode ?? 'replace',
