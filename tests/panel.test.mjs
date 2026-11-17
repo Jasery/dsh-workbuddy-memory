@@ -1511,3 +1511,72 @@ test('the panel renders the entries of a daily note that has no headings', async
     restore()
   }
 })
+
+test('a daily note can be given a section from the panel', async () => {
+  // The panel used to hard-code `section: ''` for daily files, so the model and
+  // the panel both had no way to produce a `##` heading there — and the panel
+  // groups rows by section, so such a note always rendered as one flat list.
+  const cwd = mkdtempSync(join(tmpdir(), 'wbm-daily-sec-'))
+  const memDir = join(cwd, '.workbuddy', 'memory')
+  mkdirSync(memDir, { recursive: true })
+  const body = '- 已有条目\n'
+  writeFileSync(join(memDir, '2026-11-17.md'), body, 'utf8')
+
+  const calls = installFetch({
+    state: stateFor({
+      cwd,
+      selected: cwd,
+      projects: [{ ...stateFor().projects[0], key: 'proj-s', path: cwd, name: 'sec', title: 'sec', current: true, latestDaily: '2026-11-17' }],
+      stores: {
+        ...stateFor().stores,
+        project: { ...stateFor().stores.project, dir: memDir, memory: join(memDir, 'MEMORY.md'), daily: [{ name: '2026-11-17.md', date: '2026-11-17', bytes: body.length, ageDays: 0 }] },
+      },
+    }),
+    content: (url) =>
+      String(url).includes('target=project-daily')
+        ? {
+            ok: true,
+            target: 'project-daily',
+            date: '2026-11-17',
+            path: join(memDir, '2026-11-17.md'),
+            bytes: body.length,
+            revision: 'rev-daily',
+            entries: 1,
+            truncated: false,
+            text: body,
+            sections: [{ heading: '(top)', level: 1, line: -1, endLine: 0, top: true, entries: [{ line: 0, text: '已有条目' }] }],
+            writable: false,
+          }
+        : projectContent,
+  })
+  const restore = installTimers()
+  try {
+    let tree = await runtime.settle(MemoryWorkspace, { mode: 'overview', layout: 'wide' })
+    const row = walk(tree).find((node) => node.type === 'button' && String(node.props?.className ?? '').includes('wbm-project') && text(node).includes('sec'))
+    tree = await runtime.fire(row, 'onClick', MemoryWorkspace, { mode: 'overview', layout: 'wide' })
+    const dailyButton = walk(tree).find((node) => node.type === 'button' && text(node).includes('2026-11-17'))
+    tree = await runtime.fire(dailyButton, 'onClick', MemoryWorkspace, { mode: 'overview', layout: 'wide' })
+
+    // Open the add-entry editor and fill both fields.
+    const addButton = walk(tree).find((node) => node.type === 'button' && text(node).includes('添加一条'))
+    assert.ok(addButton, 'the daily note offers an add button')
+    tree = await runtime.fire(addButton, 'onClick', MemoryWorkspace, { mode: 'overview', layout: 'wide' })
+
+    const inputs = walk(tree).filter((node) => node.type === 'input' && String(node.props?.className ?? '').includes('wbm-input'))
+    assert.equal(inputs.length, 2, 'the daily editor offers a section field and a text field')
+    tree = await runtime.fire(inputs[0], 'onChange', MemoryWorkspace, { mode: 'overview', layout: 'wide' }, { value: '进展' })
+    const refreshed = walk(tree).filter((node) => node.type === 'input' && String(node.props?.className ?? '').includes('wbm-input'))
+    tree = await runtime.fire(refreshed[1], 'onChange', MemoryWorkspace, { mode: 'overview', layout: 'wide' }, { value: '新条目' })
+
+    const save = walk(tree).find((node) => node.type === 'button' && String(node.props?.className ?? '').includes('primary') && text(node).includes('添加'))
+    assert.ok(save, 'the save button is available')
+    await runtime.fire(save, 'onClick', MemoryWorkspace, { mode: 'overview', layout: 'wide' })
+
+    const add = calls.actions.find((action) => action.type === 'add')
+    assert.ok(add, 'an add action was sent')
+    assert.equal(add.section, '进展', 'the section reaches the store instead of being dropped')
+    assert.equal(add.text, '新条目')
+  } finally {
+    restore()
+  }
+})

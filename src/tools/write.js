@@ -14,11 +14,15 @@ export function appendTool({ cfg, store, ctx }) {
   return defineTool({
     name: 'memory_append',
     description:
-      'Append one entry to WorkBuddy memory. Rewrites only the target section of MEMORY.md, or appends a bullet to today\'s daily note. Returns the new revision; pass it back as expectedRevision on the next write.',
+      'Append one entry to WorkBuddy memory: a section of MEMORY.md, or a bullet in today\'s daily note. On a daily note, passing `section` creates that `##` heading when missing and appends under it (the file is rewritten with a backup); without `section` the bullet is appended at the end of the file, which lands in the last section if the note already has one. Returns the new revision; pass it back as expectedRevision on the next write.',
     parameters: {
       target: { type: 'string', required: true, description: `${TARGETS.join(' | ')}` },
       text: { type: 'string', required: true, description: 'entry text, without the leading "- "' },
-      section: { type: 'string', description: 'section heading to append under (MEMORY.md targets)' },
+      section: {
+        type: 'string',
+        description:
+          'section heading to append under; created if missing. For a daily note, omitting it appends a bare bullet at the end of the file',
+      },
       date: { type: 'string', description: 'YYYY-MM-DD, only for project-daily' },
       expectedRevision: { type: 'string', description: 'revision from memory_read; the write is refused when it no longer matches' },
       operationId: { type: 'string', description: 'idempotency key; replaying the same value does not write twice' },

@@ -10,6 +10,7 @@ import { ageInDays, probeEnvironment } from '../src/env.js'
 import { contentRevision } from '../src/write/fslock.js'
 import { createStore, localDateStamp } from '../src/write/store.js'
 import { analyzeMemory } from '../src/layers.js'
+import { parseSections, topSection } from '../src/markdown.js'
 
 function workspace() {
   const root = mkdtempSync(join(tmpdir(), 'wbm-'))
@@ -874,4 +875,76 @@ test('backupKeep keeps a whole tidy-up session restorable', async () => {
   assert.equal(rows.length, 9)
   const texts = rows.map((row) => s.store.readRevision(file, row.name).text)
   assert.ok(texts.some((text) => text.includes('- e0')), 'the pre-edit state is still there')
+})
+
+test('a daily note can carry sections, and asking for one creates the heading', async () => {
+  // `section` used to be accepted and silently ignored for daily files: the call
+  // returned ok and the file got a bare bullet, so nothing ever produced a `##`
+  // heading — and the panel, which groups rows by section, then showed nothing.
+  const s = setup()
+  const date = '2026-11-17'
+  const daily = join(s.memoryDir, `${date}.md`)
+
+  const first = await s.store.append({ target: 'project-daily', date, section: '进展', text: '第一条' }, s.probe)
+  assert.equal(first.ok, true)
+  assert.equal(first.section, '进展')
+  assert.match(readFileSync(daily, 'utf8'), /^## 进展$/m, 'the heading is created')
+
+  // A second entry under the same heading must not create a second heading.
+  await s.store.append({ target: 'project-daily', date, section: '进展', text: '第二条' }, s.probe)
+  const text = readFileSync(daily, 'utf8')
+  assert.equal((text.match(/^## 进展$/gm) ?? []).length, 1, 'one heading, two entries')
+  assert.match(text, /- 第一条/)
+  assert.match(text, /- 第二条/)
+
+  // A different section gets its own heading.
+  await s.store.append({ target: 'project-daily', date, section: '问题', text: '第三条' }, s.probe)
+  assert.equal((readFileSync(daily, 'utf8').match(/^## /gm) ?? []).length, 2)
+})
+
+test('a sectioned daily append is a rewrite, so it leaves a backup', async () => {
+  // Plain appends are O_APPEND and deliberately skip the backup (adding bytes
+  // cannot truncate). Creating or inserting into a section rewrites the file, so
+  // it must take one — otherwise the one operation that can lose data has no way
+  // back.
+  const s = setup()
+  const date = '2026-11-17'
+  const daily = join(s.memoryDir, `${date}.md`)
+  writeFileSync(daily, '- 原有\n', 'utf8')
+
+  const plain = await s.store.append({ target: 'project-daily', date, text: '纯追加' }, s.probe)
+  assert.equal(plain.ok, true)
+  assert.equal(s.store.listRevisions(daily).length, 0, 'a plain append takes no backup')
+
+  const sectioned = await s.store.append({ target: 'project-daily', date, section: '进展', text: '带小节' }, s.probe)
+  assert.equal(sectioned.ok, true)
+  assert.ok(s.store.listRevisions(daily).length >= 1, 'a sectioned append does')
+})
+
+test('a daily note without a section still appends without rewriting', async () => {
+  // The append-only path has to stay: it is what keeps a log cheap and crash-safe.
+  const s = setup()
+  const date = '2026-11-17'
+  const daily = join(s.memoryDir, `${date}.md`)
+  const result = await s.store.append({ target: 'project-daily', date, text: '一条' }, s.probe)
+  assert.equal(result.ok, true)
+  assert.equal(readFileSync(daily, 'utf8'), '- 一条\n')
+  // `appendDaily` reports no section at all rather than `null`; what matters is
+  // that it did not claim one.
+  assert.ok(!result.section, 'no section was asked for, so none is reported')
+})
+
+test('a sectioned daily note becomes visible to the section list', async () => {
+  // The whole point: the panel groups rows by `##` heading, so a daily note with
+  // sections must parse as sections — including the bare bullets that were
+  // written before the first heading.
+  const s = setup()
+  const date = '2026-11-17'
+  const daily = join(s.memoryDir, `${date}.md`)
+  writeFileSync(daily, '- 无小节的一条\n', 'utf8')
+  await s.store.append({ target: 'project-daily', date, section: '进展', text: '有小节的一条' }, s.probe)
+
+  const parsed = parseSections(readFileSync(daily, 'utf8'))
+  assert.deepEqual(parsed.map((section) => section.heading), ['进展'])
+  assert.ok(topSection(readFileSync(daily, 'utf8')), 'the earlier bullet stays addressable as (top)')
 })

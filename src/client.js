@@ -390,6 +390,7 @@ window.__ModuleLoader__.load({
       'editor.saveDocument': '保存整份文件',
       'editor.addDailyEntry': '添加日期条目',
       'editor.sectionPlaceholder': '小节标题，例如：工具环境坑',
+      'editor.dailySectionOptional': '小节标题（可留空，留空就追加到文件末尾）',
       'editor.firstEntryPlaceholder': '第一条内容（可留空，稍后再加）',
       'editor.pending': '（待补充）',
       'editor.sectionCreated': '小节已创建',
@@ -752,6 +753,7 @@ window.__ModuleLoader__.load({
       'editor.saveDocument': "Save the whole file",
       'editor.addDailyEntry': "Add a dated entry",
       'editor.sectionPlaceholder': "Section heading, e.g. Toolchain pitfalls",
+      'editor.dailySectionOptional': "Section heading (optional — empty appends to the end of the file)",
       'editor.firstEntryPlaceholder': "First entry (may be empty; add more later)",
       'editor.pending': "(to be filled in)",
       'editor.sectionCreated': "Section created",
@@ -3372,16 +3374,18 @@ window.__ModuleLoader__.load({
           'div',
           { className: 'wbm-editor' },
           h('div', { style: { fontSize: '12px', fontWeight: 600, marginBottom: '6px' } }, daily ? t('editor.addDailyEntry') : t('doc.newSection')),
-          daily
-            ? null
-            : h('input', {
-                className: 'wbm-input',
-                autoFocus: true,
-                value: newSection.heading,
-                placeholder: t('editor.sectionPlaceholder'),
-                onChange: (event) => setNewSection({ ...newSection, heading: event.target.value }),
-              }),
-          daily ? null : h('div', { style: { height: '6px' } }),
+          // A daily note may carry sections too. The field is optional there: left
+          // empty, the bullet is appended at the end of the file (append-only, no
+          // rewrite); filled in, that `##` heading is created when missing and the
+          // entry goes under it.
+          h('input', {
+            className: 'wbm-input',
+            autoFocus: !daily,
+            value: newSection.heading,
+            placeholder: daily ? t('editor.dailySectionOptional') : t('editor.sectionPlaceholder'),
+            onChange: (event) => setNewSection({ ...newSection, heading: event.target.value }),
+          }),
+          h('div', { style: { height: '6px' } }),
           h('input', {
             className: 'wbm-input',
             autoFocus: daily,
@@ -3399,13 +3403,13 @@ window.__ModuleLoader__.load({
               {
                 type: 'button',
                 className: 'wbm-btn primary',
-                disabled: busy || (daily ? !newSection.text.trim() : !newSection.heading.trim()),
+                disabled: busy || !newSection.text.trim() || (!daily && !newSection.heading.trim()),
                 onClick: async () => {
                   const result = await act({
                     type: 'add',
                     target: selected.target,
                     date: selected.date,
-                    section: daily ? '' : newSection.heading.trim(),
+                    section: newSection.heading.trim(),
                     text: newSection.text.trim() || t('editor.pending'),
                     expectedRevision: doc?.revision,
                   })

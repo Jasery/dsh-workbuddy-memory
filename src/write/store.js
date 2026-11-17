@@ -1331,18 +1331,55 @@ export function createStore({ cfg, stateDir, onCommit }) {
     }
 
     if (resolved.mode === 'append') {
-      return appendDaily({
+      // A daily note can carry sections too. Without one the append is a plain
+      // O_APPEND of a bullet — no read-modify-write, no rewrite of the file, so the
+      // log stays append-only and a crash can only lose the tail.
+      //
+      // With a section the file has to be rewritten (a heading may need creating,
+      // or the entry inserted under an existing one), so that path goes through
+      // `commitRewrite` like every other structural edit: lock, CAS, backup,
+      // atomic replace. Silently ignoring `section` — which is what this used to
+      // do — meant a caller asked for a section and got a bare bullet with `ok:
+      // true`, and the panel then had no headings to show.
+      if (!input.section) {
+        return appendDaily({
+          target: input.target,
+          path: resolved.path,
+          op,
+          text,
+          expectedRevision: input.expectedRevision,
+          request: {
+            target: input.target,
+            section: null,
+            text,
+            date: input.date ? String(input.date) : null,
+            expectedRevision: input.expectedRevision ? String(input.expectedRevision) : null,
+          },
+        })
+      }
+      return commitRewrite({
+        action: 'append',
         target: input.target,
         path: resolved.path,
-        op,
-        text,
+        operationId: input.operationId,
         expectedRevision: input.expectedRevision,
+        requireCas: false,
+        allowNoBackup: true,
         request: {
           target: input.target,
-          section: null,
+          section: String(input.section).trim(),
           text,
           date: input.date ? String(input.date) : null,
           expectedRevision: input.expectedRevision ? String(input.expectedRevision) : null,
+        },
+        transform: (current) => {
+          const requested = String(input.section).trim()
+          // A daily note is a log, not a memory document: it gets no `# Memory`
+          // skeleton and no core alias. `appendToSection` already creates the
+          // heading when it is missing, which is the whole point of asking for one.
+          const result = appendToSection(current, requested, text)
+          if (!result.ok) return { text: current, replaced: 0, reason: result.reason, hits: result.lines ?? [] }
+          return { text: result.text, replaced: 1, created: result.created, section: requested }
         },
       })
     }
