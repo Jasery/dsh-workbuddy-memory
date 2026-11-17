@@ -9,6 +9,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFile } from 'node:fs/promises'
 
 import { Config, normalizeConfig } from '../src/config.js'
 
@@ -491,47 +492,22 @@ test('a nested config field is written by its path segments, not as one dotted n
   assert.equal(await writeConfigField(form, 'stateDir', '/tmp/x'), false)
 })
 
-test('the card writes every control it renders through a path the host accepts', async () => {
-  // A green suite once hid the dotted-path bug because the fake form said yes to
-  // everything. Drive each commit callback the card wires up and require the host
-  // rule to accept it, so a control that renders but cannot save is a failure.
-  const record = []
-  const form = hostRuleForm(
-    snapshot({ value: { inject: { limits: {} }, write: {}, search: {}, guard: {}, ui: { allowWriteActions: true } } }),
-    Config,
-    record,
-  )
-  const tree = expand(SettingsCard({ form }))
-  const commitCalls = []
+test('every field the card writes is one the host will accept', async () => {
+  // Scanning the source rather than listing fields by hand is the point: a control
+  // added later with a bad path fails here without anyone remembering to extend a
+  // list. `commit(...)` and `setFlag(...)` are the only two ways the panel writes
+  // config, so their literals are the complete set of paths it can attempt.
+  const source = await readFile(new URL('../src/client.js', import.meta.url), 'utf8')
+  const fields = [...source.matchAll(/\b(?:commit|setFlag)\(\s*'([^']+)'/g)].map((match) => match[1])
+  assert.ok(fields.length >= 15, `expected the card to write many fields, found ${fields.length}`)
 
-  // The card renders controls; their handlers are the only path to a write. The
-  // handler identity is not reachable from the tree, so the fields the card is
-  // known to expose are checked directly — the same list the tests above read.
-  for (const field of [
-    'inject.enabled',
-    'inject.mode',
-    'inject.coreBudget',
-    'inject.limits.project',
-    'inject.limits.user',
-    'inject.distillAbove',
-    'write.enabled',
-    'guard.enabled',
-    'search.enabled',
-    'ui.allowWriteActions',
-    'ui.globalPanel',
-    'ui.projectTab',
-    'ui.sessionAction',
-    'ui.refreshMs',
-    'ui.maxProjects',
-  ]) {
-    record.length = 0
-    const ok = await writeConfigField(form, field, field.endsWith('Ms') ? 4000 : true)
-    commitCalls.push({ field, ok })
+  const form = hostRuleForm(snapshot(), Config, [])
+  const refused = []
+  for (const field of new Set(fields)) {
+    if (!(await writeConfigField(form, field, 1))) refused.push(field)
   }
 
-  const refused = commitCalls.filter((call) => !call.ok).map((call) => call.field)
-  assert.deepEqual(refused, [], `these rendered controls cannot be saved: ${JSON.stringify(refused)}`)
-  assert.equal(walk(tree).length > 0, true)
+  assert.deepEqual(refused, [], `these written fields are refused by the host: ${JSON.stringify(refused)}`)
 })
 
 test('an empty snapshot still shows the effective defaults for the limits', () => {
