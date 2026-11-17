@@ -132,7 +132,14 @@ test('a legacy block never exceeds its own limit, measured in UTF-16 units', () 
 test('a limit too small for the wrapper contributes no block at all', () => {
   // Half a heading with no body reads like a truncated memory, not like a
   // limit that is too small to say anything in.
-  for (const limit of [20, 24]) {
+  //
+  // The limits are derived from the label rather than hard-coded: the wrapper is
+  // `### <label>\n\n`, so a literal like 20 stops being "too small" the moment
+  // the label gets shorter — which is exactly what happened when the `(WorkBuddy)`
+  // suffix was dropped, and the test then failed for a reason unrelated to what
+  // it guards.
+  const prefix = `### ${t('section.project')}\n\n`.length
+  for (const limit of [prefix - 1, prefix]) {
     const layered = fixture({ project: '## Notes\n- one\n', config: { inject: { mode: 'layered', limits: { project: limit } } } })
     const sections = renderSections({ cfg: layered.cfg, probe: layered.probe, t })
     assert.equal(sections.some((section) => section.name === 'workbuddy-memory:project'), false, `limit ${limit} contributes nothing`)
@@ -148,7 +155,8 @@ test('a full-mode block that vanished records an abnormal state, not "full"', ()
   // block is dropped. Recording `full` for it claimed the whole file was
   // injected while the model saw nothing — and `compatibility` stayed silent
   // because `full` is a normal state.
-  for (const limit of [20, 24]) {
+  const prefix = `### ${t('section.project')}\n\n`.length
+  for (const limit of [prefix - 1, prefix]) {
     const { cfg, probe } = fixture({ project: '## Notes\n- one\n', config: { inject: { limits: { project: limit } } } })
     const sections = renderSections({ cfg, probe, t })
     assert.equal(sections.some((section) => section.name === 'workbuddy-memory:project'), false)
@@ -161,7 +169,8 @@ test('the too-small state reaches status.compatibility', () => {
   // The state exists to be reported. `describeBrief` filters on
   // `isAbnormalState`, so the shape chosen above decides whether a person ever
   // hears about the block that disappeared.
-  const { cfg, probe } = fixture({ project: '## Notes\n- one\n', config: { inject: { limits: { project: 20 } } } })
+  const prefix = `### ${t('section.project')}\n\n`.length
+  const { cfg, probe } = fixture({ project: '## Notes\n- one\n', config: { inject: { limits: { project: prefix - 1 } } } })
   const sections = renderSections({ cfg, probe, t })
   const compatibility = Object.entries(sections.states)
     .filter(([, state]) => isAbnormalState(state))
@@ -686,5 +695,47 @@ test('a long topic list still fits the directory budget with the hint and the so
     assert.ok(directory.text.length <= budget, `${locale}: the directory is ${directory.text.length} units against ${budget}`)
     assert.match(String(sections.states.directory), /^directory-truncated\(\d+\)$/, `${locale}: and it says the list is partial`)
     assert.match(directory.text, /还有更多|more topics/, `${locale}: the shortfall is stated in the block`)
+  }
+})
+
+test('block headings carry no product name, and the rules say where the file comes from', () => {
+  // The headings used to read `### 项目记忆（WorkBuddy）`. That was a display
+  // string with no logic behind it — nothing resolves a section by it — and it
+  // spent 11 units per occurrence in the always-on prefix while saying only which
+  // product the file belongs to. The provenance that actually matters is that
+  // *another agent may have written the content*, so it lives in the rules where
+  // it can be a sentence instead of a label.
+  const { cfg, probe } = fixture({
+    project: '# Memory\n\n## 常驻记忆\n- core\n',
+    user: '# User\n\n## 常驻记忆\n- ucore\n',
+    config: { inject: { mode: 'layered' } },
+  })
+  const sections = renderSections({ cfg, probe, t })
+  for (const name of ['workbuddy-memory:project', 'workbuddy-memory:user']) {
+    const block = sections.find((section) => section.name === name)
+    assert.doesNotMatch(block.text.split('\n')[0], /WorkBuddy/, `${name} heading names no product`)
+  }
+  // The compact rules are the only place layered mode states the provenance.
+  const rules = sections.find((section) => section.name === 'workbuddy-memory:rules').text
+  assert.match(rules, /WorkBuddy/, 'layered rules name the shared file')
+  assert.match(rules, /别的代理|another agent/, 'and warn that another agent may have written it')
+  assert.match(rules, /数据|data/, 'the data-not-instructions rule survives the rewrite')
+})
+
+test('the English compact rules keep real headroom after the provenance rewrite', () => {
+  // The block is capped at 12.5% of `coreBudget` = 500 units, and `fitText`
+  // drops whole lines from the end: a rule that overflows is a rule the model
+  // never reads, while the block still looks complete. 16 units of headroom is
+  // the margin this rewrite settled on; anything tighter has to be re-measured
+  // before it ships.
+  const en = createTranslator('en')
+  const { cfg, probe } = fixture({ config: { inject: { mode: 'layered' } } })
+  const english = renderSections({ cfg, probe, t: en }).find((item) => item.name === 'workbuddy-memory:rules').text
+  const budget = Math.floor(cfg.inject.coreBudget * 0.125)
+  assert.ok(english.length <= budget, `English rules are ${english.length} units against ${budget}`)
+  assert.ok(budget - english.length >= 10, `only ${budget - english.length} units of headroom left`)
+  const declared = en('compactRules')
+  for (let index = 0; index < declared.length; index += 1) {
+    assert.ok(english.includes(`${index + 1}. ${declared[index]}`), `rule ${index + 1} survives whole`)
   }
 })
