@@ -123,12 +123,18 @@ jobs:
           PUBLISHED: ${{ steps.check.outputs.published }}
         run: |
           set -o pipefail
+          tag="latest"
           if [ "$PUBLISHED" = "true" ]; then
             rehearsal="$(node -p "require('./package.json').version")-rehearsal.$(date +%s)"
             echo "::notice::${{ steps.version.outputs.value }} is already published; rehearsing as $rehearsal"
             npm version "$rehearsal" --no-git-tag-version --allow-same-version >/dev/null
+            # npm refuses a prerelease without an explicit dist-tag. A real
+            # release never hits this (0.2.3 is not a prerelease), but the
+            # rehearsal does, and it would rather fail here than teach the wrong
+            # lesson about the publish path.
+            tag="rehearsal"
           fi
-          npm publish --access public --dry-run --provenance
+          npm publish --access public --dry-run --provenance --tag "$tag"
 
       - name: Skip the publish, the version is already on npm
         if: steps.check.outputs.published == 'true' && env.DRY_RUN != 'true'
