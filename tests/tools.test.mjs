@@ -776,3 +776,46 @@ test('a heading-less file can still be read by section, through (top)', async ()
   assert.match(result.content, /alpha/)
   assert.match(result.content, /beta/)
 })
+
+test('memory_edit reaches a daily note, not just the store method behind it', async () => {
+  // `editAt` was opened to daily notes first, and the tool the model actually
+  // calls goes through `store.edit` instead — so the tool kept answering
+  // `bad_target` while the method behind it worked. The test drives the tool.
+  const { dir, tools, exec, probe } = fixture()
+  const date = '2026-11-17'
+  const daily = join(dir, `${date}.md`)
+  writeFileSync(daily, '## 进展\n\n- 第一条\n- 第二条\n', 'utf8')
+  void probe
+
+  const read = await tools.read.execute({ target: 'project-daily', date }, exec)
+  const edited = await tools.edit.execute(
+    { target: 'project-daily', section: '进展', match: '第一条', replacement: '第一条改', expectedRevision: read.revision },
+    exec,
+  )
+  assert.equal(edited.ok, true, `memory_edit should reach a daily note: ${edited.code}`)
+  assert.match(readFileSync(daily, 'utf8'), /- 第一条改/)
+
+  const beforeRemove = await tools.read.execute({ target: 'project-daily', date }, exec)
+  const removed = await tools.edit.execute(
+    { target: 'project-daily', section: '进展', match: '第二条', mode: 'remove', expectedRevision: beforeRemove.revision },
+    exec,
+  )
+  assert.equal(removed.ok, true, `memory_edit remove should reach a daily note: ${removed.code}`)
+  assert.doesNotMatch(readFileSync(daily, 'utf8'), /- 第二条/)
+})
+
+test('memory_edit on a daily note still refuses an ambiguous match', async () => {
+  // Matching rules do not get looser just because the file is a log.
+  const { dir, tools, exec } = fixture()
+  const date = '2026-11-17'
+  const daily = join(dir, `${date}.md`)
+  writeFileSync(daily, '## 进展\n\n- 同一句话\n- 同一句话\n', 'utf8')
+  const read = await tools.read.execute({ target: 'project-daily', date }, exec)
+  const result = await tools.edit.execute(
+    { target: 'project-daily', section: '进展', match: '同一句话', replacement: '改', expectedRevision: read.revision },
+    exec,
+  )
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'ambiguous')
+  assert.equal(readFileSync(daily, 'utf8'), '## 进展\n\n- 同一句话\n- 同一句话\n', 'nothing was written')
+})
