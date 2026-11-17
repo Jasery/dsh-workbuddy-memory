@@ -4,13 +4,15 @@ name: Publish
 # mechanical. Nothing here can run for a commit or a pull request, so a merge to
 # `main` never ships a version by accident.
 #
-# `workflow_dispatch` exists for two cases:
+# `workflow_dispatch` covers two cases that a tag push cannot:
 #   * a release whose publish step failed — re-run it without deleting and
 #     re-pushing the tag, because the tag is the record and rewriting it would
 #     be a lie;
 #   * `dry_run: true` — rehearse the whole path (checks, install, tests,
-#     `npm publish --dry-run`, notes) against an existing tag without touching
-#     the registry or the release page.
+#     `npm publish --dry-run`, notes) against the branch being dispatched, with
+#     no registry write and no release page. A rehearsal has to run the code that
+#     is about to be tagged, so it takes its version from the manifest rather
+#     than from a tag.
 #
 # The npm token lives in the `NPM_TOKEN` repository secret. Without it the job
 # fails at the publish step and nothing is released, which is the safe default.
@@ -21,11 +23,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing tag to release or rehearse, e.g. v0.2.3'
-        required: true
+        description: 'Tag to re-release, e.g. v0.2.3 (ignored when rehearsing)'
+        required: false
         type: string
       dry_run:
-        description: 'Rehearse: publish with --dry-run and skip the release page'
+        description: 'Rehearse against this branch: no publish, no release'
         required: false
         type: boolean
         default: false
@@ -47,11 +49,19 @@ jobs:
       TAG: ${{ inputs.tag || github.ref_name }}
       DRY_RUN: ${{ inputs.dry_run || false }}
     steps:
-      # `fetch-depth: 0` is required: the notes script asks git for the previous
-      # tag to build the compare link.
+      # Which commit to build is a different question from which version this is.
+      #
+      # A tag push releases the tagged commit, so the tag is checked out. A
+      # rehearsal runs code that is not tagged yet, so it checks out the branch
+      # the run was launched from — checking out the tag instead ran the old tree
+      # and died with "Cannot find module scripts/check-release.mjs" on a tag that
+      # predates these scripts.
+      #
+      # `fetch-depth: 0` is required either way: the notes script asks git for the
+      # previous tag to build the compare link.
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ inputs.dry_run && github.ref || inputs.tag || github.ref_name }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v7
@@ -60,17 +70,33 @@ jobs:
           cache: npm
           registry-url: 'https://registry.npmjs.org'
 
+      # The version is the tag being released, except in a rehearsal, where it is
+      # whatever the manifest says — there is no tag for code that is not released.
+      - name: Decide which version this is
+        id: version
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            version="$(node -p "require('./package.json').version")"
+            echo "::notice::dry run: rehearsing $version from the manifest, not from a tag"
+          else
+            version="${TAG#v}"
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "resolved version: $version"
+
       # The tag, the manifest and both changelogs are three separate statements
       # about which version this is, and nothing else compares them.
-      - name: Refuse a tag that disagrees with the manifest or the changelog
+      - name: Refuse a version that disagrees with the manifest or the changelog
         id: check
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
         run: |
           set -o pipefail
-          node scripts/check-release.mjs "${TAG#v}" --allow-published | tee check.txt
+          node scripts/check-release.mjs "$VERSION" --allow-published | tee check.txt
           echo "published=$(sed -n 's/^already-published: //p' check.txt)" >> "$GITHUB_OUTPUT"
 
-      # Tests run against the exact commit the tag points at: a tag can be
-      # pushed for a commit that never went through CI on `main`.
+      # Tests run against the exact commit being published: a tag can be pushed
+      # for a commit that never went through CI on `main`.
       - run: npm ci
       - run: npm test
 
@@ -88,10 +114,12 @@ jobs:
 
       - name: Skip the publish, the version is already on npm
         if: steps.check.outputs.published == 'true'
-        run: echo "::notice::${TAG#v} is already on npm; only the release notes are (re)created"
+        run: echo "::notice::${{ steps.version.outputs.value }} is already on npm; only the release notes are (re)created"
 
       - name: Write the release notes
-        run: node scripts/release-notes.mjs "${TAG#v}" --out notes.md --title-out title.txt
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: node scripts/release-notes.mjs "$VERSION" --out notes.md --title-out title.txt
 
       - name: Show the release body
         run: cat notes.md
