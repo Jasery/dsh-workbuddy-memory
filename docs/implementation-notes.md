@@ -356,3 +356,53 @@ operation lock（op-<hash>.lock，只有带 operationId 时）
 - 只在 Windows 11 + Node 24.14.0 上跑过；Linux 与 Node 20 未运行，不能宣称跨平台通过。
 - 未在本机真实 DSH profile 上做 live UI 复验（不安装 profile、不动真实记忆是用户本轮的约束），面板行为由 `tests/panel.test.mjs`（真实组件 + 桩 React + 桩 fetch）验证。
 - 未测最低宿主版本（0.2.0）与新宿主的组合；未测实际模型费用，不提供「省了多少 token」的承诺——分层的收益无法在没有真实 LLM 计费的实验里量化。
+
+## 16. CI 与发布（2026-11-17）
+
+### 16.1 分工：CI 只校验，`v*` tag 才发布
+
+`.github/workflows/ci.yml` 跑在 push main 与 PR 上；`.github/workflows/publish.yml` 只由 `v*` tag 触发（或手动 `workflow_dispatch`）。合并到 main 不可能发版。
+
+这与方案 O-08 原本写的「只校验、不发布」不同。用户当次明确要求 CI 自动发布，于是「发布前必须人工确认」这条规则换了一个执行点：**打 tag 就是那个确认**。发布路径上没有第二个开关，也没有「顺手发出去」的入口。
+
+### 16.2 发布前把三处版本号对齐成机器检查
+
+tag、`package.json.version`、两份 CHANGELOG 是三个独立的「这是哪个版本」的声明，npm 和 git 都不比较它们。`scripts/check-release.mjs` 一次比完，另外查 registry：
+
+- 已发布 + 没有 `--allow-published` → 失败（防止把旧版本重发成新 tag）；
+- 已发布 + 有 `--allow-published` → 打印 `already-published: true`，workflow 跳过 publish 只重建 Release。这样重跑一个发布作业是幂等的，不必删 tag 再推。
+- registry 不可达 → `unknown`，不当作「版本空闲」放行，也不阻塞发布。
+
+查的是单版本端点 `/<name>/<version>`，不是 packument——后者随每次发布增长。
+
+### 16.3 Release 正文从哪来
+
+`scripts/release-notes.mjs` 优先用 `.release-notes/v<version>.md`（手写、可带 `# 标题` 首行），否则取 `CHANGELOG.zh.md` 的 `## <version>` 小节；末尾追加 compare 链接，上一个 tag 由 `git describe --tags --abbrev=0 <tag>^` 得出，所以 checkout 必须 `fetch-depth: 0`。两种情况都不会产出空正文。
+
+### 16.4 测试对运行环境的两个隐式依赖（CI 暴露）
+
+本地一直是绿的，上 CI 一次挂掉 49 条，原因都不在代码逻辑：
+
+- **面板文案跟随 `navigator.language`**，CI runner 是 `en-US`，而断言全是中文。Node 20 上更糟：`navigator` 全局根本不存在（v21 才加），于是必然回落到英文。修法是 `tests/helpers/locale.mjs` 在测试里固定语言——让文案成为测试的属性，而不是机器的属性。
+- **`--test-coverage-include` 是 Node 22 才有的参数**。矩阵里 Node 20 只跑 `npm test`，覆盖率单独在 Node 24 上测。
+
+### 16.5 两个真 bug：路径在「创建之前」没有规范化
+
+`canon()`（guard）与 `resolveLink()`（fslock）原先都只在**整条路径存在**时才 `realpath`，否则原样返回调用方的写法。这在路径本来就规范的机器上看不出问题，在 CI 的 Windows runner 上炸了 11 条，根因是同一个：`TEMP` 是 8.3 短名（`C:\Users\RUNNER~1\...`），文件创建前后同一个文件有两种写法。
+
+- guard 侧：`isMemoryTarget()` 对「记忆目录里即将新建的文件」返回 false，于是 `write` 直接写进去——正好是 guard 存在的意义所在的那个写操作。
+- 指纹侧：`fingerprintFor()` 哈希路径，第一次调用（文件还不存在）与重放（文件已存在）得到不同指纹，重放被判 `operation_mismatch` 而不是 `duplicate`，receipt 的重放安全性失效。
+
+修法统一为「解析最近的存在祖先，再把缺失的尾段接回去」，实现在 `resolveLink()` 一处，`guard.canon()` 直接复用。三个收据测试另有一处同类问题：用 `String(to).startsWith(stateDir)` 判断路径，而 `writeFileAtomic` 在 rename 前会 realpath 目标，两者拼写不同，注入的失败一次都没触发。
+
+### 16.6 发布命令（人工兜底）
+
+CI 是主路径，但保留手工发版能力：
+
+```bash
+node scripts/check-release.mjs <version>        # 对齐检查
+npm publish --access public                     # 临时 userconfig 指向 registry.npmjs.org
+git tag -a v<version> -m "<标题>" && git push origin v<version>   # 触发 publish.yml
+```
+
+`npm publish` 成功后不要再用 `npm view` 验证：npm 有审核期，期间 CLI 查不到该版本，重试还会报 `E409 Cannot publish over previously staged version`——那是正常流程不是失败。
