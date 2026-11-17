@@ -218,6 +218,25 @@ window.__ModuleLoader__.load({
       'settings.hostRejected': '宿主拒绝了这次修改（值不合法或已被更高层覆盖）',
       'settings.noWriteAccess': '当前连接无法写入宿主配置。请直接编辑 profile 的 cordis.patch.yml 后重载插件。',
 
+      // layering. A file with no `## 常驻记忆` is injected whole, so its entire
+      // length is always-on. That is invisible from the panel — the file looks
+      // exactly the same either way — which is why it needs saying here.
+      'layer.title': '未划分常驻/按需',
+      'layer.legacy': '这个文件整份注入：{chars} 字符每轮都进上下文。分成「常驻记忆」和若干主题小节后，只有核心常驻，其余按需读取。',
+      'layer.legacyReason.missing_core': '没有找到「常驻记忆」小节。',
+      'layer.legacyReason.ambiguous_core': '「常驻记忆」小节不止一个，无法确定用哪个。',
+      'layer.legacyReason.invalid_core': '「常驻记忆」小节里有非条目内容（标题、段落或代码块）。',
+      'layer.legacyReason.non_entry_content': '某个主题小节里有非条目内容，整份文件无法可靠拆分。',
+      'layer.legacyReason.unknown': '文件结构无法可靠拆分。',
+      'layer.layered': '已分层：核心 {core} 字符常驻，{topics} 个主题（{chars} 字符）按需读取。',
+      'layer.askModel': '让模型出划分草案',
+      'layer.askModelHint': '复制这句话发给模型：它会读出当前 revision 并给出整份草案，你在本页「粘贴草案」里预览差异后保存。',
+      'layer.copyPrompt': '按主题帮我整理{which}记忆：先 memory_read 拿当前正文和 revision，再把条目分成「常驻记忆」（少量、每轮都要用的）和若干主题小节（按需查询的），输出整份草案正文和来源 revision，我自己在面板预览。不要直接写文件。',
+      'layer.whichProject': '项目',
+      'layer.whichUser': '用户',
+      'layer.copy': '复制',
+      'layer.copied': '已复制',
+
       // status codes
       'code.write_actions_disabled': '面板写操作未开启：到设置页把「面板写操作」打开。',
       'code.read_only': '只读模式已开启，写入被拒绝。',
@@ -574,6 +593,23 @@ window.__ModuleLoader__.load({
       'settings.coreBudgetHint': 'Total budget for layered injection, in UTF-16 code units, 4000–20000. Split 37.5% / 37.5% / 12.5% / 12.5% across the project core, the user core, the fixed rules and the topic directory; wrappers count.',
       'settings.hostRejected': 'The host refused this change (invalid value, or overridden by a higher layer)',
       'settings.noWriteAccess': 'This connection cannot write host config. Edit the profile cordis.patch.yml and reload the plugin.',
+
+      // layering
+      'layer.title': 'No core/topic split',
+      'layer.legacy': 'This file is injected whole: {chars} characters reach the prompt every turn. Split it into a "Core Memory" section plus topic sections and only the core stays always-on.',
+      'layer.legacyReason.missing_core': 'No "Core Memory" section was found.',
+      'layer.legacyReason.ambiguous_core': 'More than one "Core Memory" section, so none is used.',
+      'layer.legacyReason.invalid_core': 'The "Core Memory" section holds something other than entries (a heading, prose or a code block).',
+      'layer.legacyReason.non_entry_content': 'A topic section holds something other than entries, so the file cannot be split reliably.',
+      'layer.legacyReason.unknown': 'The file structure cannot be split reliably.',
+      'layer.layered': 'Split: {core} characters of core stay always-on; {topics} topics ({chars} characters) are read on demand.',
+      'layer.askModel': 'Have the model draft a split',
+      'layer.askModelHint': 'Copy this and send it to the model: it reads the current revision, hands back a whole-file draft, and you preview the diff in "Paste a draft" on this page.',
+      'layer.copyPrompt': 'Tidy up my {which} memory by topic: memory_read first for the current body and revision, then split the entries into "Core Memory" (few, needed every turn) and topic sections (read on demand). Give me the whole draft body and its source revision; I will preview it in the panel. Do not write the file yourself.',
+      'layer.whichProject': 'project',
+      'layer.whichUser': 'user',
+      'layer.copy': 'Copy',
+      'layer.copied': 'Copied',
 
       'code.write_actions_disabled': 'Panel write actions are off: enable "Panel write actions" in settings.',
       'code.read_only': 'Read-only mode is on; the write was refused.',
@@ -3386,6 +3422,78 @@ window.__ModuleLoader__.load({
         )
       }
 
+      /**
+       * The split state of the file on screen, or null when it is not one.
+       *
+       * Only `project-memory` and `user-memory` can be split; a daily note is an
+       * append-only log and the profile is a distillation product, so neither
+       * has a core section to report.
+       */
+      function layeringOfSelected() {
+        const target = selected?.target
+        if (target === 'project-memory') return projectDetail?.layering ?? null
+        if (target === 'user-memory') return user?.layering ?? null
+        return null
+      }
+
+      /**
+       * A banner for a file that is still injected whole.
+       *
+       * This is the one piece of state a person cannot see by reading the file:
+       * `## 常驻记忆` missing looks exactly like a file that never needed one, and
+       * the cost — every character reaching the prompt every turn — is invisible
+       * from the panel. The model gets the same fact through `memory_status`,
+       * but that only helps if someone asks it.
+       *
+       * It is a banner, not a control: the plugin will not split a file on its
+       * own, so the only action offered is the one that starts a split the person
+       * still confirms — a prompt to paste to the model, whose draft lands in the
+       * existing draft dialog with its diff preview.
+       */
+      function layeringBanner() {
+        const info = layeringOfSelected()
+        if (!info) return null
+        if (info.mode === 'layered') {
+          // A split file needs no banner; the counts are already in the header.
+          return null
+        }
+        const reason = t(`layer.legacyReason.${info.reason ?? 'unknown'}`)
+        const which = selected?.target === 'user-memory' ? t('layer.whichUser') : t('layer.whichProject')
+        const prompt = t('layer.copyPrompt', { which })
+        return h(
+          'div',
+          { className: 'wbm-banner warn', style: { flexDirection: 'column', alignItems: 'stretch', gap: '8px' } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, h('strong', null, t('layer.title')), h('span', { className: 'wbm-meta' }, reason)),
+          h('div', null, t('layer.legacy', { chars: info.coreChars })),
+          h('div', { className: 'wbm-meta' }, t('layer.askModelHint')),
+          h(
+            'div',
+            { style: { display: 'flex', gap: '6px' } },
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'wbm-btn',
+                onClick: () => {
+                  // The clipboard is best-effort: a host without it (or a denied
+                  // permission) must still show the prompt rather than fail the
+                  // click, so the notice reports the copy either way and the text
+                  // is visible in the hint above.
+                  try {
+                    globalThis.navigator?.clipboard?.writeText?.(prompt)?.catch?.(() => {})
+                    flash(t('layer.copied'))
+                  } catch {
+                    flash(t('layer.copied'))
+                  }
+                },
+              },
+              t('layer.copy'),
+            ),
+            h('span', { className: 'wbm-meta', style: { alignSelf: 'center' } }, t('layer.askModel')),
+          ),
+        )
+      }
+
       function docView() {
         const sections = (doc?.sections ?? []).map((section) => ({ ...section, entries: filterEntries(section.entries, query) }))
         const target = selected?.target
@@ -3416,6 +3524,7 @@ window.__ModuleLoader__.load({
           target === 'project-daily'
             ? h('div', { className: 'wbm-banner' }, t('editor.dailyAppendOnly'))
             : null,
+          layeringBanner(),
           h(
             'div',
             { style: { display: 'flex', gap: '8px', alignItems: 'center', margin: '10px 0' } },

@@ -317,3 +317,47 @@ test('a plan the store never issued is refused, and nothing moves', async () => 
   assert.equal(refused.reason, 'unknown_plan')
   assert.equal(existsSync(join(memDir, '2020-01-02.md')), true)
 })
+
+test('state reports how each memory file is injected, so the panel can say "whole file"', async () => {
+  // Without this the panel cannot tell a split file from one injected whole: the
+  // bytes look identical, and whole-file injection is exactly the state that
+  // pushes the always-on prefix toward its limit.
+  const { call, home } = await harness()
+  const body = JSON.parse((await call('/workbuddy-memory/state')).body)
+
+  // The fixture's user memory has no core section, so it is legacy and its whole
+  // length is always-on.
+  assert.equal(body.stores.user.layering.mode, 'legacy')
+  assert.equal(body.stores.user.layering.reason, 'missing_core')
+  assert.equal(body.stores.user.layering.coreChars, body.stores.user.chars)
+  assert.equal(body.stores.user.layering.topicChars, 0)
+
+  // No project memory exists in this fixture, so there is nothing to describe.
+  assert.equal(body.stores.project.layering, null)
+  void home
+})
+
+test('a split file is reported as layered with both halves measured', async () => {
+  const { call, home } = await harness()
+  writeFileSync(join(home, 'MEMORY.md'), '# User\n\n## 常驻记忆\n- core\n\n## Alpha\n- a\n', 'utf8')
+  const body = JSON.parse((await call('/workbuddy-memory/state')).body)
+
+  assert.equal(body.stores.user.layering.mode, 'layered')
+  assert.equal(body.stores.user.layering.reason, null)
+  assert.equal(body.stores.user.layering.coreEntries, 1)
+  assert.equal(body.stores.user.layering.topics, 1)
+  assert.ok(body.stores.user.layering.coreChars > 0)
+  assert.ok(body.stores.user.layering.topicChars > 0)
+})
+
+test('the layering summary never carries entry text into /state', async () => {
+  // `/state` is polled every three seconds; shipping the memory body through it
+  // would put the whole file on the wire on a timer.
+  const { call, home } = await harness()
+  const secret = 'SUPER-SECRET-ENTRY-TEXT'
+  writeFileSync(join(home, 'MEMORY.md'), `# User\n\n## 常驻记忆\n- ${secret}\n\n## Alpha\n- also ${secret}\n`, 'utf8')
+  const response = await call('/workbuddy-memory/state')
+  assert.equal(response.body.includes(secret), false, 'no entry text appears in the state payload')
+  const body = JSON.parse(response.body)
+  assert.equal(body.stores.user.layering.mode, 'layered')
+})

@@ -1343,3 +1343,96 @@ test('panel writes off hides history, drafts, source mode and archiving', async 
     restore()
   }
 })
+
+test('an unsplit file says it is injected whole, and offers the one action that starts a split', async () => {
+  // The panel could not see this before: a file with no core section renders
+  // exactly like one that never needed it, while every character of it reaches
+  // the prompt every turn.
+  installFetch({
+    state: stateFor({
+      stores: {
+        ...stateFor().stores,
+        project: { ...stateFor().stores.project, layering: { mode: 'legacy', reason: 'missing_core', coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 } },
+      },
+    }),
+  })
+  const restore = installTimers()
+  try {
+    const tree = await openProject()
+    const body = text(expand(tree))
+    assert.match(body, /未划分常驻\/按需/)
+    assert.match(body, /整份注入/)
+    assert.ok(body.includes('900'), `the banner carries the always-on size: ${body}`)
+    assert.match(body, /没有找到「常驻记忆」小节/)
+    assert.match(body, /复制/)
+  } finally {
+    restore()
+  }
+})
+
+test('a split file shows no banner, because its header already carries the counts', async () => {
+  installFetch({
+    state: stateFor({
+      stores: {
+        ...stateFor().stores,
+        project: { ...stateFor().stores.project, layering: { mode: 'layered', reason: null, coreEntries: 2, topics: 3, coreChars: 200, topicChars: 700 } },
+      },
+    }),
+  })
+  const restore = installTimers()
+  try {
+    const tree = await openProject()
+    const body = text(expand(tree))
+    assert.doesNotMatch(body, /未划分常驻\/按需/, 'no banner for a file that is already split')
+  } finally {
+    restore()
+  }
+})
+
+test('the copy button puts the split prompt on the clipboard, and survives a host without one', async () => {
+  const written = []
+  // Node 24 exposes `navigator` as a getter-only global, so it has to be
+  // redefined rather than assigned; the descriptor is restored afterwards.
+  //
+  // `language` has to survive the replacement: the panel picks its copy from
+  // `navigator.language`, so a bare `{clipboard}` object silently flips the
+  // whole UI to English and every Chinese assertion below fails for a reason
+  // that has nothing to do with the clipboard.
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  const withClipboard = (value) =>
+    Object.defineProperty(globalThis, 'navigator', { value: { language: 'zh-CN', ...value }, configurable: true, writable: true })
+  withClipboard({ clipboard: { writeText: async (text) => { written.push(text) } } })
+  installFetch({
+    state: stateFor({
+      stores: {
+        ...stateFor().stores,
+        project: { ...stateFor().stores.project, layering: { mode: 'legacy', reason: 'missing_core', coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 } },
+      },
+    }),
+  })
+  const restore = installTimers()
+  try {
+    let tree = await openProject()
+    // `walk` stops at function components, so the tree is expanded first: the
+    // banner lives under `docView()`, one component down.
+    const button = walk(expand(tree)).find((node) => node.type === 'button' && text(node).includes('复制'))
+    assert.ok(button, 'the banner offers the copy action')
+    tree = await runtime.fire(button, 'onClick', MemoryWorkspace, OVERVIEW)
+    assert.equal(written.length, 1, 'the prompt reached the clipboard')
+    assert.match(written[0], /memory_read/)
+    assert.match(written[0], /常驻记忆/)
+    assert.match(written[0], /不要直接写文件/, 'the prompt tells the model to hand back a draft, not to write')
+    assert.match(text(expand(tree)), /已复制/)
+
+    // A host with no clipboard API must not turn the click into a crash: the
+    // prompt is already visible in the hint, so the notice is enough.
+    withClipboard({})
+    tree = await openProject()
+    const again = walk(expand(tree)).find((node) => node.type === 'button' && text(node).includes('复制'))
+    await runtime.fire(again, 'onClick', MemoryWorkspace, OVERVIEW)
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'navigator', original)
+    else delete globalThis.navigator
+    restore()
+  }
+})

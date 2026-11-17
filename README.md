@@ -101,6 +101,24 @@ The panel supports entry editing (addressed by line, so the row a person clicked
 The panel follows the app language: every string is registered with the host's
 locale service, so switching DSH's language switches the panel too.
 
+**A file that is still injected whole says so, in the file view.** A memory file
+with no core section renders identically to one that never needed a section, and
+the cost — its entire length reaching the prompt every turn — is invisible from
+the panel. `/state` therefore reports a `layering` summary per store
+(`{mode, reason, coreEntries, topics, coreChars, topicChars}`, never the entry
+text, because `/state` is polled every few seconds), and the file view turns
+`mode: 'legacy'` into a banner naming the size and the reason
+(`missing_core` / `ambiguous_core` / `invalid_core` / `non_entry_content`).
+
+The banner offers exactly one action — **copy a prompt for the model**. It is
+not a "split this file" button on purpose: the plugin never rewrites a file on
+its own, and the split is the person's decision. The prompt asks the model to
+`memory_read` for the current revision, hand back a whole-file draft plus that
+revision, and not write anything; the draft then lands in the existing **Paste a
+draft** dialog with its diff preview and its base-revision check. Clipboard
+access is best-effort: a host without it still shows the prompt in the banner and
+still reports the click.
+
 ## Configuration
 
 Common keys (the plugin page's config card covers the ones you change often; the rest are in this table):

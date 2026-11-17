@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { probeEnvironment, ageInDays } from '../env.js'
 import { parseSections } from '../markdown.js'
+import { summarizeMemory } from '../layers.js'
 import { readTextSafe } from '../fsx.js'
 import { contentRevision } from '../write/fslock.js'
 import { ACTIONS, resolveTarget, TARGETS } from '../write/store.js'
@@ -252,6 +253,24 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
   /** Stable, non-reversible handle for a workspace path. */
   const keyFor = (cwd) => createHash('sha1').update(String(cwd)).digest('hex').slice(0, 8)
 
+  /**
+   * How one memory file is injected, or `null` when there is nothing to read.
+   *
+   * The panel cannot see the prompt, so without this the file looks the same
+   * whether it is split into core/topics or injected whole — which is exactly the
+   * state a person needs to notice, because whole-file injection is what pushes
+   * the always-on prefix toward its limit.
+   *
+   * Read with the same cap `describe` uses: a file the panel cannot read whole is
+   * one whose summary would describe a prefix.
+   */
+  const layeringOf = (path) => {
+    if (!path || !existsSync(path)) return null
+    const file = readTextSafe(path, { maxBytes: MAX_BODY_BYTES })
+    if (!file.ok || file.truncated) return null
+    return summarizeMemory(file.text)
+  }
+
   /** Options every catalog read shares; the probe owns home and folder name. */
   const catalogOptions = (probe) => ({
     home: probe.home.path,
@@ -379,6 +398,9 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
           chars: project?.chars ?? 0,
           revision: project?.revision ?? null,
           mtime: project?.mtime ?? null,
+          // `layering.mode === 'legacy'` is the state the panel has to surface:
+          // the file is injected whole, so its whole length is always-on.
+          layering: layeringOf(probe.project.memoryPath),
           daily: listDaily(probe.layout.projectMemoryDir),
         },
         user: {
@@ -392,6 +414,7 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
           chars: user?.chars ?? 0,
           revision: user?.revision ?? null,
           mtime: user?.mtime ?? null,
+          layering: layeringOf(probe.user.memoryPath),
         },
         profile: {
           target: 'profile',
