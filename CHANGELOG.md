@@ -2,6 +2,29 @@
 
 English | [中文](CHANGELOG.zh.md)
 
+## 0.2.4 — 2026-11-17
+
+- **A file the memory directory does not have yet is now protected.** The
+  bare-write guard decided "is this a memory file?" by resolving both paths with
+  `realpath`. That only works for paths that already exist — for a file about to
+  be created it kept the caller's spelling, which never matched the canonical
+  parent. So `write` could create a brand-new file directly in the memory
+  directory, which is exactly the write the guard exists to refuse: a first daily
+  note, a new topic file. Path resolution now resolves the nearest existing
+  ancestor and re-appends the missing tail, so a path has one identity for its
+  whole life rather than one before it is created and another after.
+- **Replaying an `operationId` after the first write created the file answers
+  `duplicate` again.** The same resolution rule keys the operation fingerprint,
+  so the replay hashed a different path than the original and was refused as
+  `operation_mismatch` — silently losing the replay safety the receipt is there
+  to provide. Both call sites now share one implementation (`resolveLink()`) so
+  they cannot drift apart again.
+- Neither bug is specific to Windows, but both were invisible on a machine whose
+  temporary directory is already canonical. They surfaced on a CI runner whose
+  `TEMP` is an 8.3 short name (`C:\Users\RUNNER~1\…`).
+- The project now has CI: `npm test` runs on Node 20 / 22 / 24 and Windows, and
+  a `v*` tag publishes to npm and creates the release.
+
 ## 0.2.2 — 2026-11-17
 
 - **Daily notes can carry sections, and their entries can be edited.** A daily
