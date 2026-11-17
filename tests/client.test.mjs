@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { normalizeConfig } from '../src/config.js'
+import { Config, normalizeConfig } from '../src/config.js'
 
 /** Capture the module the host would have loaded. */
 function loadClient() {
@@ -79,7 +79,7 @@ function text(node) {
 }
 
 const module = await loadClient()
-const { humanBytes, getJson, MemoryOverviewPanel, OverviewIcon, SettingsCard, PANEL_OVERVIEW, API } = module.__internals
+const { humanBytes, getJson, MemoryOverviewPanel, OverviewIcon, SettingsCard, writeConfigField, PANEL_OVERVIEW, API } = module.__internals
 
 test('the module exports what the host mounts', () => {
   assert.equal(typeof module.apply, 'function')
@@ -144,6 +144,36 @@ function snapshot(overrides = {}) {
 
 function fakeForm(snap) {
   return { getSnapshot: () => snap, subscribe: () => () => {}, set: async () => true }
+}
+
+/**
+ * A form that refuses what the host refuses.
+ *
+ * The old `fakeForm` answered `true` to every write, which is why the dotted-path
+ * bug below survived a green suite: the card passed `'inject.limits.project'`,
+ * the fake accepted it, and only a real host rejected it as "not volatile".
+ * This double applies the host's own rule — a path segment that names no schema
+ * field cannot be written — so a mis-addressed write fails here too.
+ */
+function hostRuleForm(snap, schema, record = []) {
+  const isVolatilePath = (node, path) => {
+    if (node?.meta?.volatile) return true
+    const [key, ...rest] = path
+    const child = key === undefined ? undefined : node?.dict?.[key]
+    return child !== undefined && isVolatilePath(child, rest)
+  }
+  return {
+    getSnapshot: () => snap,
+    subscribe: () => () => {},
+    set: async (field, value) => {
+      record.push({ field, path: [field], value })
+      return isVolatilePath(schema, [field])
+    },
+    mutate: async (ops) => {
+      record.push(...ops)
+      return ops.every((op) => isVolatilePath(schema, op.path))
+    },
+  }
 }
 
 test('a writable snapshot leaves every control enabled', () => {
@@ -436,6 +466,72 @@ test('the injection limits are editable from the card, not just configurable in 
   assert.ok(numbers.includes('8000'), `user limit shows 8000, got ${JSON.stringify(numbers)}`)
   assert.ok(numbers.includes('16000'), 'the distillation threshold shows its effective value')
   assert.ok(numbers.includes('10000'), 'the project limit shows its value')
+})
+
+test('a nested config field is written by its path segments, not as one dotted name', async () => {
+  // The regression: the card passed `'inject.limits.project'` straight to
+  // `form.set`, which wraps its argument as `path: [field]`. The host then looked
+  // for a field literally named "inject.limits.project", found none, and refused
+  // the write as "not volatile" — every nested key was uneditable from the card
+  // while the three top-level scalars worked. Assert the segments, and assert the
+  // host's own rule accepts them.
+  const record = []
+  const form = hostRuleForm(snapshot(), Config, record)
+
+  assert.equal(await writeConfigField(form, 'inject.limits.project', 12000), true)
+  assert.deepEqual(record, [{ op: 'set', path: ['inject', 'limits', 'project'], value: 12000 }])
+
+  // The top-level scalar keeps working too.
+  record.length = 0
+  assert.equal(await writeConfigField(form, 'readOnly', true), true)
+  assert.deepEqual(record, [{ op: 'set', path: ['readOnly'], value: true }])
+
+  // A key that is not volatile anywhere (reload-only) is still refused, and it is
+  // the host refusing it — not this helper second-guessing the schema.
+  assert.equal(await writeConfigField(form, 'stateDir', '/tmp/x'), false)
+})
+
+test('the card writes every control it renders through a path the host accepts', async () => {
+  // A green suite once hid the dotted-path bug because the fake form said yes to
+  // everything. Drive each commit callback the card wires up and require the host
+  // rule to accept it, so a control that renders but cannot save is a failure.
+  const record = []
+  const form = hostRuleForm(
+    snapshot({ value: { inject: { limits: {} }, write: {}, search: {}, guard: {}, ui: { allowWriteActions: true } } }),
+    Config,
+    record,
+  )
+  const tree = expand(SettingsCard({ form }))
+  const commitCalls = []
+
+  // The card renders controls; their handlers are the only path to a write. The
+  // handler identity is not reachable from the tree, so the fields the card is
+  // known to expose are checked directly — the same list the tests above read.
+  for (const field of [
+    'inject.enabled',
+    'inject.mode',
+    'inject.coreBudget',
+    'inject.limits.project',
+    'inject.limits.user',
+    'inject.distillAbove',
+    'write.enabled',
+    'guard.enabled',
+    'search.enabled',
+    'ui.allowWriteActions',
+    'ui.globalPanel',
+    'ui.projectTab',
+    'ui.sessionAction',
+    'ui.refreshMs',
+    'ui.maxProjects',
+  ]) {
+    record.length = 0
+    const ok = await writeConfigField(form, field, field.endsWith('Ms') ? 4000 : true)
+    commitCalls.push({ field, ok })
+  }
+
+  const refused = commitCalls.filter((call) => !call.ok).map((call) => call.field)
+  assert.deepEqual(refused, [], `these rendered controls cannot be saved: ${JSON.stringify(refused)}`)
+  assert.equal(walk(tree).length > 0, true)
 })
 
 test('an empty snapshot still shows the effective defaults for the limits', () => {

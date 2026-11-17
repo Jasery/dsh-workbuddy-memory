@@ -1270,6 +1270,33 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Write one field of this plugin's config section.
+     *
+     * The host's `form.set(field, value)` addresses a *scalar* field by name and
+     * wraps it as `path: [field]`; it never splits a dotted string. Passing
+     * `'inject.limits.project'` therefore asked for a field literally named
+     * that, which `isVolatilePath` rejects ("not volatile") and the host answers
+     * with a refusal — the card showed its generic "the host refused this
+     * change" line and nothing was written. Every nested key below the root was
+     * affected; only the three top-level scalars worked.
+     *
+     * `mutate` takes the path already segmented, so splitting here is what makes
+     * a nested key addressable. A `set` on a field inside a `.volatile()` object
+     * still passes the host's check: the walk stops at that object's meta.
+     *
+     * @param {object} form - the host's config form for this plugin entry.
+     * @param {string} field - dotted field path, e.g. `inject.limits.project`.
+     * @param {unknown} value - the JSON-shaped value to store.
+     * @returns {Promise<boolean>} whether the host accepted the write.
+     */
+    async function writeConfigField(form, field, value) {
+      const path = String(field).split('.').filter((part) => part.length > 0)
+      if (path.length === 0) return false
+      if (typeof form.mutate !== 'function') return form.set(field, value)
+      return form.mutate([{ op: 'set', path, value }])
+    }
+
+    /**
      * The config card.
      *
      * Every value it shows is the schema-resolved one — what the plugin will
@@ -1294,7 +1321,7 @@ window.__ModuleLoader__.load({
         async (field, next) => {
           setError('')
           try {
-            const ok = await form.set(field, next)
+            const ok = await writeConfigField(form, field, next)
             if (!ok) setError(t('settings.hostRejected'))
           } catch (cause) {
             setError(String(cause?.message ?? cause))
@@ -1901,7 +1928,7 @@ window.__ModuleLoader__.load({
       const form = runtime.form
       if (!form) return false
       try {
-        return await form.set(field, value)
+        return await writeConfigField(form, field, value)
       } catch {
         return false
       }
@@ -4482,6 +4509,7 @@ window.__ModuleLoader__.load({
         PANEL,
         MemoryProjectTab,
         SettingsCard,
+        writeConfigField,
         PruneDialog,
         HistoryDialog,
         DraftDialog,
