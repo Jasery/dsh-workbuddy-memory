@@ -187,26 +187,29 @@ test('a writable snapshot leaves every control enabled', () => {
   assert.match(text(tree), /可写/)
 })
 
-test('full-text editing follows the panel write switch', () => {
-  const on = expand(
+test('the card has no full-text switch: source mode is a feature, not a setting', () => {
+  // Source mode and drafts are how the panel edits a whole file. Whether to use
+  // them is the person's call, so there is no switch to find — and the card must
+  // not offer one that only makes the panel worse.
+  const tree = expand(
     SettingsCard({
       form: fakeForm(
         snapshot({
-          value: { inject: {}, write: {}, search: {}, guard: {}, ui: { allowWriteActions: true, allowFullTextEdit: true } },
+          value: { inject: {}, write: {}, search: {}, guard: {}, ui: { allowWriteActions: true } },
         }),
       ),
     }),
   )
-  const onInputs = walk(on).filter((node) => node.type === 'input')
-  assert.equal(onInputs.every((node) => node.props.disabled === false), true, 'write + full text on leaves every control enabled')
-
+  const body = text(tree)
+  assert.doesNotMatch(body, /全文编辑/, 'the card must not offer a full-text editing switch')
+  assert.doesNotMatch(body, /Full-text editing/)
+  // The controls that remain still follow the panel write switch.
   const off = expand(
     SettingsCard({
       form: fakeForm(snapshot({ value: { inject: {}, write: {}, search: {}, guard: {}, ui: { allowWriteActions: false } } })),
     }),
   )
-  const disabled = walk(off).filter((node) => node.type === 'input' && node.props.disabled === true)
-  assert.equal(disabled.length >= 1, true, 'full text cannot be enabled while panel writes are off')
+  assert.equal(walk(off).filter((node) => node.type === 'input').length >= 1, true)
 })
 
 test('the card keys editability off `writable`, not off a mode field', () => {
@@ -365,7 +368,6 @@ test('the refusals with a way out say what that way is', () => {
   assert.match(describeCode('profile_not_found'), /画像|profile/)
   assert.match(describeCode('ambiguous_profile'), /profileUid|候选/)
   assert.match(describeCode('too_large'), /256|KB|MB|太大/)
-  assert.match(describeCode('full_text_disabled'), /全文编辑/)
   assert.match(describeCode('invalid_structure'), /结构|围栏/)
 })
 

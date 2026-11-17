@@ -218,7 +218,6 @@ function statusFor(body) {
     case 'read_only':
     case 'write_disabled':
     case 'write_actions_disabled':
-    case 'full_text_disabled':
       return 403
     case 'too_large':
       return 413
@@ -359,7 +358,6 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
       readOnly: cfg.readOnly,
       writeEnabled: cfg.write.enabled,
       allowWriteActions: cfg.ui.allowWriteActions,
-      allowFullTextEdit: cfg.ui.allowFullTextEdit,
       limits: cfg.inject.limits,
       backupKeep: cfg.write.backupKeep,
       dataFolderName: cfg.dataFolderName || '.workbuddy',

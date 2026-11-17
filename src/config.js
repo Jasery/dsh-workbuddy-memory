@@ -104,7 +104,6 @@ export const Config = z.object({
     .object({
       enabled: z.boolean().default(true).volatile(),
       allowWriteActions: z.boolean().default(true).volatile(),
-      allowFullTextEdit: z.boolean().default(true).volatile(),
       globalPanel: z.boolean().default(true).volatile(),
       projectTab: z.boolean().default(true).volatile(),
       sessionAction: z.boolean().default(true).volatile(),
@@ -278,7 +277,6 @@ export function normalizeConfig(raw) {
     ui: {
       enabled: bool(ui.enabled, true),
       allowWriteActions: bool(ui.allowWriteActions, true),
-      allowFullTextEdit: bool(ui.allowFullTextEdit, true),
       globalPanel: bool(ui.globalPanel, true),
       projectTab: bool(ui.projectTab, true),
       sessionAction: bool(ui.sessionAction, true),

@@ -93,7 +93,7 @@ Idempotency: pass the same `operationId` to replay a request instead of writing 
 - **`Project memory` tab in the right sidebar**: next to files/changes, scoped to the current project's memory plus the global stores.
 - **Memory button in the session header**: opens or focuses that tab.
 
-The panel supports entry editing (addressed by line, so the row a person clicked is the row that changes), section editing, whole-file source mode, a draft dialog (paste a body plus the revision it was written against; the diff is built only when that revision still matches), version history (list backups, preview the diff, restore the one that was previewed), archiving of old daily notes, and a ten-second undo. Archiving moves old daily files to `memory/archive/` and never writes `MEMORY.md`; a preview creates no directory and no state, and the apply is bound to the plan it was previewed from — a file that changed in between, or one that appeared after the preview, is refused rather than swept up.
+The panel supports entry editing (addressed by line, so the row a person clicked is the row that changes), section editing, whole-file source mode, a draft dialog (paste a body plus the revision it was written against; the diff is built only when that revision still matches), version history (list backups, preview the diff, restore the one that was previewed), archiving of old daily notes, and a ten-second undo. Source mode and drafts have **no separate switch**: they are part of the panel, using them is your decision, and the first time you open source mode it warns once about whole-file writes (not repeated for that browser session). Archiving moves old daily files to `memory/archive/` and never writes `MEMORY.md`; a preview creates no directory and no state, and the apply is bound to the plan it was previewed from — a file that changed in between, or one that appeared after the preview, is refused rather than swept up.
 
 The panel follows the app language: every string is registered with the host's
 locale service, so switching DSH's language switches the panel too.
@@ -123,7 +123,6 @@ Common keys (the plugin page's config card covers the ones you change often; the
 | `guard.enabled` | `true` | refuse bare `write` / `edit` / `apply_patch` into memory files |
 | `ui.enabled` | `true` | when off, the panel and its routes are not registered |
 | `ui.allowWriteActions` | `true` | master switch for panel writes |
-| `ui.allowFullTextEdit` | `true` | whether source mode and drafts may rewrite a whole file |
 | `ui.globalPanel` / `ui.projectTab` / `ui.sessionAction` | `true` | the three panel entries |
 | `ui.refreshMs` / `ui.maxProjects` | `3000` / `50` | panel polling and scan bounds |
 | `search.enabled` | `true` | when off, `memory_search` is not registered |
@@ -146,7 +145,6 @@ The tools return these codes to the model; the panel shows the same explanation 
 | `outcome_unknown` | The previous write's outcome could not be confirmed. | Retry with the **same** operation id — that is safe. A new id may run it twice. |
 | `read_conflict` / `conflict` | The file changed while it was being read or written. | Read it again, then decide. There is no "overwrite anyway" by design. |
 | `too_large` | The file is past the panel's read or edit cap (256 KB of text). | Use an external editor, or edit entries rather than the whole file. |
-| `full_text_disabled` | Whole-file editing (source mode / drafts) is switched off. | Turn on **Full-text editing** in the config card. |
 
 ## Coexisting with other memory plugins
 

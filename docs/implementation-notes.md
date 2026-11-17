@@ -157,7 +157,7 @@ npm-prefix-bin=$(dirname $(which node))/node      # 换成 runtime 的 node.exe
 
 ### 12.2 状态码按「人接下来能做什么」定
 
-`conflict` → 409（重新读一遍再决定）、`read_only` / `write_disabled` / `write_actions_disabled` / `full_text_disabled` → 403、`no_store` / `no_revision` / `not_found` → 404、`too_large` → 413、`lock_timeout` → 423，其余 400。客户端只把这些 code 翻成一句话（`describeCode`），不在 UI 里判断业务。
+`conflict` → 409（重新读一遍再决定）、`read_only` / `write_disabled` / `write_actions_disabled` → 403、`no_store` / `no_revision` / `not_found` → 404、`too_large` → 413、`lock_timeout` → 423，其余 400。客户端只把这些 code 翻成一句话（`describeCode`），不在 UI 里判断业务。
 
 ### 12.3 行号比文本匹配适合面板
 
@@ -246,7 +246,7 @@ L3 会带整份文件，`POST /action` 的 body 上限从 64 KB 提到 512 KB；
 
 ### 14.7 编辑默认值与二次确认
 
-`ui.allowWriteActions` 与 `ui.allowFullTextEdit` 现在默认 `true`。设置卡里把全文编辑从关到开会先弹确认；面板第一次进入源码模式也会弹一次（`sessionStorage` 记住本次浏览器会话）。两处都只是 UI 确认，真正的写入仍然经过锁、CAS、备份和账本。
+`ui.allowWriteActions` 现在默认 `true`。整份文件写（源码模式与草案）没有单独的开关：`ui.allowFullTextEdit` 已移除，用不用源码模式由用户决定。面板第一次进入源码模式会弹一次整文件写入的风险提示（`sessionStorage` 记住本次浏览器会话），那只是提示，不是功能门禁。真正的写入仍然经过锁、CAS、备份和账本。
 
 ## 15. 分层注入与写链（2026-11-16 优化，实测）
 
@@ -326,7 +326,7 @@ operation lock（op-<hash>.lock，只有带 operationId 时）
 - 注册集合固定为 `memory_status` / `memory_read` / `memory_search` / `memory_append` / `memory_edit`。`search.enabled: false` 时 `memory_search` 整个不注册；已撤的四个工具（`memory_prune`、`memory_replace_section`、`memory_list_revisions`、`memory_restore`）没有任何别名空壳。
 - 所有工具结果过一层 `lossless()`：`undefined` → `null`，非有限数 → `null`，`-0` → `null`。宿主对 tool result 做 lossless 快照，任一非法值会判整份非法，而写入此时已经落盘——所以兜底放在注册处而不是各工具里。
 - 面板承接（`POST /workbuddy-memory/action` + `GET /state|/content|/revisions|/revision`）：`add`/`edit`/`remove`/`replace-section`/`replace-document`/`remove-section`/`restore`/`prune`。请求走宿主信任栅栏 `connection.requestRejection`（拿不到该服务时降级为本地 origin 检查），`/action` 还要求 `application/json`。
-- 面板与工具共用同一个 `store` 实例，所以两条路径在同一把锁上排队；`ui.allowWriteActions` 是面板写操作的总开关，`ui.allowFullTextEdit` 单独管整份文件写（`replace-document` 与草案）。
+- 面板与工具共用同一个 `store` 实例，所以两条路径在同一把锁上排队；`ui.allowWriteActions` 是面板写操作的总开关，整份文件写（`replace-document` 与草案）只受 `readOnly` 与 `write.enabled` 约束，没有额外的功能开关。
 - 冲突出口只有三条（重载 / 保留草稿 / 查看磁盘差异），没有「覆盖」。恢复（`restore`）必须带当前 revision，且会先把当前文件备份一次，所以恢复本身也可撤销。
 
 ### 15.8 已知限制

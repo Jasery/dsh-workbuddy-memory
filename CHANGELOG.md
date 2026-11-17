@@ -5,6 +5,18 @@ appears only once it is actually published, and this file is not a release log.
 
 ## Unreleased — memory optimisations
 
+### Whole-file editing has no switch
+
+- `ui.allowFullTextEdit` is removed, along with the `full_text_disabled` refusal it
+  produced. Source mode and the draft dialog are panel features: using them is the
+  person's decision, and a setting that only turns a working feature off made the panel
+  worse. `readOnly` and `write.enabled` remain the only gates on a whole-file write, and
+  it still runs the same lock, CAS, backup and receipt chain.
+- Source mode keeps its one-time risk notice (once per browser session). It is a warning
+  about whole-file writes, not a feature gate, and cancelling it changes nothing.
+- A profile that still carries `ui.allowFullTextEdit` keeps loading: unknown keys are
+  ignored by the config schema, so nothing has to be edited by hand.
+
 ### Injection is layered by default
 
 - `inject.mode` is now `'layered'`: a small always-on core plus an on-demand topic

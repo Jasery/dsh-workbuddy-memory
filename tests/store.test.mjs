@@ -387,6 +387,29 @@ test('trusted replaceDocument is the explicit legacy-to-layered migration path',
   assert.equal(readFileSync(file, 'utf8'), migrated)
 })
 
+test('whole-file writes are gated by readOnly and write.enabled, nothing else', async () => {
+  // `replaceDocument` used to answer `full_text_disabled` while a separate
+  // `ui.allowFullTextEdit` switch was off. That switch is gone: source mode and
+  // drafts are panel features, and whether to use them is the person's call. The
+  // two real gates must still hold — this is the assertion that keeps removing
+  // the switch from also removing a guard.
+  const text = '# Memory\n\n## Core Memory\n- curated\n'
+
+  const writable = setup()
+  const allowed = await writable.store.replaceDocument({ target: 'project-memory', text }, writable.probe)
+  assert.equal(allowed.ok, true, 'a whole-file write needs no extra switch')
+
+  const readOnly = setup({ readOnly: true })
+  const refusedReadOnly = await readOnly.store.replaceDocument({ target: 'project-memory', text }, readOnly.probe)
+  assert.equal(refusedReadOnly.ok, false)
+  assert.equal(refusedReadOnly.code, 'read_only')
+
+  const noWrite = setup({ write: { enabled: false } })
+  const refusedNoWrite = await noWrite.store.replaceDocument({ target: 'project-memory', text }, noWrite.probe)
+  assert.equal(refusedNoWrite.ok, false)
+  assert.equal(refusedNoWrite.code, 'write_disabled')
+})
+
 test('the daily file follows the local calendar day, not UTC', async () => {
   const s = setup()
   // Build a local 00:30 rather than an ISO instant with a fixed offset: the

@@ -167,10 +167,6 @@ window.__ModuleLoader__.load({
       'draft.stats': '+{added} / -{removed} 行',
       // A draft is applied with `replace-document`, which full-text editing
       // gates. With the switch off the entry asks first, like source mode does.
-      'draft.titleEnable': '开启全文编辑？',
-      'draft.bodyBlocked': '粘贴草案会用整份正文覆盖文件，而全文编辑当前是关闭的。开启后可以粘贴草案；保存前仍会先备份、再校验结构。确认后会同时打开草案面板。',
-      'draft.confirmBlocked': '开启并粘贴草案',
-      'draft.cannotEnableFullText': '无法写入宿主配置，请到设置页手动开启「全文编辑」。',
 
       // feedback
       'flash.saved': '已保存，下一轮对话生效',
@@ -207,8 +203,6 @@ window.__ModuleLoader__.load({
       'settings.allowWriteHint': '关闭后 memory_append / memory_edit 一律拒绝；只读模式是更高一级的总闸。',
       'settings.panelWrite': '面板写操作',
       'settings.panelWriteHint': '关闭后面板只读，工具仍然可用。',
-      'settings.fullText': '全文编辑',
-      'settings.fullTextHint': '允许在面板里直接改整份文件。关闭后只能逐条或按小节编辑。',
       'settings.userLimit': '用户记忆上限',
       'settings.userLimitHint': '分层模式下只决定这一路源开不开（0 = 不注入），真正的上限是下面的常驻预算；但它同时是「蒸馏阈值」的默认基准（默认 = 本值 × 2），所以调小本值会让同一个文件更早被判定该蒸馏。整份（full）模式与 legacy 文件才按这个字符数截断。',
       'settings.distillAbove': '蒸馏阈值',
@@ -223,13 +217,11 @@ window.__ModuleLoader__.load({
       'settings.coreBudgetHint': '分层注入的总预算，单位是 UTF-16 码元，可设 4000–20000。按 37.5% / 37.5% / 12.5% / 12.5% 分给项目核心、用户核心、固定规则与主题目录；包装也计入。',
       'settings.hostRejected': '宿主拒绝了这次修改（值不合法或已被更高层覆盖）',
       'settings.noWriteAccess': '当前连接无法写入宿主配置。请直接编辑 profile 的 cordis.patch.yml 后重载插件。',
-      'settings.confirmFullText': '全文编辑会绕过条目模型，只保留结构校验。确定开启？',
 
       // status codes
       'code.write_actions_disabled': '面板写操作未开启：到设置页把「面板写操作」打开。',
       'code.read_only': '只读模式已开启，写入被拒绝。',
       'code.write_disabled': '写入开关是关的。',
-      'code.full_text_disabled': '全文编辑未开启：到设置页把「全文编辑」打开。',
       'code.conflict': '文件在你编辑期间被改过。',
       'code.stale_line': '这一行已经不在原处了，重新加载后再改。',
       'code.not_an_entry': '这一行不是条目，不能按条目改。',
@@ -302,10 +294,6 @@ window.__ModuleLoader__.load({
       'settings.searchHint': 'memory_search 是否可用。',
       'settings.panelSection': '记忆面板',
       'settings.panelHint': '打开后可以直接改条目、归档旧日期与撤销。默认开启；只读模式仍是总闸。',
-      'settings.sourceHint': '源码模式会绕过条目校验；默认开启，第一次进入时面板会二次确认。',
-      'settings.confirmFullTextTitle': '确认开启全文编辑？',
-      'settings.confirmFullTextBody': '源码模式会整文件写入。结构校验、备份和撤销仍然生效，但一次误改可能同时影响多个小节。',
-      'settings.keepOn': '仍然开启',
       'settings.globalPanel': '左栏「记忆」总览',
       'settings.globalPanelHint': '所有 DSH 工作区的汇总入口。关闭只隐藏界面，不删除任何文件。',
       'settings.projectTab': '右侧栏页签',
@@ -417,13 +405,9 @@ window.__ModuleLoader__.load({
 
       // source mode
       'source.title': '进入源码模式？',
-      'source.titleEnable': '开启全文编辑？',
       'source.bodyAllowed': '源码模式会整文件写入。结构校验、备份和撤销仍然生效，但一次误改可能同时影响多个小节。确认后本次浏览器会话不再重复提示。',
-      'source.bodyBlocked': '全文编辑当前是关闭的。开启后可以整文件编辑；保存前仍会做结构校验并先备份。确认后会同时打开源码模式。',
       'source.confirmAllowed': '我明白，打开源码',
-      'source.confirmBlocked': '开启并打开',
       'source.cannotEnableWrite': '无法写入宿主配置，请到设置页手动开启「面板写操作」。',
-      'source.cannotEnableFullText': '无法写入宿主配置，请到设置页手动开启「全文编辑」。',
       'source.tooLargeToEdit': '文件超过面板读取上限，不能在这里整文件编辑；请用逐条编辑或外部编辑器。',
 
       // prune dialog
@@ -543,10 +527,6 @@ window.__ModuleLoader__.load({
       'draft.stats': '+{added} / -{removed} lines',
       // A draft is applied with `replace-document`, which full-text editing
       // gates. With the switch off the entry asks first, like source mode does.
-      'draft.titleEnable': 'Turn on full-text editing?',
-      'draft.bodyBlocked': 'Pasting a draft overwrites the whole file, and full-text editing is currently off. Turning it on allows drafts; saving still backs up and checks the structure first. Confirming also opens the draft panel.',
-      'draft.confirmBlocked': 'Enable and paste a draft',
-      'draft.cannotEnableFullText': 'Cannot write host config; enable "Full-text editing" in settings.',
 
       'flash.saved': 'Saved; applies from the next turn',
       'flash.added': 'Added',
@@ -580,8 +560,6 @@ window.__ModuleLoader__.load({
       'settings.allowWriteHint': 'Off refuses every memory_append / memory_edit; read-only mode is the higher master switch.',
       'settings.panelWrite': 'Panel write actions',
       'settings.panelWriteHint': 'Off makes the panel read-only; the tools still work.',
-      'settings.fullText': 'Full-text editing',
-      'settings.fullTextHint': 'Allow rewriting a whole file in the panel. Off leaves entry and section editing only.',
       'settings.userLimit': 'User memory limit',
       'settings.userLimitHint': 'In layered mode this only decides whether the source is on at all (0 = off); the real ceiling is the always-on budget below. It is also the base the distillation threshold defaults to (default = this × 2), so lowering it makes the same file count as due for distillation sooner. Only whole-file (full) mode and legacy files are cut at this many characters.',
       'settings.distillAbove': 'Distillation threshold',
@@ -596,12 +574,10 @@ window.__ModuleLoader__.load({
       'settings.coreBudgetHint': 'Total budget for layered injection, in UTF-16 code units, 4000–20000. Split 37.5% / 37.5% / 12.5% / 12.5% across the project core, the user core, the fixed rules and the topic directory; wrappers count.',
       'settings.hostRejected': 'The host refused this change (invalid value, or overridden by a higher layer)',
       'settings.noWriteAccess': 'This connection cannot write host config. Edit the profile cordis.patch.yml and reload the plugin.',
-      'settings.confirmFullText': 'Full-text editing bypasses the entry model and keeps only structural checks. Turn it on?',
 
       'code.write_actions_disabled': 'Panel write actions are off: enable "Panel write actions" in settings.',
       'code.read_only': 'Read-only mode is on; the write was refused.',
       'code.write_disabled': 'The write switch is off.',
-      'code.full_text_disabled': 'Full-text editing is off: enable it in settings.',
       'code.conflict': 'The file changed while you were editing.',
       'code.stale_line': 'That line is no longer there; reload and try again.',
       'code.not_an_entry': 'That line is not an entry, so it cannot be edited as one.',
@@ -673,10 +649,6 @@ window.__ModuleLoader__.load({
       'settings.searchHint': "Whether memory_search is available.",
       'settings.panelSection': "Memory panel",
       'settings.panelHint': "Edit entries, archive old dailies and undo from the panel. On by default; read-only mode is still the master switch.",
-      'settings.sourceHint': "Source mode bypasses entry validation. On by default; the panel confirms the first time.",
-      'settings.confirmFullTextTitle': "Turn on full-text editing?",
-      'settings.confirmFullTextBody': "Source mode writes the whole file. Structural checks, backups and undo still apply, but one mistake can hit several sections at once.",
-      'settings.keepOn': "Turn it on anyway",
       'settings.globalPanel': "Left-rail \"Memory\" overview",
       'settings.globalPanelHint': "The aggregate entry for every DSH workspace. Off only hides the UI; no file is deleted.",
       'settings.projectTab': "Right-sidebar tab",
@@ -776,13 +748,9 @@ window.__ModuleLoader__.load({
       'editor.limitWarning': "Using {chars} characters against a {limit}-character limit; the next turn truncates it.",
       'editor.overLimitChip': "Over the injection limit",
       'source.title': "Enter source mode?",
-      'source.titleEnable': "Turn on full-text editing?",
       'source.bodyAllowed': "Source mode writes the whole file. Structural checks, backups and undo still apply, but one mistake can hit several sections at once. This browser session will not ask again.",
-      'source.bodyBlocked': "Full-text editing is currently off. Turning it on allows whole-file edits; saving still runs a structural check and backs up first. Confirming also opens source mode.",
       'source.confirmAllowed': "I understand — open source mode",
-      'source.confirmBlocked': "Enable and open",
       'source.cannotEnableWrite': "Cannot write host config; enable \"Panel write actions\" in settings.",
-      'source.cannotEnableFullText': "Cannot write host config; enable \"Full-text editing\" in settings.",
       'source.tooLargeToEdit': "The file exceeds the panel read limit, so it cannot be edited as a whole here; edit entries or use an external editor.",
       'prune.description': "Move dated logs older than the given number of days into memory/archive/; MEMORY.md is never written. Make sure you have distilled what matters into MEMORY.md first — the raw logs stay findable in archive/.",
       'prune.before': "Older than",
@@ -1307,7 +1275,6 @@ window.__ModuleLoader__.load({
       useLocaleRevision()
       const snap = useSnapshot(form)
       const [error, setError] = React.useState('')
-      const [confirm, setConfirm] = React.useState(null)
       const value = snap.value ?? {}
       const inject = value.inject ?? {}
       const limits = inject.limits ?? {}
@@ -1328,17 +1295,6 @@ window.__ModuleLoader__.load({
           }
         },
         [form],
-      )
-
-      const toggleFullText = React.useCallback(
-        async (next) => {
-          if (!next) {
-            await commit('ui.allowFullTextEdit', false)
-            return
-          }
-          setConfirm('fullText')
-        },
-        [commit],
       )
 
       if (snap.status === 'loading') return h('div', { style: S.status }, t('settings.loadingConfig'))
@@ -1485,38 +1441,6 @@ window.__ModuleLoader__.load({
               disabled: !writable,
               onChange: (next) => commit('ui.allowWriteActions', next),
             }),
-            h(Switch, {
-              label: t('settings.fullText'),
-              hint: t('settings.sourceHint'),
-              checked: ui.allowFullTextEdit,
-              disabled: !writable || !ui.allowWriteActions,
-              onChange: toggleFullText,
-            }),
-            confirm === 'fullText'
-              ? h(
-                  'div',
-                  { className: 'wbm-settings-confirm' },
-                  h('div', { style: { fontWeight: 600, color: 'inherit' } }, t('settings.confirmFullTextTitle')),
-                  h('div', null, t('settings.confirmFullTextBody')),
-                  h(
-                    'div',
-                    { style: { display: 'flex', gap: '8px', justifyContent: 'flex-end' } },
-                    h('button', { type: 'button', style: { ...S.input, width: 'auto', cursor: 'pointer' }, onClick: () => setConfirm(null) }, t('common.cancel')),
-                    h(
-                      'button',
-                      {
-                        type: 'button',
-                        style: { ...S.input, width: 'auto', cursor: 'pointer', fontWeight: 600 },
-                        onClick: async () => {
-                          setConfirm(null)
-                          await commit('ui.allowFullTextEdit', true)
-                        },
-                      },
-                      t('settings.keepOn'),
-                    ),
-                  ),
-                )
-              : null,
             h(Switch, {
               label: t('settings.globalPanel'),
               hint: t('settings.globalPanelHint'),
@@ -1674,7 +1598,6 @@ window.__ModuleLoader__.load({
       write_actions_disabled: 'code.write_actions_disabled',
       read_only: 'code.read_only',
       write_disabled: 'code.write_disabled',
-      full_text_disabled: 'code.full_text_disabled',
       conflict: 'code.conflict',
       stale_line: 'code.stale_line',
       not_an_entry: 'code.not_an_entry',
@@ -1838,7 +1761,6 @@ window.__ModuleLoader__.load({
 
     const DEFAULT_FLAGS = {
       allowWriteActions: true,
-      allowFullTextEdit: true,
       globalPanel: true,
       projectTab: true,
       sessionAction: true,
@@ -1850,7 +1772,6 @@ window.__ModuleLoader__.load({
       const ui = value?.ui ?? {}
       return {
         allowWriteActions: ui.allowWriteActions !== false,
-        allowFullTextEdit: ui.allowFullTextEdit !== false,
         globalPanel: ui.globalPanel !== false,
         projectTab: ui.projectTab !== false,
         sessionAction: ui.sessionAction !== false,
@@ -2128,9 +2049,6 @@ window.__ModuleLoader__.load({
       const [sectionEdit, setSectionEdit] = React.useState(null)
       const [sourceEdit, setSourceEdit] = React.useState(null)
       const [confirmSource, setConfirmSource] = React.useState(false)
-      // The draft entry's "turn on full-text editing" confirmation, the twin of
-      // `confirmSource`: a draft's only write is refused while that switch is off.
-      const [confirmDraft, setConfirmDraft] = React.useState(false)
       const [busy, setBusy] = React.useState(false)
       const [conflict, setConflict] = React.useState(null)
       const [dialog, setDialog] = React.useState(null)
@@ -2348,10 +2266,8 @@ window.__ModuleLoader__.load({
           setError(t('source.tooLargeToEdit'))
           return
         }
-        if (!flags.allowFullTextEdit) {
-          setConfirmSource(true)
-          return
-        }
+        // Source mode is always available; the confirmation is a risk notice
+        // shown once per browser session, not a feature gate.
         if (!sourceAcknowledged()) {
           setConfirmSource(true)
           return
@@ -2374,40 +2290,20 @@ window.__ModuleLoader__.load({
         setNewSection(null)
       }
 
-      async function openSourceAfterConfirm(withFlag) {
-        if (withFlag) {
-          const ok = await setFlag('ui.allowFullTextEdit', true)
-          if (!ok) {
-            setConfirmSource(false)
-            setError(t('source.cannotEnableFullText'))
-            return
-          }
-          runtime.flags.allowFullTextEdit = true
-        }
+      function openSourceAfterConfirm() {
         acknowledgeSource()
         setConfirmSource(false)
         beginSource()
       }
 
       /**
-       * Open the draft panel, turning full-text editing on first if asked.
+       * Open the draft panel.
        *
-       * The twin of `openSourceAfterConfirm`: a draft is written with
-       * `replace-document`, which the store refuses with `full_text_disabled`
-       * while the switch is off, so the entry has to lead somewhere. Refusing to
-       * write the setting is reported in the panel's banner, because the
-       * confirmation is the thing that just closed.
+       * A draft is written with `replace-document`, which needs no separate
+       * switch: `readOnly` and `write.enabled` are the only gates, and the panel
+       * already knows whether either is in force before offering the entry.
        */
-      async function openDraftAfterConfirm(withFlag) {
-        if (withFlag) {
-          const ok = await setFlag('ui.allowFullTextEdit', true)
-          if (!ok) {
-            setConfirmDraft(false)
-            setError(t('draft.cannotEnableFullText'))
-            return
-          }
-          runtime.flags.allowFullTextEdit = true
-        }
+      function openDraftAfterConfirm() {
         setConfirmDraft(false)
         openDraft()
       }
@@ -3568,16 +3464,10 @@ window.__ModuleLoader__.load({
         const target = selected?.target
         // History and drafts are whole-file surfaces: they need a full revision
         // to freeze as their base, and a daily note has none (it is appended to,
-        // never rewritten). The profile is read-only.
-        //
-        // They are gated separately because they do not share a write. History
-        // restores a backup, which `ui.allowFullTextEdit` does not gate. A draft
-        // is applied with `replace-document`, which the store refuses with
-        // `full_text_disabled` whenever that switch is off — so the draft entry
-        // also asks for the switch, and offers the same "turn it on" confirmation
-        // source mode uses. An entry that can only fail is not an entry.
+        // never rewritten). The profile is read-only. Both are gated by the same
+        // write conditions — there is no separate full-text switch to consult.
         const canHistory = Boolean(panelWriteOn && state?.writeEnabled !== false && !state?.readOnly && selected && doc && target !== 'profile' && target !== 'project-daily')
-        const canDraft = Boolean(canHistory && flags.allowFullTextEdit)
+        const canDraft = canHistory
         return h(
           'div',
           { className: 'wbm-doc-head' },
@@ -3610,10 +3500,7 @@ window.__ModuleLoader__.load({
                     type: 'button',
                     className: 'wbm-btn',
                     title: t('doc.draft'),
-                    // With full-text editing off the draft would be refused by
-                    // the store, so the click asks first — exactly like source
-                    // mode — instead of opening a dialog with no way forward.
-                    onClick: canDraft ? openDraft : () => setConfirmDraft(true),
+                    onClick: openDraft,
                   },
                   h(DraftIcon),
                   t('doc.draft'),
@@ -3767,22 +3654,8 @@ window.__ModuleLoader__.load({
         conflict ? h(ConflictDialog, { conflict, doc, getJson, selected, projectKey: effectiveKey, onClose: () => setConflict(null), reload }) : null,
         confirmSource
           ? h(SourceConfirmDialog, {
-              allowed: flags.allowFullTextEdit,
               onClose: () => setConfirmSource(false),
-              onConfirm: () => openSourceAfterConfirm(!flags.allowFullTextEdit),
-            })
-          : null,
-        confirmDraft
-          ? h(SourceConfirmDialog, {
-              // Reuses the source-mode confirmation verbatim: one control, one
-              // wording, one way to turn the same switch on. Only the labels
-              // differ, because "source mode" is not what the person clicked.
-              allowed: false,
-              title: t('draft.titleEnable'),
-              body: t('draft.bodyBlocked'),
-              confirmLabel: t('draft.confirmBlocked'),
-              onClose: () => setConfirmDraft(false),
-              onConfirm: () => openDraftAfterConfirm(true),
+              onConfirm: openSourceAfterConfirm,
             })
           : null,
         dialog?.kind === 'prune'
@@ -3875,30 +3748,26 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Ask before turning on a whole-file write path.
+     * The risk notice shown the first time source mode is opened in a session.
      *
-     * Used for source mode and, with the label overrides, for the draft panel:
-     * both end in `replace-document`, both are gated by the same switch, so both
-     * ask the same question. The default copy is source mode's.
+     * Source mode rewrites the whole file, bypassing the entry model, so the
+     * person is told once — this is not a feature gate, and there is no setting
+     * behind it. Cancelling leaves the document untouched.
      */
-    function SourceConfirmDialog({ allowed, title, body, confirmLabel, onClose, onConfirm }) {
+    function SourceConfirmDialog({ onClose, onConfirm }) {
       return h(
         'div',
         { className: 'wbm-mask' },
         h(
           'div',
           { className: 'wbm-modal' },
-          h('div', { className: 'h' }, title ?? (allowed ? t('source.title') : t('source.titleEnable'))),
-          h(
-            'div',
-            { className: 'd' },
-            body ?? (allowed ? t('source.bodyAllowed') : t('source.bodyBlocked')),
-          ),
+          h('div', { className: 'h' }, t('source.title')),
+          h('div', { className: 'd' }, t('source.bodyAllowed')),
           h(
             'div',
             { className: 'row', style: { justifyContent: 'flex-end' } },
             h('button', { type: 'button', className: 'wbm-btn', onClick: onClose }, t('common.cancel')),
-            h('button', { type: 'button', className: 'wbm-btn primary', onClick: onConfirm }, confirmLabel ?? (allowed ? t('source.confirmAllowed') : t('source.confirmBlocked'))),
+            h('button', { type: 'button', className: 'wbm-btn primary', onClick: onConfirm }, t('source.confirmAllowed')),
           ),
         ),
       )

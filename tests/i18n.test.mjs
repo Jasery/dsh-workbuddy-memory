@@ -122,7 +122,6 @@ const state = {
   readOnly: false,
   writeEnabled: true,
   allowWriteActions: true,
-  allowFullTextEdit: true,
   limits: { project: 10000, user: 8000, profile: 2000, rules: 2000 },
   dataFolderName: '.workbuddy',
   home: { path: 'C:\\Users\\me\\.workbuddy', source: 'env', detail: 'WORKBUDDY_CONFIG_DIR' },

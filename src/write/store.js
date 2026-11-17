@@ -687,16 +687,17 @@ export function createStore({ cfg, stateDir, onCommit }) {
   /**
    * Replace the whole document (L3).
    *
-   * Off unless `ui.allowFullTextEdit` is on: this bypasses the entry model, so
-   * the only structural guarantees left are the checks in `validateDocument`.
-   * The writer still runs the same lock, CAS, backup and receipt chain.
+   * This bypasses the entry model, so the structural guarantees left are the
+   * checks in `validateDocument`. It is not gated behind its own switch: the
+   * panel offers source mode and drafts, and whether to use them is the
+   * person's decision. `readOnly` and `write.enabled` still stop it, and the
+   * writer runs the same lock, CAS, backup and receipt chain as any other write.
    *
    * @param {{ target: string, text: string, expectedRevision?: string, operationId?: string }} input
    */
   async function replaceDocument(input, probe) {
     if (cfg.readOnly) return fail('read_only')
     if (!cfg.write.enabled) return fail('write_disabled')
-    if (!cfg.ui.allowFullTextEdit) return fail('full_text_disabled')
 
     const resolved = resolveTarget(input.target, probe)
     if (!resolved.path || resolved.mode !== 'rewrite') return fail('bad_target', { target: input.target })

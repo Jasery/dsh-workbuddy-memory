@@ -91,7 +91,6 @@ function stateFor(overrides = {}) {
     readOnly: false,
     writeEnabled: true,
     allowWriteActions: true,
-    allowFullTextEdit: true,
     limits: { project: 10000, user: 4000, profile: 2000, rules: 2000 },
     dataFolderName: '.workbuddy',
     home: { path: 'C:\\Users\\me\\.workbuddy', source: 'env', detail: 'WORKBUDDY_CONFIG_DIR' },
@@ -864,7 +863,7 @@ test('a refused draft apply explains itself in the dialog, not behind the mask',
   // `position:fixed; z-index:55`. A refusal written only to the banner is a
   // refusal nobody can read or dismiss — the dialog does not change a word, so
   // the button looks like it did nothing at all.
-  for (const code of ['too_large', 'full_text_disabled', 'invalid_structure']) {
+  for (const code of ['too_large', 'write_disabled', 'invalid_structure']) {
     runtime.reset()
     const calls = installFetch({ actionResult: () => ({ ok: false, code }) })
     const restore = installTimers()
@@ -878,7 +877,7 @@ test('a refused draft apply explains itself in the dialog, not behind the mask',
       assert.notEqual(after, before, `${code}: the dialog says something`)
       // The copy for the code, not the raw identifier: a person reads a sentence.
       assert.equal(after.includes(code), false, `${code}: the code is translated, not printed raw`)
-      assert.match(after, /太大|全文编辑|结构/, `${code}: the refusal names the reason`)
+      assert.match(after, /太大|写入|结构/, `${code}: the refusal names the reason`)
       // The apply button goes back to a state the person can act on: a preview
       // that just failed is not a preview that is ready to submit again.
       assert.equal(draftButton(applied, '应用草案').props.disabled, true, `${code}: a refused apply is not still ready`)
@@ -971,49 +970,24 @@ test('a modal refusal does not also raise the banner nobody can see', async () =
 
 // ── draft entry gating ─────────────────────────────────────────────────────
 
-test('a draft entry needs full-text editing, and offers the same way out as source mode', async () => {
-  // The draft's only write is `replace-document`, which the store refuses with
-  // `full_text_disabled` whenever the switch is off. Source mode already asks
-  // whether to turn it on; a draft button that can only fail has no way out.
-  //
-  // The panel reads the switch through `runtime.flags`, which `readFlags` fills
-  // from the host form; there is no form here, so the flag is set directly.
-  const { runtime: moduleRuntime } = client.__internals
-  const calls = installFetch({ state: stateFor({ allowFullTextEdit: false }) })
+test('the draft entry opens directly, with no full-text switch to satisfy', async () => {
+  // A draft is written with `replace-document`. That path used to be gated behind
+  // `ui.allowFullTextEdit`, so the entry had to offer a "turn it on" confirmation
+  // first. The switch is gone: using source mode or a draft is the person's
+  // decision, and `readOnly` / `write.enabled` are the only gates left. The entry
+  // must therefore lead straight to the draft dialog, not to a question about a
+  // setting that no longer exists.
+  const calls = installFetch({})
   const restore = installTimers()
-  const previous = moduleRuntime.flags.allowFullTextEdit
-  moduleRuntime.flags.allowFullTextEdit = false
   try {
     const tree = await openProject()
     const draftEntry = control(tree, '粘贴草案')
-    const historyButton = control(tree, '历史版本')
-    assert.ok(historyButton, 'history restores a backup, which the switch does not gate')
+    assert.ok(draftEntry, 'the draft entry is offered')
 
-    assert.ok(draftEntry, 'the draft entry is still offered, because it leads somewhere')
-    // The entry has to lead to the same confirmation source mode uses.
     const next = await runtime.fire(draftEntry, 'onClick', MemoryOverviewPanel, {})
     const body = onlyModalText(next)
-    assert.match(body, /全文编辑/, 'the entry explains what is off')
-    const confirm = walk(expand(next)).find((node) => node.type === 'button' && /开启|打开/.test(text(node)))
-    assert.ok(confirm, 'and offers to turn it on')
-    assert.equal(calls.actions.length, 0, 'nothing was written by opening it')
-  } finally {
-    moduleRuntime.flags.allowFullTextEdit = previous
-    restore()
-  }
-})
-
-test('a refused draft with full-text editing off says which switch to flip', async () => {
-  // Reached when the flag flips while the dialog is open. The refusal has to
-  // name the setting, because the panel cannot turn it on from inside a failed
-  // apply.
-  const calls = installFetch({ actionResult: () => ({ ok: false, code: 'full_text_disabled' }) })
-  const restore = installTimers()
-  try {
-    const tree = await previewedDraft()
-    const applied = await runtime.fire(draftButton(tree, '应用草案'), 'onClick', MemoryOverviewPanel, {})
-    assert.equal(calls.actions.length, 1)
-    assert.match(modalText(applied), /全文编辑/, 'the refusal names the setting')
+    assert.doesNotMatch(body, /全文编辑/, 'no question about a removed setting')
+    assert.equal(calls.actions.length, 0, 'opening it writes nothing')
   } finally {
     restore()
   }
