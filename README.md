@@ -2,15 +2,12 @@
 
 English | [中文](README.zh.md)
 
-One set of memory files, two clients. DSH reads the `MEMORY.md`, daily notes and
-user profile that WorkBuddy writes straight into its context, and writes back
-through guarded tools. No second copy, no sync daemon, and no WorkBuddy install
-required — if the files are already there, they are used as they are.
+Let DSH share the memory files WorkBuddy already writes — no second copy, no
+WorkBuddy install needed.
 
-An agent that forgets everything between sessions re-learns the same environment
-facts, repeats the same mistakes, and asks for the same preferences again.
-WorkBuddy already keeps that knowledge in Markdown; this plugin lets DSH share it
-instead of starting a second memory that would immediately drift out of date.
+Injection is **layered**: a small core stays always-on, the rest is listed by
+topic and read on demand. On two real memory files that took the always-on part
+from 12,678 characters to 2,922 with nothing dropped.
 
 ## What the model sees
 
