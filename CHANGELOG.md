@@ -2,6 +2,73 @@
 
 English | [中文](CHANGELOG.zh.md)
 
+## 0.2.0 — 2026-11-17
+
+Layered injection, and four fewer tools. **Upgrading changes what reaches the
+prompt** — read the first two items before you upgrade.
+
+- **Default injection is now layered.** A file's `## 常驻记忆` (or `## Core
+  Memory`) section is injected as an always-on core; the remaining sections are
+  listed by name with `project/` / `user/` prefixes and a line saying how to read
+  them, and the model fetches a topic with `memory_read` when it needs it. On two
+  real memory files this took the always-on part from 12,678 characters to 2,922
+  with nothing dropped. `inject.mode: 'full'` restores the old whole-file
+  behaviour.
+- **A file with no core section is still injected whole**, and reports
+  `legacy:missing_core` (or `:ambiguous_core` / `:invalid_core` /
+  `:non_entry_content`) in `memory_status`. Nothing rewrites an old file on its
+  own: the split is the user's decision, confirmed in the panel. An ordinary
+  `memory_append` into an unsplit file is refused with
+  `layering_confirmation_required` rather than silently rearranging someone's
+  memory.
+- **`memory_prune` is gone.** Archiving old daily notes is a panel action, where a
+  person sees the preview and the plan. No alias stub was left behind: a
+  definition that only ever refuses still advertises an ability the model does not
+  have. `memory_replace_section`, `memory_list_revisions` and `memory_restore`
+  were never shipped and are not coming back as tools either — the panel owns
+  whole-section rewrites, version history and restore.
+- **`ui.allowFullTextEdit` is removed.** Source mode and the draft dialog are part
+  of the panel; using them is your decision, not a switch to find. A profile that
+  still sets it will not fail — the key is simply no longer read.
+- New `inject.coreBudget` (4000, range 4000–20000, UTF-16 code units) sets the
+  layered budget, split 37.5% / 37.5% / 12.5% / 12.5% across the project core, the
+  user core, the fixed rules, and the topic list plus compatibility notes. In
+  layered mode `inject.limits.project` / `.user` only decide whether that source is
+  on at all.
+- The panel now shows **whether a file is split**. `/state` reports a `layering`
+  summary per store (mode, reason, counts, both halves' sizes — never the entry
+  text, because `/state` is polled every few seconds), and a file still injected
+  whole gets a banner naming its size and the reason, with one action: copy a
+  prompt that asks the model for a split draft. It is not a "split this file"
+  button — the plugin never rewrites a file on its own.
+- Block headings no longer carry a product name (`### 项目记忆`, not
+  `### 项目记忆（WorkBuddy）`). The suffix cost 11 units per occurrence in the
+  always-on prefix and said which product owns the file; the provenance that
+  matters — that another agent may have written the content — is now rule 1 of the
+  compact rules.
+- **Reads are bounded and race-safe.** `memory_read` refuses a file past 2 MiB with
+  `too_large` instead of hashing a prefix that a later edit would use to delete the
+  rest; a read whose file changed underneath returns `read_conflict`; `offset` /
+  `nextOffset` page by UTF-16 code units without splitting a surrogate pair, and an
+  offset inside one returns `bad_offset`.
+- **Writes got a receipt store.** An `operationId` now survives a crash, so a
+  retried request replays instead of writing twice. Committed receipts are kept 24
+  hours (up to 2000, at most 100 unresolved); unresolved ones are never
+  age-deleted, because they are the only evidence that a write's outcome is
+  unknown. Reusing an id for a different request returns `operation_mismatch`;
+  an id whose outcome could not be confirmed returns `outcome_unknown` and should
+  be retried with the *same* id.
+- Archiving is bound to the plan it was previewed from: a file that changed in
+  between, or one that appeared after the preview, is refused rather than swept up.
+  A partial move reports what finished and resumes by hash.
+- Empty and title-only legacy files can be bootstrapped by an ordinary append
+  again; only a file that actually holds entries is protected by the layering
+  guard.
+- The English compact-rules block was compressed to fit its 500-unit budget. It had
+  grown past it, and `fitText` was dropping the last rule silently.
+- Documentation: the README is now an introduction rather than a manual (23.5 KB →
+  8 KB); implementation detail moved to `docs/implementation-notes.md`.
+
 ## 0.1.4 — 2026-11-12
 
 - The config card exposes the injection limits and the distillation threshold.
