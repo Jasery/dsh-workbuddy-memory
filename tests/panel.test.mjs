@@ -208,14 +208,30 @@ function installFetch({
   return calls
 }
 
-/** Keep the poll and undo timers out of the test. */
+/**
+ * Keep the poll, undo and notice timers out of the test.
+ *
+ * `setInterval` is stubbed outright. `setTimeout` cannot be: `tick()` is built on
+ * it, so stubbing it would deadlock every `settle`. Instead a long delay is
+ * swallowed and a short one is left alone — which kills the 3.2-second notice
+ * timer while leaving `setTimeout(0)` working.
+ *
+ * That timer mattered: `flash()` schedules `setNotice('')`, and `runtime.reset()`
+ * only empties the hook array. A timer left over from an earlier test then fires
+ * into whatever slot index `notice` now occupies, wiping a notice the current
+ * test had just set — a 1-in-8 flake in the copy-button test, with no failing
+ * assertion pointing anywhere near the cause.
+ */
 function installTimers() {
   const realSetInterval = globalThis.setInterval
+  const realSetTimeout = globalThis.setTimeout
   globalThis.setInterval = () => 0
   globalThis.clearInterval = () => {}
+  globalThis.setTimeout = (fn, ms, ...rest) => (Number(ms) >= 1000 ? 0 : realSetTimeout(fn, ms, ...rest))
   globalThis.document = { hidden: false }
   return () => {
     globalThis.setInterval = realSetInterval
+    globalThis.setTimeout = realSetTimeout
     delete globalThis.document
   }
 }

@@ -6,36 +6,56 @@ Let DSH share the memory files WorkBuddy already writes — no second copy, no
 WorkBuddy install needed.
 
 Injection is **layered**: a small core stays always-on, the rest is listed by
-topic and read on demand. On two real memory files that took the always-on part
-from 12,678 characters to 2,922 with nothing dropped.
+topic and read on demand. What you save is context you would pay for every turn,
+not capability — and it shows most on a long memory file.
 
 ## What the model sees
 
-By default the plugin injects **layered**: a small always-on core, plus a list of
-topic names the model can look up when it needs them.
+A memory file is split in two, and only one half reaches the context every turn:
 
-- **Core** is the file's `## 常驻记忆` (or `## Core Memory`) section. Only complete
-  entries go in, and the core is a *prefix* — if an entry does not fit, the block
-  stops there rather than skipping ahead, and says how many were left out.
-- **Topic list** names the remaining sections, each as `<source>/<name>`, with one
-  line saying how to read them (`memory_read` for a whole topic, `memory_search`
-  for a single fact). A truncated list says it is truncated.
-- **Budget** is `inject.coreBudget` — 4000 UTF-16 units by default, 4000–20000 —
-  split across the project core, the user core, the fixed rules and the topic
-  list.
-- `inject.mode: 'full'` is the compatibility fallback: every file injected whole
-  under its own limit, the way earlier versions did.
+```
+MEMORY.md
+│
+├─ ## 常驻记忆 ──────────► injected every turn
+│    - the entry needed every time   (a prefix: the scan stops at the first
+│    - another one like that          entry that does not fit, and says how
+│                                     many were left out)
+│
+└─ ## some topic ────────┐
+   ## another topic ─────┼─► only the section names are injected
+   ## a third topic ─────┘   memory_read fetches a whole topic on demand
+```
+
+So the prompt looks roughly like this:
+
+```
+### 项目记忆
+## 常驻记忆
+- the entry needed every time…
+
+### 可按需查询的主题
+- 常驻没写的先看这里：memory_read(target=前缀-memory, section=主题名)…
+- project/some topic
+- user/another topic
+```
+
+Each line carries a `project/` or `user/` prefix because `memory_read` needs a
+target as well as a section — with a bare name the model has to guess which file to
+read. A truncated list says it is truncated.
+
+**Budget** is `inject.coreBudget` — 4000 units by default, 4000–20000 — split
+across the project core, the user core, the fixed rules and the topic list.
+`inject.mode: 'full'` is the compatibility fallback: every file injected whole,
+the way earlier versions did.
 
 A file with no core section is injected whole and reported as `legacy:*` by
-`memory_status`; the panel shows it as a banner with its size. Nothing rewrites an
-old file on its own — the split is your decision, made in the panel.
+`memory_status`; the panel shows it as a banner. Nothing rewrites an old file on
+its own — the split is your decision.
 
-**Keep topic bodies to `- ` entries.** A topic section may hold bullet entries,
-their indented continuations, and blank lines. Add anything else — one prose
-sentence, an `###` sub-heading, a fenced block — and the *whole file* falls back
-to whole-file injection, because a file that cannot be split reliably is not
-split. The fallback is visible, but it is the behaviour most likely to look like
-a bug.
+> ⚠️ **Keep topic bodies to `- ` entries.** Add anything else — one prose
+> sentence, a sub-heading, a fenced block — and the *whole file* falls back to
+> whole-file injection, because a file that cannot be split reliably is not split.
+> This is the behaviour most likely to look like a bug.
 
 ## Tools
 
@@ -145,19 +165,16 @@ The panel explains these in your language; the model gets the same codes.
 
 ## Limits
 
-- Without the panel (headless, or `ui.enabled: false`) the model can read, search,
-  append and edit single entries. Archiving and restoring need the panel.
-- External editors do not take this plugin's lock. Against a non-locking editor
-  only the revision check protects you, and it catches only changes it can see.
-- Run one memory plugin per set of files. Two engines on one `MEMORY.md` have no
-  coordination: locks mean nothing to each other, and the same entries get
-  injected twice.
-- Deduplication is bounded: a committed receipt is remembered for 24 hours, up to
-  2000 records. Past that window the same `operationId` is a new request.
-- `memory_status` reports this plugin's own contribution in UTF-16 units — not a
-  token count, and not a cost.
-- Read failures degrade to "inject nothing"; they never break a turn.
-- Tested on Windows 11 with Node 24. Not verified on Linux or Node 20.
+| Situation | What happens |
+|---|---|
+| No panel (headless, or `ui.enabled: false`) | The model can read, search, append and edit single entries; archiving and restoring need the panel |
+| An external editor writes the same file | It does not take this plugin's lock — only the revision check protects you, and only against changes it can see |
+| Two memory plugins on one file set | Not supported. The locks mean nothing to each other, and the same entries get injected twice |
+| The same `operationId` replayed much later | Committed receipts are kept 24 hours, up to 2000 — past that it is a new request |
+| The character counts in `memory_status` | This plugin's own contribution in UTF-16 units, not a token count or a cost |
+| A read fails | Degrades to "inject nothing"; it never breaks a turn |
+
+Tested on Windows 11 with Node 24. Not verified on Linux or Node 20.
 
 ## Development
 
