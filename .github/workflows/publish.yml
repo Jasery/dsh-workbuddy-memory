@@ -106,14 +106,32 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      # A rehearsal has to exercise `npm publish`, because that is the step with
+      # the failure modes nothing else catches: an unusable token, provenance
+      # that the registry rejects, a `files` list that omits something the
+      # plugin loads at runtime.
+      #
+      # `npm publish --dry-run` still refuses a version that already exists, so
+      # rehearsing an already-released version would silently skip the one step
+      # worth testing. Stamping a prerelease suffix into the checkout's manifest
+      # gives the same bytes a version the registry has never seen; the working
+      # tree is disposable and never committed.
       - name: Rehearse the publish
-        if: steps.check.outputs.published != 'true' && env.DRY_RUN == 'true'
-        run: npm publish --access public --dry-run
+        if: env.DRY_RUN == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PUBLISHED: ${{ steps.check.outputs.published }}
+        run: |
+          set -o pipefail
+          if [ "$PUBLISHED" = "true" ]; then
+            rehearsal="$(node -p "require('./package.json').version")-rehearsal.$(date +%s)"
+            echo "::notice::${{ steps.version.outputs.value }} is already published; rehearsing as $rehearsal"
+            npm version "$rehearsal" --no-git-tag-version --allow-same-version >/dev/null
+          fi
+          npm publish --access public --dry-run --provenance
 
       - name: Skip the publish, the version is already on npm
-        if: steps.check.outputs.published == 'true'
+        if: steps.check.outputs.published == 'true' && env.DRY_RUN != 'true'
         run: echo "::notice::${{ steps.version.outputs.value }} is already on npm; only the release notes are (re)created"
 
       - name: Write the release notes
