@@ -2,6 +2,32 @@
 
 English | [中文](CHANGELOG.zh.md)
 
+## 0.2.2 — 2026-11-17
+
+- **Daily notes can carry sections, and their entries can be edited.** A daily
+  note is written as `# YYYY-MM-DD` followed by `## topic` sections; the panel
+  groups rows by section, so a note written as a flat bullet list showed no
+  structure at all. `memory_append` used to accept `section` for a daily file and
+  silently ignore it — returning `ok: true` while writing a bare bullet — so
+  nothing could ever produce a heading. It now creates the heading (or reuses it)
+  and appends under it, rewriting the file with a backup; without `section` the
+  bullet is still appended with a plain `O_APPEND`, no rewrite and no backup.
+  `memory_edit` can correct or remove an entry in a daily note. Structural
+  operations — `replaceSection`, `removeSection`, `replaceDocument`, `restore` —
+  remain MEMORY.md-only: a log is appended to and corrected, never rearranged.
+- **A daily note with no `##` heading is no longer reported as empty.** Entries
+  were counted only inside `parseSections` ranges, and that parser starts at level
+  2 — so a file written as bare bullets had `entries: 0` and the panel showed "this
+  file is still empty" over a 1.5 KB file. The region above the first heading is
+  now reported as a `(top)` section (the same pseudo-heading the tools already use
+  for addressing), in `/state`, in `/content`, and in `memory_read`.
+  `memory_read(section: "(top)")` resolves instead of answering `no_section` for a
+  name the tool itself had just listed.
+- The panel's "add a dated entry" form offers an optional section field; leaving it
+  empty appends to the end of the file.
+- Tool descriptions say what happens in each case, instead of promising sections
+  only for MEMORY.md and then dropping the argument.
+
 ## 0.2.1 — 2026-11-17
 
 - **Layered mode now tells the model that daily files exist.** The compact rules

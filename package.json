@@ -1,6 +1,6 @@
 {
   "name": "dsh-workbuddy-memory",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "description": "Read and write WorkBuddy memory files from DSH: one set of Markdown files, two clients.",
   "keywords": [
