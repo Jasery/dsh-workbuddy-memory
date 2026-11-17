@@ -47,6 +47,25 @@ jobs:
       # instead of on a user's machine.
       - run: npm ci
 
+      - name: PROBE path canonicalisation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          node -e "
+          const os = require('os'), fs = require('fs'), path = require('path');
+          const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'probe-'));
+          const child = path.join(dir, 'missing.md');
+          console.log('platform      ', process.platform);
+          console.log('tmpdir        ', os.tmpdir());
+          console.log('TEMP          ', process.env.TEMP);
+          console.log('dir           ', dir);
+          console.log('native(dir)   ', fs.realpathSync.native(dir));
+          console.log('js(dir)       ', fs.realpathSync(dir));
+          console.log('resolve(child)', path.resolve(child));
+          console.log('canon(child)  ', (()=>{try{return fs.realpathSync.native(child)}catch{try{return fs.realpathSync(child)}catch{return path.resolve(child)}}})());
+          console.log('8dot3?        ', /~[0-9]/.test(fs.realpathSync.native(dir)));
+          "
+
       - run: npm test
 
   coverage:
