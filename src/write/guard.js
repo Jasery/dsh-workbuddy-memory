@@ -11,10 +11,10 @@
  * this is a guard against accidents, not a security boundary.
  */
 
-import { realpathSync } from 'node:fs'
-import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
+import { isAbsolute, resolve, sep } from 'node:path'
 import { probeEnvironment } from '../env.js'
 import { resolveCwd } from '../inject.js'
+import { resolveLink } from './fslock.js'
 
 const BARE_WRITERS = new Set(['write', 'edit', 'str_replace_editor', 'apply_patch'])
 
@@ -53,40 +53,15 @@ export function writeTargets(name, args) {
  * canonicalised parent. `isMemoryTarget()` then answered "not memory" for a new
  * file in the memory directory, which is exactly the case the guard exists for.
  *
- * So: resolve the nearest existing ancestor and re-append the missing tail.
+ * `resolveLink()` in `fslock.js` is the same rule and the same reason, so it is
+ * the implementation rather than a second copy that can drift.
  *
  * @param {string} path
  * @returns {string} absolute, canonical where anything along the way exists.
  */
 export function canon(path) {
   if (!path) return ''
-  const absolute = resolve(path)
-  const direct = realpathOrNull(absolute)
-  if (direct) return direct
-
-  const missing = []
-  let current = absolute
-  while (true) {
-    const parent = dirname(current)
-    if (parent === current) return absolute
-    missing.unshift(basename(current))
-    current = parent
-    const real = realpathOrNull(current)
-    if (real) return join(real, ...missing)
-  }
-}
-
-/** `realpath` of an existing path, or null when nothing is there. */
-function realpathOrNull(path) {
-  try {
-    return realpathSync.native(path)
-  } catch {
-    try {
-      return realpathSync(path)
-    } catch {
-      return null
-    }
-  }
+  return resolveLink(path)
 }
 
 /** Fold the parts of a path the platform itself ignores. */

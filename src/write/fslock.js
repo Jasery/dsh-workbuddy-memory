@@ -9,7 +9,7 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, basename, join, resolve } from 'node:path'
 
 /**
  * Stable short id for a path, used as a lock and backup file name.
@@ -216,15 +216,48 @@ export function writeFileAtomic(path, content, options = {}) {
   }
 }
 
-/** Follow a symlink/junction to the file it names; the path itself when absent. */
+/**
+ * Follow a symlink/junction to the file it names; the path itself when absent.
+ *
+ * A path that does not exist yet still has to resolve like its parent, or the
+ * same file has two identities over its lifetime: the caller's spelling before
+ * it is created, the real one afterwards. `fingerprintFor()` hashes this, so an
+ * `operationId` replayed after the first write created the file was refused as
+ * `operation_mismatch` instead of answering `duplicate` — on any platform whose
+ * temporary directory is not already canonical (a Windows 8.3 short name, a
+ * differently-cased home directory).
+ *
+ * So: resolve the nearest existing ancestor and re-append the missing tail.
+ *
+ * @param {string} path
+ * @returns {string}
+ */
 export function resolveLink(path) {
+  const absolute = resolve(path)
+  const direct = realpathOrNull(absolute)
+  if (direct) return direct
+
+  const missing = []
+  let current = absolute
+  while (true) {
+    const parent = dirname(current)
+    if (parent === current) return absolute
+    missing.unshift(basename(current))
+    current = parent
+    const real = realpathOrNull(current)
+    if (real) return join(real, ...missing)
+  }
+}
+
+/** `realpath` of an existing path, or null when nothing is there. */
+function realpathOrNull(path) {
   try {
     return realpathSync.native(path)
   } catch {
     try {
       return realpathSync(path)
     } catch {
-      return path
+      return null
     }
   }
 }

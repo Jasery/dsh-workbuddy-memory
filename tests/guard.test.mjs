@@ -233,3 +233,19 @@ test('a differently-cased memory path is still refused on Windows', () => {
   if (process.platform === 'win32') assert.match(denied ?? '', /memory_append/)
   else assert.equal(denied, undefined)
 })
+
+test('a file the memory directory does not have yet is still refused', () => {
+  // The guard used to protect only paths that already existed: `canon()`
+  // resolved the caller's spelling for anything about to be created, so a new
+  // note written straight into the memory directory walked past it. This is the
+  // ordinary shape of a first daily note.
+  const { cfg, cwd } = fixture()
+  const { ctx, captured } = fakeCtx()
+  registerWriteGuard(ctx, { cfg, t })
+  const agent = { session: { header: { cwd } } }
+
+  for (const name of ['2026-11-18.md', 'brand-new.md']) {
+    const denied = captured.guard({ name: 'write', arguments: { file_path: join(cwd, '.workbuddy', 'memory', name) }, agent })
+    assert.match(denied ?? '', /memory_append/, `${name} does not exist yet and is still memory`)
+  }
+})
