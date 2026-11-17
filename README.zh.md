@@ -43,6 +43,22 @@ MEMORY.md
 
 > ⚠️ **主题正文只写 `- ` 条目。** 掺进别的东西——一句说明、一个子标题、一段代码围栏——**整个文件**就退回整份注入，因为分不干净的就不硬分。这是最容易被误认为「插件坏了」的行为。
 
+## 安装
+
+```bash
+dsh plugin --profile web add dsh-workbuddy-memory
+```
+
+要求 DSH `>= 0.2.0`。不要往 `cordis.patch.yml` 手写 `insert:`——配置卡写入的是按 id 合并的覆盖条目，两者并存会变成两条同 id 记录。
+
+改插件本身：
+
+```bash
+node scripts/dev-install.mjs web   # 把 profile 链接到本仓库
+```
+
+改完源码只需重启 profile。加 `--copy` 退回自包含安装，但每次改动都要重跑。
+
 ## 工具
 
 只有五个：
@@ -66,22 +82,6 @@ MEMORY.md
 每一次写入——工具的和面板的——都走同一条链：加锁 → revision 比对 → 备份 → 原子替换 → 写回校验。破坏性改写必须报出它看到的 revision；文件在下面被改过就返回 `conflict`，这次写入不落盘。设计上没有「覆盖」这个出口。用 `write` / `edit` / `apply_patch` 直接改记忆文件会被拒绝，模型绕不过工具。
 
 这是防误操作的栅栏，不是执行环境的安全边界：它拦不住 shell 命令。
-
-## 安装
-
-```bash
-dsh plugin --profile web add dsh-workbuddy-memory
-```
-
-要求 DSH `>= 0.2.0`。不要往 `cordis.patch.yml` 手写 `insert:`——配置卡写入的是按 id 合并的覆盖条目，两者并存会变成两条同 id 记录。
-
-改插件本身：
-
-```bash
-node scripts/dev-install.mjs web   # 把 profile 链接到本仓库
-```
-
-改完源码只需重启 profile。加 `--copy` 退回自包含安装，但每次改动都要重跑。
 
 ## 读哪些文件
 

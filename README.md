@@ -57,6 +57,25 @@ its own — the split is your decision.
 > whole-file injection, because a file that cannot be split reliably is not split.
 > This is the behaviour most likely to look like a bug.
 
+## Install
+
+```bash
+dsh plugin --profile web add dsh-workbuddy-memory
+```
+
+Requires DSH `>= 0.2.0`. Do not hand-write an `insert:` block into
+`cordis.patch.yml` — the config card writes an id-targeted override, and both
+together become two records with the same id.
+
+Working on the plugin itself:
+
+```bash
+node scripts/dev-install.mjs web   # links the profile to this checkout
+```
+
+A source edit then needs only a profile restart. Pass `--copy` for a
+self-contained install that must be re-run after each edit.
+
 ## Tools
 
 Five, and only five:
@@ -92,25 +111,6 @@ There is no "overwrite anyway", by design. Editing memory files with `write` /
 
 This is a guard against accidents, not a security boundary: it does not stop a
 shell command.
-
-## Install
-
-```bash
-dsh plugin --profile web add dsh-workbuddy-memory
-```
-
-Requires DSH `>= 0.2.0`. Do not hand-write an `insert:` block into
-`cordis.patch.yml` — the config card writes an id-targeted override, and both
-together become two records with the same id.
-
-Working on the plugin itself:
-
-```bash
-node scripts/dev-install.mjs web   # links the profile to this checkout
-```
-
-A source edit then needs only a profile restart. Pass `--copy` for a
-self-contained install that must be re-run after each edit.
 
 ## Files it reads
 
