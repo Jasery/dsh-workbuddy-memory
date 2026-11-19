@@ -2,6 +2,25 @@
 
 English | [中文](CHANGELOG.zh.md)
 
+## 0.2.5 — 2026-11-19
+
+- **The plugin now has its own icon in Plugin Manager.** The list reads an icon
+  from the package manifest; this package declared none, so it kept the generic
+  placeholder. `package.json` now sets a top-level `icon`, exports `./icon`, and
+  ships `icon.svg` in `files`. The mark is a document held by two arcs: the
+  yellow line is the always-on core, the two lighter lines are topics read on
+  demand. It is drawn at 36×36 and scaled up 12% so it still reads at the 30px
+  row size.
+- **`scripts/dev-install.mjs --copy` copies `icon.svg` now.** Its file list
+  predated the icon, so a copy install showed the placeholder while a link
+  install showed the icon.
+- **Editing a daily note now honours the date the caller names.**
+  `store.editAt` and the panel's edit/remove routes resolved `project-daily`
+  without passing the requested date, so every daily note other than today's was
+  addressed as today's file: a stale revision came back as `conflict`, a fresh
+  one as `no_section`. `memory_edit` gains an optional `date` as well, so an
+  older daily note can be corrected through the tool, not only from the panel.
+
 ## 0.2.4 — 2026-11-17
 
 - **A file the memory directory does not have yet is now protected.** The

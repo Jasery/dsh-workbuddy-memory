@@ -789,7 +789,7 @@ test('memory_edit reaches a daily note, not just the store method behind it', as
 
   const read = await tools.read.execute({ target: 'project-daily', date }, exec)
   const edited = await tools.edit.execute(
-    { target: 'project-daily', section: '进展', match: '第一条', replacement: '第一条改', expectedRevision: read.revision },
+    { target: 'project-daily', date, section: '进展', match: '第一条', replacement: '第一条改', expectedRevision: read.revision },
     exec,
   )
   assert.equal(edited.ok, true, `memory_edit should reach a daily note: ${edited.code}`)
@@ -797,7 +797,7 @@ test('memory_edit reaches a daily note, not just the store method behind it', as
 
   const beforeRemove = await tools.read.execute({ target: 'project-daily', date }, exec)
   const removed = await tools.edit.execute(
-    { target: 'project-daily', section: '进展', match: '第二条', mode: 'remove', expectedRevision: beforeRemove.revision },
+    { target: 'project-daily', date, section: '进展', match: '第二条', mode: 'remove', expectedRevision: beforeRemove.revision },
     exec,
   )
   assert.equal(removed.ok, true, `memory_edit remove should reach a daily note: ${removed.code}`)
@@ -812,7 +812,7 @@ test('memory_edit on a daily note still refuses an ambiguous match', async () =>
   writeFileSync(daily, '## 进展\n\n- 同一句话\n- 同一句话\n', 'utf8')
   const read = await tools.read.execute({ target: 'project-daily', date }, exec)
   const result = await tools.edit.execute(
-    { target: 'project-daily', section: '进展', match: '同一句话', replacement: '改', expectedRevision: read.revision },
+    { target: 'project-daily', date, section: '进展', match: '同一句话', replacement: '改', expectedRevision: read.revision },
     exec,
   )
   assert.equal(result.ok, false)

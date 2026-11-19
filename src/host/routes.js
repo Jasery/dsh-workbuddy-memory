@@ -533,6 +533,7 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
           return await store.editAt(
             {
               target,
+              date,
               section: String(input.section ?? ''),
               line: Number(input.line),
               replacement: String(input.replacement ?? ''),
@@ -542,7 +543,7 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
             probe,
           )
         case 'remove':
-          return await store.remove({ target, section: String(input.section ?? ''), line: Number(input.line), expectedRevision, operationId }, probe)
+          return await store.remove({ target, date, section: String(input.section ?? ''), line: Number(input.line), expectedRevision, operationId }, probe)
         case 'replace-section':
           return await store.replaceSection(
             {
