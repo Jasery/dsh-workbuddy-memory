@@ -350,6 +350,17 @@ test('a split file is reported as layered with both halves measured', async () =
   assert.ok(body.stores.user.layering.topicChars > 0)
 })
 
+test('a refused core reaches /state with the section and line to open', async () => {
+  // The panel banner is only actionable if the position survives the route: the
+  // reason alone sent people scanning a long file for the one line that failed.
+  const { call, home } = await harness()
+  writeFileSync(join(home, 'MEMORY.md'), '# User\n\n## 常驻记忆\n- fine\nprose is not a bullet\n', 'utf8')
+  const body = JSON.parse((await call('/workbuddy-memory/state')).body)
+  assert.equal(body.stores.user.layering.mode, 'legacy')
+  assert.equal(body.stores.user.layering.reason, 'invalid_core')
+  assert.deepEqual(body.stores.user.layering.problem, { section: '常驻记忆', line: 5 })
+})
+
 test('the layering summary never carries entry text into /state', async () => {
   // `/state` is polled every three seconds; shipping the memory body through it
   // would put the whole file on the wire on a timer.
