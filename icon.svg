@@ -1,15 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" fill="none">
   <title>dsh-workbuddy-memory</title>
   <defs>
-    <linearGradient id="wbmem-card" x1="7" y1="12" x2="22" y2="33" gradientUnits="userSpaceOnUse">
+    <linearGradient id="wbmem-card" x1="8" y1="3" x2="28" y2="33" gradientUnits="userSpaceOnUse">
       <stop stop-color="#60A5FA"/>
       <stop offset="1" stop-color="#2563EB"/>
     </linearGradient>
   </defs>
-  <rect x="15.5" y="4.5" width="15" height="20" rx="4" fill="#BFDBFE"/>
-  <rect x="11.5" y="8" width="15" height="21" rx="4" fill="#7DB9F8"/>
-  <rect x="7" y="12" width="15" height="21" rx="4" fill="url(#wbmem-card)"/>
-  <path d="M10.5 17.5h5" stroke="#FCD34D" stroke-width="2.2" stroke-linecap="round"/>
-  <path d="M10.5 22h8" stroke="#E0F2FE" stroke-width="1.6" stroke-linecap="round" opacity="0.95"/>
-  <path d="M10.5 26.5h6" stroke="#E0F2FE" stroke-width="1.6" stroke-linecap="round" opacity="0.7"/>
+  <path d="M7 5.9C4.5 8.8 3.2 12.9 3.2 18s1.3 9.2 3.8 12.1" stroke="#93C5FD" stroke-width="2.8" stroke-linecap="round"/>
+  <path d="M29 5.9c2.5 2.9 3.8 7 3.8 12.1s-1.3 9.2-3.8 12.1" stroke="#93C5FD" stroke-width="2.8" stroke-linecap="round"/>
+  <path d="M8 7.4A4.4 4.4 0 0 1 12.4 3h10.8l4.3 4.3V28.6a4.4 4.4 0 0 1-4.4 4.4H12.4A4.4 4.4 0 0 1 8 28.6z" fill="url(#wbmem-card)"/>
+  <path d="M23.2 3 27.5 7.3H23.2z" fill="#BFDBFE"/>
+  <path d="M12 12.6h9" stroke="#FCD34D" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M12 18.6h12" stroke="#E0F2FE" stroke-width="1.8" stroke-linecap="round" opacity="0.9"/>
+  <path d="M12 23.8h7" stroke="#E0F2FE" stroke-width="1.8" stroke-linecap="round" opacity="0.6"/>
+  <path d="M12 28.2h9.5" stroke="#E0F2FE" stroke-width="1.8" stroke-linecap="round" opacity="0.4"/>
 </svg>
