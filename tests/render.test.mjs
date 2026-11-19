@@ -548,6 +548,38 @@ test('a file that fits its share gets no over-share note', () => {
   assert.doesNotMatch(directory.text, /常驻只取核心/, 'nothing is said when nothing is out of budget')
 })
 
+test('a file whose topics hold prose and code is injected by its core, not whole', () => {
+  // The reported defect: a person had written `## 常驻记忆` and topic sections,
+  // and the panel still said the file was unsplit. One code block in one topic
+  // was enough to send the whole file back to whole-file injection, so the core
+  // the person had written was never used as the core.
+  const project = [
+    '# 记忆',
+    '',
+    '## 常驻记忆',
+    '- 只记会重犯的坑',
+    '',
+    '## 主题：算法',
+    '状态：已跑通。',
+    '### 步骤',
+    '```',
+    '1. one',
+    '2. two',
+    '```',
+    '',
+  ].join('\n')
+  const { cfg, probe } = fixture({ project, user: '# User\n\n## 常驻记忆\n- user core\n', config: { inject: { mode: 'layered' } } })
+  const sections = renderSections({ cfg, probe, t })
+  const projectBlock = sections.find((item) => item.name === 'workbuddy-memory:project')
+  const directory = sections.find((item) => item.name === 'workbuddy-memory:profile')
+
+  assert.match(projectBlock.text, /只记会重犯的坑/, 'the core is injected')
+  assert.doesNotMatch(projectBlock.text, /1\. one/, 'the code block stays on the on-demand side')
+  assert.doesNotMatch(directory.text, /project=legacy/, 'and the source is not reported as unsplit')
+  assert.match(directory.text, /主题：算法/, 'the topic is listed so the rest can be read on demand')
+  assert.equal(sections.mode, 'layered')
+})
+
 test('a legacy state in the directory carries a readable gloss, not a bare code', () => {
   // `user=legacy:missing_core` is a state name, not an explanation. The model
   // reading it learns nothing about whether the block in front of it is whole.
@@ -557,7 +589,11 @@ test('a legacy state in the directory carries a readable gloss, not a bare code'
   const directory = sections.find((item) => item.name === 'workbuddy-memory:profile')
 
   assert.match(directory.text, /project=legacy:missing_core/, 'the machine-readable state is still there')
-  assert.match(directory.text, /未划分|未注入/, 'and a person can read what it means')
+  assert.match(directory.text, /整份注入/, 'and a person can read what it means')
+  // The gloss also has to stop blaming the topic sections: they may hold prose
+  // and code, and a model that reads "unsplit" as "my file is malformed" tells
+  // the person to rewrite sections that were never the problem.
+  assert.match(directory.text, /主题小节.*不影响拆分/, 'and does not accuse the topic sections')
   assert.ok(directory.text.length <= Math.floor(layered.inject.coreBudget * 0.125), `the directory is ${directory.text.length} units`)
   void cfg
 })

@@ -10,7 +10,7 @@
   "directoryMore": "(more topics exist; read the section list for the rest)",
   "unsectioned": "Unsectioned content",
   "compatibility": "Compatibility",
-  "gloss.legacy": "A legacy source has no core/topic split; it is injected whole under its own limit.",
+  "gloss.legacy": "This source did not pass the core/topic parse (the state carries the reason), so it is injected whole under its own limit this turn. Prose and code blocks in topic sections do not prevent a split; only the core section has to be entries.",
   "gloss.coreOverBudget": "Only the core prefix was injected; later entries are read on demand.",
   "gloss.directoryTruncated": "The topic list shows only what fits; read the section list for the rest.",
   "gloss.tooSmall": "This block's limit cannot fit a heading plus a body, so nothing was injected.",

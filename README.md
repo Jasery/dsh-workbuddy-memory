@@ -50,13 +50,18 @@ across the project core, the user core, the fixed rules and the topic list.
 `inject.mode: 'full'` is the compatibility fallback: every file injected whole,
 the way earlier versions did.
 
-A file with no core section is injected whole and reported as `legacy:*` by
-`memory_status`; the panel shows it as a banner. Nothing rewrites an old file on
-its own — the split is your decision.
+A file with no usable core section is injected whole and reported as `legacy:*`
+by `memory_status`; the panel shows it as a banner that names the section and
+line. Nothing rewrites an old file on its own — the split is your decision.
 
-> ⚠️ **Keep topic bodies to `- ` entries.** Add anything else — one prose
-> sentence, a sub-heading, a fenced block — and the *whole file* falls back to
-> whole-file injection, because a file that cannot be split reliably is not split.
+> **The core section has to be `- ` entries.** It is injected every turn and cut
+> to a budget entry by entry, so anything else in it — a prose sentence, a
+> sub-heading, a fenced block — makes it unmeasurable and sends the whole file
+> back to whole-file injection. The panel says where.
+>
+> **A topic section may hold anything** — prose, `###` sub-headings, code
+> blocks. Only the topic name reaches the prompt; the body is read whole through
+> `memory_read(section=…)`, so its shape does not decide whether it can be read.
 > This is the behaviour most likely to look like a bug.
 
 ## Install

@@ -221,11 +221,18 @@ window.__ModuleLoader__.load({
       // layering. A file with no `## 常驻记忆` is injected whole, so its entire
       // length is always-on. That is invisible from the panel — the file looks
       // exactly the same either way — which is why it needs saying here.
-      'layer.title': '未划分常驻/按需',
+      'layer.title': '这个文件仍整份注入：没有可用的「常驻记忆」',
       'layer.legacy': '这个文件整份注入：{chars} 字符每轮都进上下文。分成「常驻记忆」和若干主题小节后，只有核心常驻，其余按需读取。',
+      // Where the parse stopped. The heading and the line number come from the
+      // host, so the address here is the address in the file the person opens.
+      'layer.location': '位置：{section} 第 {line} 行',
+      'layer.locationLines': '位置：第 {lines} 行',
       'layer.legacyReason.missing_core': '没有找到「常驻记忆」小节。',
       'layer.legacyReason.ambiguous_core': '「常驻记忆」小节不止一个，无法确定用哪个。',
       'layer.legacyReason.invalid_core': '「常驻记忆」小节里有非条目内容（标题、段落或代码块）。',
+      // No longer produced by this host: topic sections may hold anything. Kept
+      // so a panel running against an older host still gets a sentence instead
+      // of a raw key.
       'layer.legacyReason.non_entry_content': '某个主题小节里有非条目内容，整份文件无法可靠拆分。',
       'layer.legacyReason.unknown': '文件结构无法可靠拆分。',
       'layer.layered': '已分层：核心 {core} 字符常驻，{topics} 个主题（{chars} 字符）按需读取。',
@@ -596,8 +603,10 @@ window.__ModuleLoader__.load({
       'settings.noWriteAccess': 'This connection cannot write host config. Edit the profile cordis.patch.yml and reload the plugin.',
 
       // layering
-      'layer.title': 'No core/topic split',
+      'layer.title': 'This file is still injected whole: no usable "Core Memory" section',
       'layer.legacy': 'This file is injected whole: {chars} characters reach the prompt every turn. Split it into a "Core Memory" section plus topic sections and only the core stays always-on.',
+      'layer.location': 'Location: {section}, line {line}',
+      'layer.locationLines': 'Location: lines {lines}',
       'layer.legacyReason.missing_core': 'No "Core Memory" section was found.',
       'layer.legacyReason.ambiguous_core': 'More than one "Core Memory" section, so none is used.',
       'layer.legacyReason.invalid_core': 'The "Core Memory" section holds something other than entries (a heading, prose or a code block).',
@@ -3441,6 +3450,23 @@ window.__ModuleLoader__.load({
       }
 
       /**
+       * The position the parse stopped at, in the file's own coordinates.
+       *
+       * The host numbers the line while parsing, so what is shown here is the
+       * line the person will land on when they open the file — not an offset into
+       * an injected copy. `problem` is absent on hosts that predate it, and then
+       * the banner simply says less.
+       */
+      function layeringPosition(problem) {
+        if (!problem) return null
+        const lines = Array.isArray(problem.lines) ? problem.lines.filter((line) => Number.isInteger(line)) : []
+        if (lines.length > 1) return t('layer.locationLines', { lines: lines.join(' / ') })
+        const line = Number.isInteger(problem.line) ? problem.line : lines[0]
+        if (!Number.isInteger(line)) return null
+        return t('layer.location', { section: problem.section ? `## ${problem.section}` : '', line })
+      }
+
+      /**
        * A banner for a file that is still injected whole.
        *
        * This is the one piece of state a person cannot see by reading the file:
@@ -3453,6 +3479,11 @@ window.__ModuleLoader__.load({
        * own, so the only action offered is the one that starts a split the person
        * still confirms — a prompt to paste to the model, whose draft lands in the
        * existing draft dialog with its diff preview.
+       *
+       * The banner also names *where* the parse stopped. The reason alone ("the
+       * core holds something other than entries") left the reader scanning a
+       * long file for the one line the plugin refused, and a banner nobody can
+       * act on is a banner that gets dismissed.
        */
       function layeringBanner() {
         const info = layeringOfSelected()
@@ -3462,12 +3493,14 @@ window.__ModuleLoader__.load({
           return null
         }
         const reason = t(`layer.legacyReason.${info.reason ?? 'unknown'}`)
+        const where = layeringPosition(info.problem)
         const which = selected?.target === 'user-memory' ? t('layer.whichUser') : t('layer.whichProject')
         const prompt = t('layer.copyPrompt', { which })
         return h(
           'div',
           { className: 'wbm-banner warn', style: { flexDirection: 'column', alignItems: 'stretch', gap: '8px' } },
           h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, h('strong', null, t('layer.title')), h('span', { className: 'wbm-meta' }, reason)),
+          where ? h('div', { className: 'wbm-meta' }, where) : null,
           h('div', null, t('layer.legacy', { chars: info.coreChars })),
           h('div', { className: 'wbm-meta' }, t('layer.askModelHint')),
           h(

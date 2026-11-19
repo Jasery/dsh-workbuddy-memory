@@ -1386,11 +1386,58 @@ test('an unsplit file says it is injected whole, and offers the one action that 
   try {
     const tree = await openProject()
     const body = text(expand(tree))
-    assert.match(body, /未划分常驻\/按需/)
+    assert.match(body, /仍整份注入/, 'the headline says what is happening, not what the file lacks')
     assert.match(body, /整份注入/)
     assert.ok(body.includes('900'), `the banner carries the always-on size: ${body}`)
     assert.match(body, /没有找到「常驻记忆」小节/)
     assert.match(body, /复制/)
+  } finally {
+    restore()
+  }
+})
+
+test('a refused core names the section and the line the reader has to open', async () => {
+  // The reason alone sent people looking through a long file for the line the
+  // plugin refused. The host reports where it stopped; the banner repeats it in
+  // the file's own coordinates.
+  installFetch({
+    state: stateFor({
+      stores: {
+        ...stateFor().stores,
+        project: {
+          ...stateFor().stores.project,
+          layering: { mode: 'legacy', reason: 'invalid_core', problem: { section: '常驻记忆', line: 12 }, coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 },
+        },
+      },
+    }),
+  })
+  const restore = installTimers()
+  try {
+    const tree = await openProject()
+    const body = text(expand(tree))
+    assert.match(body, /位置：## 常驻记忆 第 12 行/)
+    assert.match(body, /「常驻记忆」小节里有非条目内容/)
+  } finally {
+    restore()
+  }
+})
+
+test('two core sections are both addressed', async () => {
+  installFetch({
+    state: stateFor({
+      stores: {
+        ...stateFor().stores,
+        project: {
+          ...stateFor().stores.project,
+          layering: { mode: 'legacy', reason: 'ambiguous_core', problem: { section: '常驻记忆', line: 3, lines: [3, 19] }, coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 },
+        },
+      },
+    }),
+  })
+  const restore = installTimers()
+  try {
+    const tree = await openProject()
+    assert.match(text(expand(tree)), /位置：第 3 \/ 19 行/)
   } finally {
     restore()
   }
@@ -1409,7 +1456,7 @@ test('a split file shows no banner, because its header already carries the count
   try {
     const tree = await openProject()
     const body = text(expand(tree))
-    assert.doesNotMatch(body, /未划分常驻\/按需/, 'no banner for a file that is already split')
+    assert.doesNotMatch(body, /仍整份注入/, 'no banner for a file that is already split')
   } finally {
     restore()
   }

@@ -10,7 +10,7 @@
   "directoryMore": "（还有更多主题，可用章节列表读取）",
   "unsectioned": "未分节内容",
   "compatibility": "兼容状态",
-  "gloss.legacy": "legacy 源未划分常驻/按需，按自己的限额整份注入。",
+  "gloss.legacy": "该源没通过分层解析（原因码见状态），本轮按自己的限额整份注入；主题小节里的散文和代码块不影响拆分，只有常驻小节必须是条目。",
   "gloss.coreOverBudget": "常驻只取了核心前缀，后面的条目未注入，需按需查询。",
   "gloss.directoryTruncated": "主题清单只列了放得下的部分，其余用章节列表读。",
   "gloss.tooSmall": "这一块的限额装不下标题加正文，本轮未注入。",

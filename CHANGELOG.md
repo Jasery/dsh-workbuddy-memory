@@ -2,6 +2,30 @@
 
 English | [中文](CHANGELOG.zh.md)
 
+## Unreleased
+
+- **Prose, sub-headings and code blocks in a topic section no longer send the
+  whole file back to whole-file injection.** The layered parse required every
+  `##` section to be nothing but `- ` entries, so writing `## 常驻记忆` correctly
+  was not enough: one explanatory sentence or one fenced block anywhere in a
+  topic marked the file `legacy` and the panel said there was no core/topic
+  split. The practical effect was that a core a person had already written was
+  never used as a core. Only the core section has to be entries now — it is
+  injected every turn and cut to a budget entry by entry, so it has to be
+  measurable — while a topic only contributes its name to the prompt and is read
+  whole through `memory_read(section=…)`. A body that is not entries is kept
+  verbatim as one block and counted at its real length on the on-demand side.
+- **The panel banner now says what is wrong and where.** Its headline was "No
+  core/topic split", which denies an operation the reader had already performed;
+  it now reads "This file is still injected whole: no usable Core Memory
+  section". A second line names the position — `## 常驻记忆, line 12` — and lists
+  every line when the core heading appears twice. The parse result carries
+  `problem: { section, line, lines }` (a heading and numbers, never entry text),
+  so `memory_status` compatibility states point at the same place.
+- The `gloss.legacy` wording changed with it: it no longer claims the source is
+  unsplit and states that prose and code in topic sections do not prevent a
+  split, so a model does not advise rewriting sections that were never wrong.
+
 ## 0.2.5 — 2026-11-19
 
 - **The plugin now has its own icon in Plugin Manager.** The list reads an icon
