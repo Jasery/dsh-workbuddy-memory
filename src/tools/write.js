@@ -53,9 +53,10 @@ export function editTool({ cfg, store, ctx }) {
   return defineTool({
     name: 'memory_edit',
     description:
-      'Replace or remove one existing bullet entry in a WorkBuddy MEMORY.md, matched by literal text inside the given section. Only bullet lines are addressable: prose and sub-headings are refused with not_an_entry, and an ambiguous match is refused rather than guessed. The "- " marker and indentation are preserved, so replacement takes the entry text, not a whole line.',
+      'Replace or remove one existing bullet entry in a WorkBuddy MEMORY.md, matched by literal text inside the given section. Only bullet lines are addressable: prose and sub-headings are refused with not_an_entry, and an ambiguous match is refused rather than guessed. The "- " marker and indentation are preserved, so replacement takes the entry text, not a whole line. A daily note can be edited the same way; pass its date.',
     parameters: {
-      target: { type: 'string', required: true, description: 'project-memory | user-memory' },
+      target: { type: 'string', required: true, description: 'project-memory | user-memory | project-daily' },
+      date: { type: 'string', description: 'YYYY-MM-DD, only for project-daily; defaults to today' },
       section: { type: 'string', required: true, description: 'section heading that contains the entry' },
       match: { type: 'string', required: true, description: 'literal text identifying exactly one bullet entry in that section' },
       replacement: { type: 'string', description: 'new entry text for mode=replace; the leading "- " is optional and never needed. Required (non-empty) when replacing.' },
@@ -72,6 +73,7 @@ export function editTool({ cfg, store, ctx }) {
       return store.edit(
         {
           target: String(args.target ?? ''),
+          date: args.date ? String(args.date) : undefined,
           section: String(args.section ?? ''),
           match: String(args.match ?? ''),
           replacement: args.replacement === undefined ? undefined : String(args.replacement),

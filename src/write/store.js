@@ -606,13 +606,13 @@ export function createStore({ cfg, stateDir, onCommit }) {
    * in the same section — so it sends a position, and this refuses the write if
    * that position no longer holds an entry (the file moved underneath it).
    *
-   * @param {{ target: string, section: string, line: number, replacement?: string, mode?: 'replace'|'remove', expectedRevision?: string, operationId?: string }} input
+   * @param {{ target: string, date?: string, section: string, line: number, replacement?: string, mode?: 'replace'|'remove', expectedRevision?: string, operationId?: string }} input
    */
   async function editAt(input, probe) {
     if (cfg.readOnly) return fail('read_only')
     if (!cfg.write.enabled) return fail('write_disabled')
 
-    const resolved = resolveTarget(input.target, probe)
+    const resolved = resolveTarget(input.target, probe, input.date)
     // A daily note may be edited entry by entry: it can carry sections now, and a
     // typo in a log entry is worth fixing. Everything that reorders or removes a
     // *document* — `replaceSection`, `removeSection`, `replaceDocument`,
@@ -1581,13 +1581,13 @@ export function createStore({ cfg, stateDir, onCommit }) {
   /**
    * Replace or remove one entry.
    *
-   * @param {{ target: string, section: string, match: string, replacement?: string, mode?: 'replace'|'remove', expectedRevision?: string, operationId?: string }} input
+   * @param {{ target: string, date?: string, section: string, match: string, replacement?: string, mode?: 'replace'|'remove', expectedRevision?: string, operationId?: string }} input
    */
   async function edit(input, probe) {
     if (cfg.readOnly) return fail('read_only')
     if (!cfg.write.enabled) return fail('write_disabled')
 
-    const resolved = resolveTarget(input.target, probe)
+    const resolved = resolveTarget(input.target, probe, input.date)
     // This is the path `memory_edit` takes — the one the model actually calls.
     // `editAt` was opened to daily notes first and this was missed, so the tool
     // kept answering `bad_target` while the store method behind it worked.
