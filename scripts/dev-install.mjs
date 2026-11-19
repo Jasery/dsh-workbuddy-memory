@@ -45,7 +45,7 @@ const DSH_HOME = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
 const PROFILE_DIR = join(DSH_HOME, 'profiles', PROFILE)
 const TARGET = join(PROFILE_DIR, 'node_modules', 'dsh-workbuddy-memory')
 
-const FILES = ['package.json', 'cordis.patch.yml', 'src', 'locale', 'README.md', 'README.zh.md', 'LICENSE']
+const FILES = ['package.json', 'cordis.patch.yml', 'src', 'locale', 'icon.svg', 'README.md', 'README.zh.md', 'LICENSE']
 const NAME = 'dsh-workbuddy-memory'
 
 if (!statSafe(PROFILE_DIR)) {
