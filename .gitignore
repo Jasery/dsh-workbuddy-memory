@@ -8,3 +8,4 @@ lib/
 .commit-i18n*.txt
 .cmsg.txt
 .cmsg*.txt
+AGENTS.local.md
