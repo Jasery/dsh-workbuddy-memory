@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" fill="none">
+  <title>dsh-workbuddy-memory</title>
+  <defs>
+    <linearGradient id="wbmem-card" x1="7" y1="12" x2="22" y2="33" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#60A5FA"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+  </defs>
+  <rect x="15.5" y="4.5" width="15" height="20" rx="4" fill="#BFDBFE"/>
+  <rect x="11.5" y="8" width="15" height="21" rx="4" fill="#7DB9F8"/>
+  <rect x="7" y="12" width="15" height="21" rx="4" fill="url(#wbmem-card)"/>
+  <path d="M10.5 17.5h5" stroke="#FCD34D" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M10.5 22h8" stroke="#E0F2FE" stroke-width="1.6" stroke-linecap="round" opacity="0.95"/>
+  <path d="M10.5 26.5h6" stroke="#E0F2FE" stroke-width="1.6" stroke-linecap="round" opacity="0.7"/>
+</svg>
