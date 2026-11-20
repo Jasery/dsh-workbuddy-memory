@@ -18,7 +18,12 @@ export function searchTool({ cfg, ctx }) {
     description:
       'Search WorkBuddy memory files for a literal string (case-insensitive) and return matching lines with their file, section and line number. Use this before reading a whole file.',
     parameters: {
-      query: { type: 'string', required: true, description: 'literal text to look for' },
+      query: {
+        type: 'string',
+        required: true,
+        description:
+          'literal substring (case-insensitive), spaces included: pass one term per call, and issue several calls in one turn for synonyms',
+      },
       scope: { type: 'string', description: 'project (default) | user | all' },
       limit: { type: 'number', description: 'maximum hits (default from config, 8)' },
       includeDaily: { type: 'boolean', description: 'also search daily notes (default true)' },
