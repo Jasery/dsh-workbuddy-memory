@@ -21,7 +21,7 @@ export function appendTool({ cfg, store, ctx }) {
       section: {
         type: 'string',
         description:
-          'section heading to append under; created if missing. For a daily note, omitting it appends a bare bullet at the end of the file',
+          'section heading to append under; created if missing. Name a new topic section by when to read it (e.g. "Git push times out -> use the local proxy"), not just the noun: the heading is the only thing the injected topic directory shows. For a daily note, omitting it appends a bare bullet at the end of the file',
       },
       date: { type: 'string', description: 'YYYY-MM-DD, only for project-daily' },
       expectedRevision: { type: 'string', description: 'revision from memory_read; the write is refused when it no longer matches' },

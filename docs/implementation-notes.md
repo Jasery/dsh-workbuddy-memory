@@ -327,6 +327,7 @@ operation lock（op-<hash>.lock，只有带 operationId 时）
 
 - 注册集合固定为 `memory_status` / `memory_read` / `memory_search` / `memory_append` / `memory_edit`。`search.enabled: false` 时 `memory_search` 整个不注册；已撤的四个工具（`memory_prune`、`memory_replace_section`、`memory_list_revisions`、`memory_restore`）没有任何别名空壳。
 - 所有工具结果过一层 `lossless()`：`undefined` → `null`，非有限数 → `null`，`-0` → `null`。宿主对 tool result 做 lossless 快照，任一非法值会判整份非法，而写入此时已经落盘——所以兜底放在注册处而不是各工具里。
+- **主题标题的命名引导放在「写的那一刻」，不占注入预算。** 目录里每行只有 `project/<标题>`，标题写成一个名词（「Git」）就等于这一节在模型眼里不存在：它知道有这个主题，但判断不出什么时候该读。引导落在三处：`memory_append` 的 `section` 描述（随工具 schema 每轮可见，不计入 `coreBudget`）、面板新建小节表单的占位符与说明行（`editor.sectionPlaceholder` / `editor.sectionTitleHint`；日更文件不显示说明行——那里的标题是日志分组，不是目录项）、以及 `layer.copyPrompt`（模型出划分草案时照它命名）。**没有往 `compactRules` 加第 6 条**：英文规则块 657 / 700 只剩 43 码元，而 `fitText` 从尾部整行丢弃，加一行会被静默丢掉（`tests/render.test.mjs` 的英文 headroom 用例会先红）。真要进常驻规则，只有两条路——改写现有英文规则腾出空间，或把 `LAYERED_SHARES.rules` 从 17.5% 抬到 19%（目录 12.5%→11%），都不是纯文案改动，留给下一次预算调整。
 - 面板承接（`POST /workbuddy-memory/action` + `GET /state|/content|/revisions|/revision`）：`add`/`edit`/`remove`/`replace-section`/`replace-document`/`remove-section`/`restore`/`prune`。请求走宿主信任栅栏 `connection.requestRejection`（拿不到该服务时降级为本地 origin 检查），`/action` 还要求 `application/json`。
 - 面板与工具共用同一个 `store` 实例，所以两条路径在同一把锁上排队；`ui.allowWriteActions` 是面板写操作的总开关，整份文件写（`replace-document` 与草案）只受 `readOnly` 与 `write.enabled` 约束，没有额外的功能开关。
 - 冲突出口只有三条（重载 / 保留草稿 / 查看磁盘差异），没有「覆盖」。恢复（`restore`）必须带当前 revision，且会先把当前文件备份一次，所以恢复本身也可撤销。
