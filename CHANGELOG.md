@@ -2,8 +2,22 @@
 
 English | [中文](CHANGELOG.zh.md)
 
-## Unreleased
+## 0.2.6 — 2026-11-20
 
+- **Topic headings now have to say when to read them.** In layered mode the
+  prompt carries section names only, so a heading that names a thing ("Git")
+  leaves the model unable to decide when to read it — the section may as well not
+  exist. The `memory_append` `section` description, the panel's new-section form
+  and the draft prompt now all ask for "when to read it, not just the noun". The
+  rule did not go into the fixed rules: the English rules block is 657/700 with
+  43 units left and `fitText` drops whole lines from the end, so a sixth rule
+  would be silently cut; it lives in the tool description, visible every turn and
+  outside `coreBudget`.
+- **`memory_search` now says its `query` is one literal string.** Spaces are not
+  split into keywords, so "git proxy" matches only that contiguous text and a
+  silent zero-hit reads as "not in memory". The parameter description now says
+  spaces are included, one term per call, and several calls in one turn for
+  synonyms — the matching itself is unchanged.
 - **Prose, sub-headings and code blocks in a topic section no longer send the
   whole file back to whole-file injection.** The layered parse required every
   `##` section to be nothing but `- ` entries, so writing `## 常驻记忆` correctly
