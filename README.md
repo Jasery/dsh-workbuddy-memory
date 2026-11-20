@@ -45,6 +45,11 @@ Each line carries a `project/` or `user/` prefix because `memory_read` needs a
 target as well as a section — with a bare name the model has to guess which file to
 read. A truncated list says it is truncated.
 
+The list shows headings and nothing else, so **a heading has to say when to read
+it**: "Git" tells the model nothing, while "Git push times out -> use the local
+proxy" is a section it can decide to read. The `memory_append` parameter
+description, the panel's new-section form and the draft prompt all carry that rule.
+
 **Budget** is `inject.coreBudget` — 4000 units by default, 4000–20000 — split
 across the project core, the user core, the fixed rules and the topic list.
 `inject.mode: 'full'` is the compatibility fallback: every file injected whole,

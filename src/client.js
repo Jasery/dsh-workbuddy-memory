@@ -238,7 +238,7 @@ window.__ModuleLoader__.load({
       'layer.layered': '已分层：核心 {core} 字符常驻，{topics} 个主题（{chars} 字符）按需读取。',
       'layer.askModel': '让模型出划分草案',
       'layer.askModelHint': '复制这句话发给模型：它会读出当前 revision 并给出整份草案，你在本页「粘贴草案」里预览差异后保存。',
-      'layer.copyPrompt': '按主题帮我整理{which}记忆：先 memory_read 拿当前正文和 revision，再把条目分成「常驻记忆」（少量、每轮都要用的）和若干主题小节（按需查询的），输出整份草案正文和来源 revision，我自己在面板预览。不要直接写文件。',
+      'layer.copyPrompt': '按主题帮我整理{which}记忆：先 memory_read 拿当前正文和 revision，再把条目分成「常驻记忆」（少量、每轮都要用的）和若干主题小节（按需查询的），输出整份草案正文和来源 revision，我自己在面板预览。不要直接写文件。主题小节的标题要写清「什么时候该查它」（例如「Git 推送超时 → 走本地代理」），不要只写一个名词——注入时能看到的只有标题。',
       'layer.whichProject': '项目',
       'layer.whichUser': '用户',
       'layer.copy': '复制',
@@ -396,7 +396,8 @@ window.__ModuleLoader__.load({
       'editor.saveHint': '保存前会做结构校验；每次写入都会先备份。',
       'editor.saveDocument': '保存整份文件',
       'editor.addDailyEntry': '添加日期条目',
-      'editor.sectionPlaceholder': '小节标题，例如：工具环境坑',
+      'editor.sectionPlaceholder': '主题标题：写清什么时候该查它，例如「Git 推送超时 → 走本地代理」',
+      'editor.sectionTitleHint': '标题是注入目录里唯一能看到的字：写「什么时候该查它」，不要只写一个名词。',
       'editor.dailySectionOptional': '小节标题（可留空，留空就追加到文件末尾）',
       'editor.firstEntryPlaceholder': '第一条内容（可留空，稍后再加）',
       'editor.pending': '（待补充）',
@@ -615,7 +616,7 @@ window.__ModuleLoader__.load({
       'layer.layered': 'Split: {core} characters of core stay always-on; {topics} topics ({chars} characters) are read on demand.',
       'layer.askModel': 'Have the model draft a split',
       'layer.askModelHint': 'Copy this and send it to the model: it reads the current revision, hands back a whole-file draft, and you preview the diff in "Paste a draft" on this page.',
-      'layer.copyPrompt': 'Tidy up my {which} memory by topic: memory_read first for the current body and revision, then split the entries into "Core Memory" (few, needed every turn) and topic sections (read on demand). Give me the whole draft body and its source revision; I will preview it in the panel. Do not write the file yourself.',
+      'layer.copyPrompt': 'Tidy up my {which} memory by topic: memory_read first for the current body and revision, then split the entries into "Core Memory" (few, needed every turn) and topic sections (read on demand). Give me the whole draft body and its source revision; I will preview it in the panel. Do not write the file yourself. Name each topic section by when to read it (e.g. "Git push times out -> use the local proxy"), not just the noun: the heading is all that is injected.',
       'layer.whichProject': 'project',
       'layer.whichUser': 'user',
       'layer.copy': 'Copy',
@@ -761,7 +762,8 @@ window.__ModuleLoader__.load({
       'editor.saveHint': "Saving runs a structural check; every write is backed up first.",
       'editor.saveDocument': "Save the whole file",
       'editor.addDailyEntry': "Add a dated entry",
-      'editor.sectionPlaceholder': "Section heading, e.g. Toolchain pitfalls",
+      'editor.sectionPlaceholder': 'Topic heading: say when to read it, e.g. "Git push times out -> use the local proxy"',
+      'editor.sectionTitleHint': "The heading is the only thing the injected topic directory shows: say when to read it, not just the noun.",
       'editor.dailySectionOptional': "Section heading (optional — empty appends to the end of the file)",
       'editor.firstEntryPlaceholder': "First entry (may be empty; add more later)",
       'editor.pending': "(to be filled in)",
@@ -3394,6 +3396,13 @@ window.__ModuleLoader__.load({
             placeholder: daily ? t('editor.dailySectionOptional') : t('editor.sectionPlaceholder'),
             onChange: (event) => setNewSection({ ...newSection, heading: event.target.value }),
           }),
+          // The heading is the only part of a topic section that is injected, so
+          // a heading that names a thing instead of a situation ("Git" rather
+          // than "Git push times out") is a section the model cannot decide to
+          // read. The example alone cannot say that: it disappears on the first
+          // keystroke. A daily note's optional heading is a log label, not a
+          // directory entry, so the advice does not apply there.
+          daily ? null : h('div', { className: 'wbm-note', style: { padding: '4px 0 0' } }, t('editor.sectionTitleHint')),
           h('div', { style: { height: '6px' } }),
           h('input', {
             className: 'wbm-input',

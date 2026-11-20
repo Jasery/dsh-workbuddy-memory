@@ -273,3 +273,21 @@ test('a mounted panel re-renders in the new language', async () => {
   }
 })
 
+test('both languages teach the topic-heading rule where a heading gets written', () => {
+  // The injected directory carries headings only, so a heading that names a
+  // noun instead of a situation ("Git" rather than "Git push times out") is a
+  // section the model can read but never decides to. Two of the writing paths
+  // are the panel's: the new-section form, and the draft prompt it hands the
+  // model. Both have to carry the rule in either language — an English session
+  // that only got an example would silently lose it.
+  const dictionaries = [
+    ['zh', ZH, { placeholder: /什么时候该查/, hint: /标题/, prompt: /标题要写清/ }],
+    ['en', EN, { placeholder: /when to read/, hint: /heading/, prompt: /Name each topic section/ }],
+  ]
+  for (const [name, dict, expect] of dictionaries) {
+    assert.match(dict['editor.sectionPlaceholder'], expect.placeholder, `${name}: the example names a situation`)
+    assert.match(dict['editor.sectionTitleHint'], expect.hint, `${name}: the hint says a heading is all that is injected`)
+    assert.match(dict['layer.copyPrompt'], expect.prompt, `${name}: the draft prompt carries the naming rule`)
+  }
+})
+

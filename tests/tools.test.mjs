@@ -190,6 +190,19 @@ test('memory_search refuses an empty query', async () => {
   assert.equal(result.code, 'empty_query')
 })
 
+test('memory_append tells the model how to name a new topic section', () => {
+  // The topic directory injected every turn shows nothing but the heading, so a
+  // heading that names a thing instead of a situation ("Git" rather than "Git
+  // push times out") is a section the model can read but never decides to. The
+  // parameter description is the only always-on place that says this at the
+  // moment a section is created, so losing it loses the naming rule itself.
+  const { tools } = fixture()
+  const section = tools.append.parameters.properties.section.description
+  assert.match(section, /when to read it/, 'the description says what the heading is for')
+  assert.match(section, /topic directory/, 'and why: the directory is all the model sees')
+  assert.match(section, /<|->|→/, 'with an example, not only an instruction')
+})
+
 test('memory_append writes one entry and returns the new revision', async () => {
   const { tools, exec, dir } = fixture()
   const before = await tools.read.execute({ target: 'project-memory' }, exec)
