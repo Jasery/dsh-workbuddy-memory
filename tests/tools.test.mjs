@@ -203,6 +203,18 @@ test('memory_append tells the model how to name a new topic section', () => {
   assert.match(section, /<|->|→/, 'with an example, not only an instruction')
 })
 
+test('memory_search says its query is one literal term, not a word list', async () => {
+  // Most search tools treat a space as AND/OR. This one does not: the whole
+  // query goes into `includes()`. A model that assumes otherwise gets a silent
+  // zero-hit and concludes the fact is not in memory, so the parameter has to
+  // say both halves — spaces are literal, synonyms need separate calls.
+  const { tools } = fixture()
+  const query = tools.search.parameters.properties.query.description
+  assert.match(query, /literal substring/, 'it says the match is literal')
+  assert.match(query, /one term per call/, 'one term per call')
+  assert.match(query, /several calls/, 'and several calls are allowed in one turn')
+})
+
 test('memory_append writes one entry and returns the new revision', async () => {
   const { tools, exec, dir } = fixture()
   const before = await tools.read.execute({ target: 'project-memory' }, exec)
