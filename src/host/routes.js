@@ -452,8 +452,13 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
           chars: project?.chars ?? null,
           revision: project?.revision ?? null,
           mtime: project?.mtime ?? null,
-          // `layering.mode === 'legacy'` is the state the panel has to surface:
-          // the file is injected whole, so its whole length is always-on.
+          // How the file *parses* — split or not, and where the parse stopped.
+          // That is a fact about the file's structure, independent of config,
+          // and is not by itself a statement about what is injected: a file
+          // that parses as unsplit is injected whole only in layered mode with
+          // the source on. The judgment that knows is `injection` below
+          // (`fallback === 'legacy'`), and the panel keys the "injected
+          // whole" banner on that, not on this.
           layering: layeringOf(probe.project.memoryPath),
           // The same judgment the project row carries, so the panel reads one
           // answer whether it looks at the list or at the open project.

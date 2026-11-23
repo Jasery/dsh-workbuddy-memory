@@ -110,6 +110,22 @@ const judged = (status, extra = {}) => ({
   ...extra,
 })
 
+/**
+ * A project store whose file is injected whole because its structure forced
+ * a fallback — `layering` and `injection` as the real server sends them,
+ * i.e. agreeing with each other. (A legacy `layering` beside a `complete`
+ * judgment is a state the host cannot produce.)
+ *
+ * @param {object} layering - the `layering` summary.
+ * @param {object} [extra] - overrides for the store object.
+ */
+const legacyStore = (layering, extra = {}) => ({
+  ...stateFor().stores.project,
+  layering,
+  injection: judged('truncated', { mode: 'whole', fallback: 'legacy', reason: layering.reason ?? 'missing_core', budget: 10000, need: layering.coreChars, used: Math.min(layering.coreChars, 10000) }),
+  ...extra,
+})
+
 function stateFor(overrides = {}) {
   const state = {
     ok: true,
@@ -1414,7 +1430,7 @@ test('an unsplit file says it is injected whole, and offers the one action that 
     state: stateFor({
       stores: {
         ...stateFor().stores,
-        project: { ...stateFor().stores.project, layering: { mode: 'legacy', reason: 'missing_core', coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 } },
+        project: legacyStore({ mode: 'legacy', reason: 'missing_core', coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 }),
       },
     }),
   })
@@ -1440,10 +1456,7 @@ test('a refused core names the section and the line the reader has to open', asy
     state: stateFor({
       stores: {
         ...stateFor().stores,
-        project: {
-          ...stateFor().stores.project,
-          layering: { mode: 'legacy', reason: 'invalid_core', problem: { section: '常驻记忆', line: 12 }, coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 },
-        },
+        project: legacyStore({ mode: 'legacy', reason: 'invalid_core', problem: { section: '常驻记忆', line: 12 }, coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 }),
       },
     }),
   })
@@ -1463,10 +1476,7 @@ test('two core sections are both addressed', async () => {
     state: stateFor({
       stores: {
         ...stateFor().stores,
-        project: {
-          ...stateFor().stores.project,
-          layering: { mode: 'legacy', reason: 'ambiguous_core', problem: { section: '常驻记忆', line: 3, lines: [3, 19] }, coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 },
-        },
+        project: legacyStore({ mode: 'legacy', reason: 'ambiguous_core', problem: { section: '常驻记忆', line: 3, lines: [3, 19] }, coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 }),
       },
     }),
   })
@@ -1515,7 +1525,7 @@ test('the copy button puts the split prompt on the clipboard, and survives a hos
     state: stateFor({
       stores: {
         ...stateFor().stores,
-        project: { ...stateFor().stores.project, layering: { mode: 'legacy', reason: 'missing_core', coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 } },
+        project: legacyStore({ mode: 'legacy', reason: 'missing_core', coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 }),
       },
     }),
   })
@@ -2138,6 +2148,48 @@ test('an unmeasured file never shows "0 entries" anywhere', async () => {
     assert.doesNotMatch(body, /repo\s*0 条/, 'the rail row')
     assert.doesNotMatch(body, /已创建记忆文件 · 0 条/, 'the summary line does not claim zero entries')
     assert.match(body, /MEMORY\.md 无法按完整内容判断/, 'the attention row names the reason')
+  } finally {
+    restore()
+  }
+})
+
+test('the "injected whole" banner appears only on a real structural fallback', async () => {
+  // The banner says "this file is injected whole: N characters reach the
+  // prompt every turn". That is true in exactly one case: layered mode, and
+  // the file failed the split for a structural reason. Everywhere else it
+  // contradicted the chip right beside it.
+  const legacy = { mode: 'legacy', reason: 'missing_core', coreEntries: 0, topics: 0, coreChars: 10481, topicChars: 0 }
+  const banner = /仍整份注入/
+  const restore = installTimers()
+  try {
+    // 1. Source switched off: nothing is injected, so nothing is "injected whole".
+    let state = stateFor({ stores: { ...stateFor().stores, project: { ...stateFor().stores.project, layering: legacy, injection: judged('disabled') } } })
+    state.projects[0] = { ...state.projects[0], injection: judged('disabled') }
+    installFetch({ state })
+    let body = text(expand(await openProject()))
+    assert.doesNotMatch(body, banner, 'source off: no banner')
+    assert.match(body, /注入已关闭/)
+
+    // 2. Full mode: every file is injected whole by design. The banner's one
+    //    action — "split it" — changes nothing there, so it is not offered.
+    state = stateFor({ stores: { ...stateFor().stores, project: { ...stateFor().stores.project, layering: legacy, injection: judged('complete', { mode: 'whole', fallback: null, reason: null, budget: 10000 }) } } })
+    state.inject = { enabled: true, mode: 'full', project: true, coreBudget: 4000 }
+    state.projects[0] = { ...state.projects[0], injection: state.stores.project.injection }
+    installFetch({ state })
+    runtime.reset()
+    body = text(expand(await openProject()))
+    assert.doesNotMatch(body, banner, 'full mode: no banner')
+
+    // 3. Layered mode, real fallback: this is the one case it is for.
+    state = stateFor({ stores: { ...stateFor().stores, project: { ...stateFor().stores.project, layering: legacy, injection: judged('truncated', { mode: 'whole', fallback: 'legacy', reason: 'missing_core', budget: 10000, need: 10481, used: 10000 }) } } })
+    state.projects[0] = { ...state.projects[0], overLimit: true, injection: state.stores.project.injection }
+    installFetch({ state })
+    runtime.reset()
+    body = text(expand(await openProject()))
+    assert.match(body, banner, 'layered + structural fallback: the banner is for this')
+    assert.match(body, /没有找到「常驻记忆」小节/)
+    // And it states the size the way the rest of the panel does now.
+    assert.doesNotMatch(body, /10481 字符每轮都进上下文/, 'it does not quote the whole length as what reaches the prompt')
   } finally {
     restore()
   }

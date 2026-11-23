@@ -3895,23 +3895,58 @@ window.__ModuleLoader__.load({
        * long file for the one line the plugin refused, and a banner nobody can
        * act on is a banner that gets dismissed.
        */
-      function layeringBanner() {
+      /**
+       * Whether the open file is injected whole *because its structure forced
+       * a fallback* — the one case the "injected whole" banner is about.
+       *
+       * The banner used to fire for any file that parsed as unsplit, whatever
+       * the configuration, and to quote the file's whole length as what reaches
+       * the prompt. Both halves were then false in three situations a person
+       * can be in: with the source switched off (nothing is injected, and the
+       * banner contradicted the "injection off" chip right above it), in full
+       * mode (every file is injected whole by design, the length quoted was the
+       * file's and not the injected block's, and the banner's one action —
+       * "split it" — changes nothing there), and for a split file in full mode
+       * (still whole, so the advice was irrelevant).
+       *
+       * The answer comes from the host's judgment, which knows the mode and
+       * whether this file actually fell back: `fallback === 'legacy'`.
+       *
+       * @returns {{ info: object, injected: number|null }|null}
+       */
+      function wholeFileFallback() {
         const info = layeringOfSelected()
-        if (!info) return null
-        if (info.mode === 'layered') {
-          // A split file needs no banner; the counts are already in the header.
-          return null
+        if (!info || info.mode !== 'legacy') return null
+        if (selected?.target === 'user-memory') {
+          // User memory has no row-level judgment yet (a separate review); its
+          // fallback is real exactly when the prompt is in layered mode and
+          // the source is on.
+          const on = state?.inject?.enabled !== false && state?.inject?.user !== false
+          return on && state?.inject?.mode === 'layered' ? { info, injected: null } : null
         }
+        const judgment = selected?.target === 'project-memory' ? projectDetail?.injection ?? project?.injection : null
+        if (!judgment) return null
+        return judgment.fallback === 'legacy' ? { info, injected: judgment.used } : null
+      }
+
+      function layeringBanner() {
+        const fallback = wholeFileFallback()
+        if (!fallback) return null
+        const { info, injected } = fallback
         const reason = t(`layer.legacyReason.${info.reason ?? 'unknown'}`)
         const where = layeringPosition(info.problem)
         const which = selected?.target === 'user-memory' ? t('layer.whichUser') : t('layer.whichProject')
         const prompt = t('layer.copyPrompt', { which })
+        // What reaches the prompt is what the renderer kept, not the file's
+        // length: a whole-file block past its limit is cut, and the banner
+        // used to report the uncut number.
+        const size = injected === null ? info.coreChars : injected
         return h(
           'div',
           { className: 'wbm-banner warn', style: { flexDirection: 'column', alignItems: 'stretch', gap: '8px' } },
           h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, h('strong', null, t('layer.title')), h('span', { className: 'wbm-meta' }, reason)),
           where ? h('div', { className: 'wbm-meta' }, where) : null,
-          h('div', null, t('layer.legacy', { chars: info.coreChars })),
+          h('div', null, t('layer.legacy', { chars: size })),
           h('div', { className: 'wbm-meta' }, t('layer.askModelHint')),
           h(
             'div',
