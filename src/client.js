@@ -4340,7 +4340,12 @@ window.__ModuleLoader__.load({
     function PruneDialog({ projectKey, act, onClose, flash, reload }) {
       const [plan, setPlan] = React.useState(null)
       const [picked, setPicked] = React.useState(null)
-      const [beforeDays, setBeforeDays] = React.useState(30)
+      // The opening preview sends no `beforeDays`, so the host applies the one
+      // threshold every other surface counts with (`ARCHIVE_AFTER_DAYS`). The
+      // dialog then shows the number the host reports back. A literal 30 here
+      // was a fourth copy of that default, and the copies had already drifted
+      // apart by a day. `null` until the first plan says.
+      const [beforeDays, setBeforeDays] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState('')
       // The frozen apply request. Cleared by a new preview or a changed pick,
@@ -4354,10 +4359,11 @@ window.__ModuleLoader__.load({
           setError('')
           setFrozen(null)
           setOutcome(null)
-          const body = await act({ type: 'prune', dryRun: true, beforeDays: days, key: projectKey })
+          const body = await act({ type: 'prune', dryRun: true, ...(days ? { beforeDays: days } : {}), key: projectKey })
           setBusy(false)
           if (body?.ok) {
             setPlan(body)
+            setBeforeDays(body.beforeDays)
             setPicked(new Set((body.candidates ?? []).map((row) => row.date)))
           } else {
             setError(describeCode(body?.code ?? 'failed'))
@@ -4367,7 +4373,7 @@ window.__ModuleLoader__.load({
       )
 
       React.useEffect(() => {
-        load(beforeDays)
+        load(null)
       }, [])
 
       const candidates = plan?.candidates ?? []
@@ -4422,7 +4428,9 @@ window.__ModuleLoader__.load({
           type: 'prune',
           dryRun: false,
           planId: plan?.planId,
-          beforeDays,
+          // The days the plan was built with, not whatever the input holds
+          // now: the plan is bound to the set those days selected.
+          beforeDays: plan.beforeDays,
           dates: pickedRows.map((row) => row.date),
           operationId: newOperationId(),
           key: projectKey,
@@ -4458,11 +4466,14 @@ window.__ModuleLoader__.load({
               style: { width: '80px' },
               type: 'number',
               min: 1,
-              value: beforeDays,
+              // Disabled until the opening plan names the default, so the
+              // field never shows an empty box or a number of its own.
+              disabled: beforeDays === null || busy,
+              value: beforeDays ?? '',
               onChange: (event) => setBeforeDays(Number(event.target.value) || 1),
             }),
             h('span', { className: 'wbm-meta' }, t('rail.dayUnit')),
-            h('button', { type: 'button', className: 'wbm-btn', onClick: () => load(beforeDays), disabled: busy }, t('prune.replan')),
+            h('button', { type: 'button', className: 'wbm-btn', onClick: () => load(beforeDays), disabled: busy || beforeDays === null }, t('prune.replan')),
           ),
           error ? h('div', { className: 'wbm-banner warn' }, error) : null,
           outcome?.kind === 'unresolved'

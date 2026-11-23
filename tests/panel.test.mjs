@@ -67,6 +67,8 @@ const projectContent = {
   target: 'project-memory',
   path: 'C:\\repo\\.workbuddy\\memory\\MEMORY.md',
   bytes: projectMemory.length,
+  chars: projectMemory.length,
+  partial: false,
   revision: 'rev-project',
   entries: 3,
   truncated: false,
@@ -84,6 +86,8 @@ const dailyContent = {
   date: '2026-11-09',
   path: 'C:\\repo\\.workbuddy\\memory\\2026-11-09.md',
   bytes: 20,
+  chars: 20,
+  partial: false,
   revision: 'rev-daily',
   entries: 1,
   truncated: false,
@@ -91,6 +95,20 @@ const dailyContent = {
   sections: [],
   writable: false,
 }
+
+/** A project row's injection judgment, in the shape the catalog reports. */
+const judged = (status, extra = {}) => ({
+  status,
+  mode: /complete|core-over-budget|truncated|omitted/.test(status) ? 'layered' : null,
+  fallback: null,
+  reason: null,
+  overLimit: /^(core-over-budget|truncated|omitted)$/.test(status),
+  dropped: 0,
+  budget: 1400,
+  need: 900,
+  used: 900,
+  ...extra,
+})
 
 function stateFor(overrides = {}) {
   const state = {
@@ -102,6 +120,8 @@ function stateFor(overrides = {}) {
     writeEnabled: true,
     allowWriteActions: true,
     limits: { project: 10000, user: 4000, profile: 2000, rules: 2000 },
+    inject: { enabled: true, mode: 'layered', project: true, coreBudget: 4000 },
+    archiveAfterDays: 30,
     dataFolderName: '.workbuddy',
     home: { path: 'C:\\Users\\me\\.workbuddy', source: 'env', detail: 'WORKBUDDY_CONFIG_DIR' },
     projects: [
@@ -121,6 +141,7 @@ function stateFor(overrides = {}) {
         mtime: 1,
         latestDaily: '2026-11-09',
         oldestDailyAgeDays: 1,
+        injection: judged('complete', { need: 900, used: 900 }),
         overLimit: false,
         stale: false,
         status: 'ok',
@@ -134,19 +155,23 @@ function stateFor(overrides = {}) {
         current: false,
         hasMemory: false,
         daily: 1,
-        entries: 0,
+        entries: null,
         bytes: 0,
-        chars: 0,
+        chars: null,
         revision: null,
         mtime: null,
         latestDaily: '2026-11-08',
         oldestDailyAgeDays: 2,
+        injection: judged('missing'),
         overLimit: false,
         stale: false,
         status: 'daily-only',
       },
     ],
-    totals: { projects: 2, withMemory: 1, entries: 3, dailyFiles: 2, overLimit: 0, stale: 0 },
+    totals: { projects: 2, withMemory: 1, entries: 3, dailyFiles: 2, overLimit: 0, stale: 0, missing: 0, unmeasurable: 0 },
+    attention: [],
+    attentionTotal: 0,
+    attentionMore: { 'over-limit': 0, stale: 0, missing: 0, unmeasurable: 0 },
     stores: {
       project: {
         target: 'project-memory',
@@ -159,6 +184,7 @@ function stateFor(overrides = {}) {
         writable: true,
         entries: 3,
         revision: 'rev-project',
+        injection: judged('complete', { need: 900, used: 900 }),
         daily: [{ name: '2026-11-09.md', date: '2026-11-09', bytes: 40, ageDays: 1 }],
       },
       user: {
@@ -285,7 +311,10 @@ test('selecting a project opens its MEMORY.md and renders sections', async () =>
     assert.match(body, /## 环境/)
     assert.match(body, /Node 22/)
     assert.match(body, /## 待办/)
-    assert.match(body, /rev-project/)
+    // The revision is a write token, not a header fact: it shows where it is
+    // compared (the conflict dialog), nowhere else.
+    assert.doesNotMatch(body, /\brev [0-9a-f]/, 'no raw revision in a header')
+    assert.match(body, /3 条 · \d+ 码元/, 'the file header counts entries and length in the limit unit')
   } finally {
     restore()
   }
@@ -447,16 +476,22 @@ test('the project panel resolves the workspace from the viewed session', async (
 })
 
 test('an over-limit project is called out in the summary chips', async () => {
+  // Pinned to the old wording ("已超注入限额, next turn truncates") because
+  // that sentence was true of no mode. The alert still leads the overview,
+  // and it now says what the prompt actually did.
   const state = stateFor()
-  state.projects[0] = { ...state.projects[0], overLimit: true, chars: 12000, status: 'over-limit' }
+  state.projects[0] = { ...state.projects[0], overLimit: true, chars: 12000, status: 'over-limit', injection: judged('core-over-budget', { dropped: 4, need: 2400, used: 1375 }) }
   state.totals = { ...state.totals, overLimit: 1 }
+  state.attention = [{ key: 'proj-a', name: 'repo', title: 'repo', hasMemory: true, latestDaily: '2026-11-09', oldestDailyAgeDays: 1, injection: state.projects[0].injection, reasons: ['over-limit'] }]
+  state.attentionTotal = 1
   installFetch({ state })
   const restore = installTimers()
   try {
     const tree = await runtime.settle(MemoryOverviewPanel, {})
     const body = text(expand(tree))
     assert.match(body, /超限 1/)
-    assert.match(body, /已超注入限额/)
+    assert.match(body, /核心超预算 · 4 条未注入/)
+    assert.doesNotMatch(body, /下一轮注入会截断/)
   } finally {
     restore()
   }
@@ -704,7 +739,8 @@ test('undo restores the file the write happened in, not the file on screen', asy
     const userRow = walk(tree).find((node) => node.type === 'button' && text(node).includes('用户 MEMORY.md'))
     assert.ok(userRow, 'the rail lists the user file')
     tree = await runtime.fire(userRow, 'onClick', MemoryOverviewPanel, {})
-    assert.match(text(expand(tree)), /rev-user/, 'the panel now shows the other file')
+    // The file's path line is the marker now: the revision left the header.
+    assert.match(text(expand(tree)), /Users\\me\\\.workbuddy\\MEMORY\.md/, 'the panel now shows the other file')
 
     const undo = walk(tree).find((node) => node.type === 'button' && text(node) === '撤销')
     assert.ok(undo, 'undo is still offered within its window')
@@ -1630,6 +1666,233 @@ test('a daily note can be given a section from the panel', async () => {
     assert.ok(add, 'an add action was sent')
     assert.equal(add.section, '进展', 'the section reaches the store instead of being dropped')
     assert.equal(add.text, '新条目')
+  } finally {
+    restore()
+  }
+})
+
+// ── the panel reads the prompt's own judgment (row.injection) ─────────────
+
+/** A project row as the catalog now reports one, with its injection judgment. */
+const injectionOf = (status, extra = {}) => ({
+  status,
+  mode: /core-over-budget|complete/.test(status) ? 'layered' : null,
+  fallback: null,
+  reason: null,
+  overLimit: status === 'core-over-budget' || status === 'truncated' || status === 'omitted',
+  dropped: 0,
+  budget: 1400,
+  need: 1200,
+  used: 1200,
+  ...extra,
+})
+
+test('a large split file with a small core is not called over the limit', async () => {
+  // Acceptance 1 from the panel's side: 12,000 units of file, all of the core
+  // injected. Every surface used to say "over the injection limit".
+  const state = stateFor()
+  state.projects[0] = { ...state.projects[0], chars: 12000, overLimit: false, injection: injectionOf('complete'), status: 'ok' }
+  installFetch({ state })
+  const restore = installTimers()
+  try {
+    const tree = expand(await runtime.settle(MemoryOverviewPanel, {}))
+    const body = text(tree)
+    assert.doesNotMatch(body, /超限 [1-9]/)
+    assert.doesNotMatch(body, /已超注入限额|超注入限额|下一轮注入会截断/)
+    assert.doesNotMatch(body, /核心超预算/)
+  } finally {
+    restore()
+  }
+})
+
+test('a core that lost entries is the one thing called out, with its count, on every surface', async () => {
+  // Acceptance 2: the state, the count and the wording come from the row.
+  const state = stateFor()
+  state.projects[0] = {
+    ...state.projects[0],
+    chars: 9000,
+    overLimit: true,
+    status: 'over-limit',
+    injection: injectionOf('core-over-budget', { dropped: 3, need: 2100, used: 1375 }),
+  }
+  state.totals = { ...state.totals, overLimit: 1 }
+  state.attention = [{ key: 'proj-a', name: 'repo', title: 'repo', hasMemory: true, latestDaily: '2026-11-09', oldestDailyAgeDays: 1, injection: state.projects[0].injection, reasons: ['over-limit'] }]
+  state.attentionTotal = 1
+  state.attentionMore = { 'over-limit': 0, stale: 0, missing: 0, unmeasurable: 0 }
+  const calls = installFetch({ state })
+  const restore = installTimers()
+  try {
+    const tree = await runtime.settle(MemoryOverviewPanel, {})
+    const body = text(expand(tree))
+    assert.match(body, /超限 1/)
+    assert.match(body, /核心超预算 · 3 条未注入/, 'the overview names the real cause and count')
+    assert.doesNotMatch(body, /已超注入限额|下一轮注入会截断/, 'it no longer promises a truncation that will not happen')
+
+    const open = walk(expand(tree)).find((node) => node.type === 'button' && text(node) === '查看')
+    assert.ok(open, 'the attention row offers to open the project')
+    const opened = await runtime.fire(open, 'onClick', MemoryWorkspace, OVERVIEW)
+    const detail = text(expand(opened))
+    assert.match(detail, /核心超预算 · 3 条未注入/, 'the project header carries the same state')
+    assert.doesNotMatch(detail, /下一轮注入会截断|超过注入限额/)
+    assert.ok(calls.gets.some((url) => url.includes('project=proj-a')), 'and the project was fetched by key')
+  } finally {
+    restore()
+  }
+})
+
+test('a project that fell back to whole-file injection and was cut says "whole file, truncated"', async () => {
+  const state = stateFor()
+  state.projects[0] = {
+    ...state.projects[0],
+    chars: 12000,
+    overLimit: true,
+    status: 'over-limit',
+    injection: injectionOf('truncated', { mode: 'whole', fallback: 'legacy', reason: 'missing_core', budget: 10000, need: 12000, used: 10000 }),
+  }
+  state.totals = { ...state.totals, overLimit: 1 }
+  state.attention = [{ key: 'proj-a', name: 'repo', title: 'repo', hasMemory: true, latestDaily: '2026-11-09', oldestDailyAgeDays: 1, injection: state.projects[0].injection, reasons: ['over-limit'] }]
+  state.attentionTotal = 1
+  installFetch({ state })
+  const restore = installTimers()
+  try {
+    const body = text(expand(await runtime.settle(MemoryOverviewPanel, {})))
+    assert.match(body, /超限 1/)
+    assert.match(body, /整份截断/, 'the wording names what actually happens to this file')
+    assert.doesNotMatch(body, /核心超预算/)
+  } finally {
+    restore()
+  }
+})
+
+test('disabled, empty, unmeasurable and not-created are four different things', async () => {
+  const state = stateFor()
+  state.projects[0] = { ...state.projects[0], injection: judged('disabled') }
+  state.projects[1] = { ...state.projects[1], hasMemory: true, bytes: 4, injection: judged('empty') }
+  const restore = installTimers()
+  try {
+    // The project tab shows the session's project, so its header is where the
+    // state of that project belongs.
+    installFetch({ state })
+    const project = text(expand(await runtime.settle(MemoryProjectPanel, PROJECT)))
+    assert.match(project, /注入已关闭/)
+    assert.doesNotMatch(project, /已用 \d+%/, 'no percentage for a source that injects nothing')
+    assert.doesNotMatch(project, /已用 0%/)
+
+    // The second project, reached from the overview rail, has a blank file.
+    installFetch({ state })
+    runtime.reset()
+    let tree = await runtime.settle(MemoryOverviewPanel, OVERVIEW)
+    const other = walk(tree).find((node) => node.type === 'button' && String(node.props?.className ?? '').includes('wbm-project') && text(node).includes('other'))
+    assert.ok(other, 'the overview rail lists the second project')
+    tree = await runtime.fire(other, 'onClick', MemoryWorkspace, OVERVIEW)
+    const empty = text(expand(tree))
+    assert.match(empty, /文件为空/)
+    assert.doesNotMatch(empty, /超限/, 'nothing is lost from an empty file, so nothing is over any limit')
+    assert.doesNotMatch(empty, /未创建/, 'it does have a file')
+    assert.doesNotMatch(empty, /已用 \d+%/)
+  } finally {
+    restore()
+  }
+})
+
+test('a project without MEMORY.md is "not created", not "0 entries, 0% used"', async () => {
+  // Reached from the overview rail, which lists every project; the project
+  // tab follows the session's own project and only shows a picker when it
+  // has none.
+  const state = stateFor()
+  installFetch({ state })
+  const restore = installTimers()
+  try {
+    let tree = await runtime.settle(MemoryOverviewPanel, OVERVIEW)
+    const other = walk(tree).find((node) => node.type === 'button' && String(node.props?.className ?? '').includes('wbm-project') && text(node).includes('other'))
+    assert.ok(other, 'the overview rail lists the second project')
+    tree = await runtime.fire(other, 'onClick', MemoryWorkspace, OVERVIEW)
+    const body = text(expand(tree))
+    assert.match(body, /未创建/)
+    assert.doesNotMatch(body, /已用 \d+%/)
+    assert.doesNotMatch(body, /MEMORY 0 条/)
+  } finally {
+    restore()
+  }
+})
+
+test('the file header measures the file in the limit unit and never prints "KB%"', async () => {
+  const restore = installTimers()
+  try {
+    const doc = { ...projectContent, bytes: 18635, chars: 6200, partial: false }
+    installFetch({ content: () => doc })
+    let tree = await runtime.settle(MemoryProjectPanel, PROJECT)
+    let body = text(expand(tree))
+    assert.doesNotMatch(body, /KB%|MB%/, 'the byte string no longer lands in the percent slot')
+    assert.match(body, /6200 码元/)
+    assert.match(body, /3 条 · 6200 码元/)
+
+    // A prefix of a large file: the length is unknown, so none is shown.
+    installFetch({ content: () => ({ ...doc, chars: null, partial: true, truncated: true, revision: null, entries: 1 }) })
+    runtime.reset()
+    tree = await runtime.settle(MemoryProjectPanel, PROJECT)
+    const fileHeader = text(expand(walk(tree).find((node) => String(node.props?.className ?? '').includes('wbm-doc-title'))))
+    assert.match(fileHeader, /已显示 1 条/, 'and the entry count says it is only what is shown')
+    assert.doesNotMatch(fileHeader, /码元/, 'no length is claimed for a file only partly read')
+    assert.doesNotMatch(fileHeader, /0 码元/, 'and never 0: unmeasured is not zero')
+
+    // Whole file read, display cut: length known, rows are a prefix. Large
+    // lengths are abbreviated the way the design mock shows them (`6.2k`).
+    installFetch({ content: () => ({ ...doc, chars: 900000, partial: true, truncated: true, revision: null, entries: 900 }) })
+    runtime.reset()
+    tree = await runtime.settle(MemoryProjectPanel, PROJECT)
+    body = text(expand(tree))
+    assert.match(body, /已显示 900 条 · 900k 码元/)
+  } finally {
+    restore()
+  }
+})
+
+test('the revision leaves the headers; the conflict dialog still shows both', async () => {
+  const state = stateFor()
+  installFetch({ state })
+  const restore = installTimers()
+  try {
+    const tree = await openProject()
+    const body = text(expand(tree))
+    assert.doesNotMatch(body, /\brev [0-9a-f]{16}/, 'no raw revision in a header')
+  } finally {
+    restore()
+  }
+})
+
+test('the archive dialog opens on the threshold /state reported', async () => {
+  // Driven like the prune test above: this is the dialog's own contract. The
+  // opening preview names no `beforeDays`, so the host applies the one
+  // threshold every other surface counts with, and reports it back.
+  const actions = []
+  const props = {
+    projectKey: 'proj-a',
+    act: async (payload) => {
+      actions.push(payload)
+      return { ok: true, dryRun: true, planId: 'p', beforeDays: 30, candidates: [] }
+    },
+    onClose: () => {},
+    flash: () => {},
+    reload: async () => {},
+  }
+  const restore = installTimers()
+  try {
+    const tree = await runtime.settle(PruneDialog, props)
+    const plan = actions.find((action) => action.type === 'prune')
+    assert.ok(plan, 'the dialog planned first')
+    assert.equal(plan.beforeDays, undefined, 'the opening preview leaves the days to the host default')
+    const body = text(expand(tree))
+    assert.match(body, /早于/, 'the dialog shows the number it used')
+    assert.match(body, /30 天以前没有日期文件/, 'and that number is the one the host reported')
+
+    // A person changing the days is the one case a number is sent.
+    const input = walk(tree).find((node) => node.type === 'input' && node.props.type === 'number')
+    assert.equal(input.props.disabled, false, 'the field is live once the default is known')
+    let next = await runtime.fire(input, 'onChange', PruneDialog, props, { value: '45' })
+    const recompute = walk(next).find((node) => node.type === 'button' && text(node) === '重新出计划')
+    await runtime.fire(recompute, 'onClick', PruneDialog, props)
+    assert.equal(actions.at(-1).beforeDays, 45, 'an explicit choice is sent as given')
   } finally {
     restore()
   }
