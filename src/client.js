@@ -1723,7 +1723,6 @@ window.__ModuleLoader__.load({
       // `complete`: nothing is lost. A block close to its budget is worth a
       // quiet word — the next entry written may not fit — but it is not an
       // alert, and it is never shown in the alert colour.
-      void fill
       return { status, tone: fill.near ? 'warn' : '', label: t('inject.complete'), short: t('inject.complete'), detail, why, alert: false }
     }
 
@@ -1968,12 +1967,14 @@ window.__ModuleLoader__.load({
     function projectState(row) {
       if (row.current) return { tone: 'accent', label: t('state.current') }
       if (row.status === 'missing') return { tone: 'bad', label: t('state.missing') }
-      if (row.status === 'unreadable') return { tone: 'bad', label: t('file.unreadable') }
-      if (row.status === 'over-limit') return { tone: 'warn', label: t('state.overLimit') }
+      if (row.injection?.status === 'unmeasurable') return { tone: 'bad', label: t('file.unreadable') }
+      if (row.overLimit) return { tone: 'bad', label: injectionState(row.injection).short }
       if (row.status === 'stale') return { tone: 'warn', label: t('stats.pendingArchive') }
       if (row.status === 'daily-only') return { tone: 'warn', label: t('state.dailyOnly') }
       if (row.status === 'empty') return { tone: 'empty', label: t('rail.noMemory') }
-      return { tone: 'ok', label: t('state.hasMemory') }
+      // A memory file that exists is a fact, not a health grade: "has memory"
+      // used to be green, which read as "all good" for a file nobody measured.
+      return { tone: '', label: t('state.hasMemory') }
     }
 
     // ── config and navigation ───────────────────────────────────────────────
@@ -3041,13 +3042,16 @@ window.__ModuleLoader__.load({
       function dailyRows(key, detail) {
         const rows = detail?.daily ?? []
         if (!rows.length) return null
+        // The same boundary the overview counts with, so a note marked here
+        // is one the default archive preview lists.
+        const after = Number(state?.archiveAfterDays) || 30
         return rows.map((file) =>
           fileRow(
             key,
             'project-daily',
             file.date,
             file.date,
-            `${humanBytes(file.bytes)}${file.ageDays > 30 ? ` · ${t('time.daysAgo', { n: file.ageDays })}` : ''}`,
+            `${humanBytes(file.bytes)}${file.ageDays >= after ? ` · ${t('time.daysAgo', { n: file.ageDays })}` : ''}`,
             selected?.target === 'project-daily' && selected?.date === file.date && selected?.key === key,
           ),
         )
@@ -3071,11 +3075,16 @@ window.__ModuleLoader__.load({
                 className: `wbm-project${row.key === effectiveKey ? ' active' : ''}`,
                 onClick: () => selectProject(row),
                 title: `${row.title || row.name}\n${row.path}`,
+                'aria-label': `${row.title || row.name}${row.overLimit ? ` — ${injectionState(row.injection).label}` : ''}`,
               },
               h(ChevronIcon, { size: 11, open: isOpen }),
               h('span', { className: `wbm-dot ${tone.tone === 'empty' ? 'empty' : tone.tone}` }),
               h('span', { className: 'wbm-name' }, row.title || row.name),
-              h('span', { className: 'wbm-meta' }, row.hasMemory ? t('count.entries', { n: row.entries ?? 0 }) : row.daily ? t('count.days', { n: row.daily }) : tone.label),
+              h(
+                'span',
+                { className: `wbm-meta${row.overLimit ? ' wbm-meta-bad' : ''}` },
+                row.hasMemory ? t('count.entries', { n: row.entries ?? 0 }) : row.daily ? t('count.days', { n: row.daily }) : tone.label,
+              ),
             ),
             isOpen
               ? h(
@@ -3100,7 +3109,6 @@ window.__ModuleLoader__.load({
         if (!project) {
           return h('div', { className: 'wbm-note' }, t('editor.pickProjectHint'))
         }
-        const projectRatio = ratio(project.chars, limits.project)
         return h(
           'div',
           null,
@@ -3109,7 +3117,7 @@ window.__ModuleLoader__.load({
             'project-memory',
             undefined,
             t('target.projectMemory'),
-            project.hasMemory ? t('count.entriesPercent', { n: project.entries ?? 0, percent: projectRatio.percent }) : t('file.notCreated'),
+            project.hasMemory ? t('count.entries', { n: project.entries ?? 0 }) : t('file.notCreated'),
             selected?.target === 'project-memory',
           ),
           dailyRows(project.key, projectDetail),
@@ -3117,12 +3125,21 @@ window.__ModuleLoader__.load({
       }
 
       function globalRows() {
-        const userRatio = ratio(user?.chars, limits.user)
         return h(
           'div',
           null,
+          // User memory is judged on its own in a later review; here it keeps
+          // its entry count and its length in the shared unit, and no
+          // percentage until there is a judgment to base one on.
           user?.memoryExists
-            ? fileRow(null, 'user-memory', undefined, t('target.userMemory'), t('count.entriesPercent', { n: user.entries ?? 0, percent: userRatio.percent }), selected?.target === 'user-memory')
+            ? fileRow(
+                null,
+                'user-memory',
+                undefined,
+                t('target.userMemory'),
+                [t('count.entries', { n: user.entries ?? 0 }), humanUnits(user.chars)].filter(Boolean).join(' · '),
+                selected?.target === 'user-memory',
+              )
             : h('div', { className: 'wbm-note' }, t('state.noUserMemory')),
           profile?.exists
             ? fileRow(null, 'profile', undefined, t('target.profile'), profile.ambiguous ? t('state.multipleCandidates') : t('file.readOnly'), selected?.target === 'profile')
