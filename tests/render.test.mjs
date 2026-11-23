@@ -9,7 +9,7 @@ import test from 'node:test'
 import { normalizeConfig, resolveDistillAbove } from '../src/config.js'
 import { probeEnvironment } from '../src/env.js'
 import { createTranslator } from '../src/locale.js'
-import { distillHint, isAbnormalState, LAYERED_SHARES, redact, renderSections, SECTION_ORDER, shareOf } from '../src/render.js'
+import { distillHint, isAbnormalState, LAYERED_SHARES, measureSource, redact, renderSections, SECTION_ORDER, shareOf } from '../src/render.js'
 import { describeBrief } from '../src/tools/status.js'
 
 const t = createTranslator('zh')
@@ -833,6 +833,203 @@ test('the rules share is sized for English, not just Chinese', () => {
     const declared = (name === 'en' ? en : zh)('compactRules')
     for (let index = 0; index < declared.length; index += 1) {
       assert.ok(block.includes(`${index + 1}. ${declared[index]}`), `${name}: rule ${index + 1} survives whole`)
+    }
+  }
+})
+
+// ── measureSource: what the panel shows, taken from the prompt's own rules ──
+
+/** The project block the prompt received, and the state it was recorded under. */
+function injected(text, config, lang = 'zh') {
+  const { cfg, probe } = fixture({ project: text, user: undefined, config })
+  const translate = createTranslator(lang)
+  const sections = renderSections({ cfg, probe, t: translate })
+  const block = sections.find((section) => section.name === 'workbuddy-memory:project')
+  return { cfg, sections, state: sections.states.project, block: block?.text ?? null, t: translate }
+}
+
+const measure = (cfg, t, file) => measureSource({ cfg, t, key: 'project', file })
+const whole = (text) => ({ exists: true, read: 'ok', text })
+const layered = { inject: { mode: 'layered' } }
+
+/** A topic section long enough to bring the whole file to `total` UTF-16 units. */
+const padded = (head, total) => {
+  const row = '- 资料条目，占位。\n'
+  return head + row.repeat(Math.ceil((total - head.length) / row.length))
+}
+
+test('a layered file with a long tail and a small core is measured as complete', () => {
+  // Acceptance 1: 12,000 units of file, 1,000 units of core. The old panel
+  // compared the whole file against `limits.project` and lit up red.
+  const head = `# M\n\n## 常驻记忆\n- ${'c'.repeat(996)}\n\n## 资料\n`
+  const text = padded(head, 12000).slice(0, 12000)
+  assert.equal(text.length, 12000)
+  const { cfg, state, block, t } = injected(text, layered)
+  const result = measure(cfg, t, whole(text))
+
+  assert.equal(result.status, 'complete')
+  assert.equal(result.overLimit, false)
+  assert.equal(result.dropped, 0)
+  assert.equal(result.mode, 'layered')
+  assert.equal(result.fallback, null)
+  assert.equal(result.state, state)
+  assert.equal(result.budget, shareOf(cfg.inject.coreBudget, 'project'))
+  assert.equal(result.used, block.length, 'the injected size is the block the prompt received')
+  assert.ok(result.need < result.budget, 'the whole core fits')
+})
+
+test('a layered file whose core is over its share reports the entries the prompt left out', () => {
+  // Acceptance 2: 9,000 units of file, 1,800 units of core.
+  const core = Array.from({ length: 6 }, (_, index) => `- 核心条目 ${index} ${'重要'.repeat(140)}`)
+  const head = `# M\n\n## 常驻记忆\n${core.join('\n')}\n\n## 资料\n`
+  const text = padded(head, 9000)
+  assert.ok(text.length >= 9000 && text.length < 10000, `fixture is ${text.length} units: under limits.project`)
+  const { cfg, state, block, t } = injected(text, layered)
+  const result = measure(cfg, t, whole(text))
+
+  assert.equal(result.status, 'core-over-budget')
+  assert.equal(result.overLimit, true)
+  assert.match(state, /^layered:core-over-budget\(\d+\)$/)
+  assert.equal(result.dropped, Number(/\((\d+)\)/.exec(state)[1]), 'the same count the prompt records')
+  assert.ok(result.dropped > 0 && result.dropped < 6)
+  assert.equal(result.used, block.length)
+  assert.ok(result.need > result.budget)
+})
+
+test('a core that needs exactly its share can still lose the single entry to the notice reservation', () => {
+  // Measured before the refactor: a one-entry core block needing exactly 1,400
+  // units is dropped, because the overflow notice is reserved first.
+  const label = t('section.project')
+  const prefix = `### ${label}\n\n`.length
+  const heading = `## ${t('coreHeading')}`.length
+  const body = Array.from({ length: 1 }, () => `- ${'c'.repeat(1400 - prefix - heading - 1 - 2)}`)
+  const text = `# M\n\n## 常驻记忆\n${body.join('\n')}\n`
+  const { cfg, state, t: translate } = injected(text, layered)
+  const result = measure(cfg, translate, whole(text))
+
+  assert.equal(result.need, 1400, `the complete block needs exactly the share: ${result.need}`)
+  assert.equal(result.budget, 1400)
+  assert.equal(result.status, 'core-over-budget')
+  assert.equal(result.dropped, 1)
+  assert.equal(result.state, state)
+})
+
+test('whole-file truncation comes from the render, not from chars > limit', () => {
+  // Acceptance 3: an English wrapper costs 20 units, so 9,998 units of body do
+  // not fit a 10,000 limit. The old `chars > limit` check called this file fine.
+  const cases = [
+    ['y'.repeat(9998), 'truncated'],
+    ['y'.repeat(9980), 'complete'],
+    ['y'.repeat(9981), 'truncated'],
+    [`\n\n   ${'y'.repeat(9980)}\n\n   `, 'complete'],
+  ]
+  for (const [text, expected] of cases) {
+    const { cfg, state, block, t } = injected(text, {}, 'en')
+    const result = measure(cfg, t, whole(text))
+    assert.equal(result.status, expected, `${text.trim().length} body units`)
+    assert.equal(result.mode, 'whole')
+    assert.equal(result.fallback, null)
+    assert.equal(result.budget, cfg.inject.limits.project)
+    assert.equal(result.need, `### ${t('section.project')}\n\n`.length + text.trim().length)
+    assert.equal(result.overLimit, expected === 'truncated')
+    assert.equal(result.used, block.length, 'the injected size is the block the prompt received')
+    assert.equal(result.state, state)
+    if (expected === 'truncated') assert.ok(result.need > result.budget)
+  }
+})
+
+test('a limit that cannot hold the wrapper is reported as an omitted block', () => {
+  const prefix = `### ${t('section.project')}\n\n`.length
+  for (const limit of [prefix - 1, prefix]) {
+    const { cfg, state, block, t: translate } = injected('## Notes\n- one\n', { inject: { limits: { project: limit } } })
+    const result = measure(cfg, translate, whole('## Notes\n- one\n'))
+    assert.equal(block, null, `limit ${limit}: nothing reaches the prompt`)
+    assert.equal(state, 'full:too-small')
+    assert.equal(result.status, 'omitted')
+    assert.equal(result.overLimit, true)
+    assert.equal(result.used, 0)
+    assert.equal(result.need > result.budget, true)
+    assert.equal(result.state, state)
+  }
+})
+
+test('the panel state follows the prompt ladder: missing, off, empty, unreadable, then measured', () => {
+  const text = '## 偏好\n- 一条\n'
+  const base = injected(text, {})
+
+  const missing = measure(base.cfg, base.t, { exists: false })
+  assert.equal(missing.status, 'missing')
+  assert.equal(missing.overLimit, false)
+  assert.equal(missing.mode, null)
+  assert.equal(missing.state, 'disabled', 'the prompt records a missing source as disabled too')
+
+  for (const patch of [{ enabled: false }, { project: false }, { limits: { project: 0 } }]) {
+    const { cfg, t: translate, state } = injected(text, { inject: patch })
+    const off = measure(cfg, translate, whole(text))
+    assert.equal(off.status, 'disabled', JSON.stringify(patch))
+    assert.equal(off.overLimit, false)
+    // The master switch is applied above `renderSections` (by the section
+    // provider), so only the two source-level switches share its state string.
+    if (!('enabled' in patch)) assert.equal(off.state, state)
+    // A switch off outranks an unreadable file: there is nothing to measure.
+    assert.equal(measure(cfg, translate, { exists: true, read: 'unreadable' }).status, 'disabled')
+  }
+
+  const blank = measure(base.cfg, base.t, whole('  \n\n'))
+  assert.equal(blank.status, 'empty')
+  assert.equal(blank.overLimit, false)
+
+  for (const reason of ['unreadable', 'changed', 'too_large', 'not_a_file']) {
+    const unreadable = measure(base.cfg, base.t, { exists: true, read: reason })
+    assert.equal(unreadable.status, 'unmeasurable', reason)
+    assert.equal(unreadable.reason, reason)
+    assert.equal(unreadable.overLimit, false, 'an unmeasured file is not counted as over budget')
+  }
+})
+
+test('a file that falls back to whole-file injection in layered mode says so', () => {
+  const { cfg, t, state } = injected('## 偏好\n- 一条\n', layered)
+  const result = measure(cfg, t, whole('## 偏好\n- 一条\n'))
+  assert.equal(result.mode, 'whole')
+  assert.equal(result.fallback, 'legacy')
+  assert.equal(result.reason, 'missing_core')
+  assert.equal(result.status, 'complete')
+  assert.equal(result.state, state)
+})
+
+test('measureSource agrees with the prompt on every block it injects', () => {
+  const long = Array.from({ length: 12 }, (_, index) => `- entry ${index} ${'核心偏好内容'.repeat(30)}`)
+  const table = [
+    ['full', {}, '## 偏好\n- 一条\n'],
+    ['full', {}, 'y'.repeat(9998)],
+    ['full', { inject: { limits: { project: 40 } } }, `## Notes\n- ${'x'.repeat(200)}\n`],
+    ['full', { inject: { limits: { project: 19 } } }, '## Notes\n- one\n'],
+    ['full', {}, `## 😀\n${'😀'.repeat(6000)}\n`],
+    ['layered', layered, '# M\n\n## 常驻记忆\n- a\n- b\n\n## 主题\n- t\n'],
+    ['layered', layered, `# M\n\n## 常驻记忆\n${long.join('\n')}\n`],
+    ['layered', { inject: { mode: 'layered', coreBudget: 4200 } }, `# M\n\n## 常驻记忆\n${long.join('\n')}\n`],
+    ['layered', layered, '## 偏好\n- 一条\n'],
+    ['layered', layered, 'y'.repeat(12000)],
+    ['layered', layered, '# M\n\n## 常驻记忆\n- fine\nprose\n'],
+    ['layered', layered, '# M\n\n## 常驻记忆\n\n## 主题\n- t\n'],
+  ]
+  for (const [, config, text] of table) {
+    for (const lang of ['zh', 'en']) {
+      const label = `${JSON.stringify(config)} ${lang} ${text.slice(0, 12)}`
+      const { cfg, state, block, t: translate } = injected(text, config, lang)
+      const result = measure(cfg, translate, whole(text))
+      assert.equal(result.state, state, `${label}: state`)
+      assert.equal(result.used, block === null ? 0 : block.length, `${label}: injected units`)
+      // Read the answer off what the prompt received, not off the measurement:
+      // a whole-file block that is shorter than wrapper plus file has lost
+      // body (with or without a note — a small limit cannot fit the note), and
+      // a split file has lost entries when its state says so.
+      const full = `### ${translate('section.project')}\n\n`.length + text.trim().length
+      const lost = block === null || (result.mode === 'whole' ? block.length < full : /core-over-budget/.test(state))
+      const lostEntries = /core-over-budget\((\d+)\)/.exec(state)
+      assert.equal(result.overLimit, lost, `${label}: overLimit`)
+      if (lostEntries) assert.equal(result.dropped, Number(lostEntries[1]), `${label}: dropped`)
+      assert.equal(result.need > result.budget, lost, `${label}: what was lost did not fit`)
     }
   }
 })

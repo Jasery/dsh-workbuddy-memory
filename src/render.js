@@ -82,24 +82,24 @@ export function renderSections({ cfg, probe, t, readFile }) {
   })
   const sanitize = cfg.inject.sanitizePaths ? (text) => redact(text, probe.layout.home) : (text) => text
   const layered = cfg.inject.mode === 'layered'
+  const wholeFile = (key, label, raw) => renderFileBlock({ label, raw, limit: cfg.inject.limits[key], sanitize, t })
   const source = (key, label, path, enabled) => {
     if (!enabled || !path) { states[key] = 'disabled'; return }
     const raw = read(path)
     if (!raw.trim()) { states[key] = 'unavailable'; return }
     if (!layered) {
-      const limit = cfg.inject.limits[key]
-      if (!(limit > 0)) { states[key] = 'disabled'; return }
-      const block = renderFileBlock({ label, raw, limit, sanitize, t })
-      if (block) sections.push({ name: `workbuddy-memory:${key}`, order: SECTION_ORDER[key], text: block })
-      states[key] = fileState(block)
+      if (!(cfg.inject.limits[key] > 0)) { states[key] = 'disabled'; return }
+      const block = wholeFile(key, label, raw)
+      if (block.text) sections.push({ name: `workbuddy-memory:${key}`, order: SECTION_ORDER[key], text: block.text })
+      states[key] = fileState(block.text)
       return
     }
     if (!(cfg.inject.limits[key] > 0)) { states[key] = 'disabled'; return }
     const parsed = analyzeMemory(raw)
     if (parsed.mode === 'legacy') {
       const limit = cfg.inject.limits[key]
-      const block = renderFileBlock({ label, raw, limit, sanitize, t })
-      if (block) sections.push({ name: `workbuddy-memory:${key}`, order: SECTION_ORDER[key], text: block })
+      const block = wholeFile(key, label, raw)
+      if (block.text) sections.push({ name: `workbuddy-memory:${key}`, order: SECTION_ORDER[key], text: block.text })
       states[key] = `legacy:${parsed.reason}`
       // A legacy file is injected whole under its own limit, so it is not
       // squeezed by `coreBudget` — but it is still cut, and a cut nobody is told
@@ -109,10 +109,8 @@ export function renderSections({ cfg, probe, t, readFile }) {
       if (limit > 0 && raw.length > limit) overShare.push({ key, label, chars: raw.length, legacy: limit })
       return
     }
-    const budget = shareOf(cfg.inject.coreBudget, key === 'project' ? 'project' : 'user')
-    const prefix = `### ${label}\n\n`
-    const core = renderEntries(parsed.coreEntries, `## ${t('coreHeading')}`, Math.max(0, budget - prefix.length), t)
-    const text = sanitize(`${prefix}${core.text}`)
+    const core = renderCore({ parsed, label, budget: shareOf(cfg.inject.coreBudget, key), t })
+    const text = sanitize(core.text)
     sections.push({ name: `workbuddy-memory:${key}`, order: SECTION_ORDER[key], text })
     // An over-budget core is not a normal state: the model has to know that the
     // entries it can read are a prefix, not the whole file.
@@ -127,7 +125,7 @@ export function renderSections({ cfg, probe, t, readFile }) {
     // core's *share* the model is reading a subset, and past `distillAbove` the
     // file has reached the size the plugin itself calls "time to distil".
     const distillAbove = key === 'user' ? Number(cfg.inject.distillAbove) || 0 : 0
-    if (raw.length > budget || (distillAbove > 0 && raw.length > distillAbove)) {
+    if (raw.length > core.budget || (distillAbove > 0 && raw.length > distillAbove)) {
       overShare.push({ key, label, chars: raw.length, distill: distillAbove > 0 && raw.length > distillAbove })
     }
     // The topic name is not enough on its own: `memory_read` needs a target as
@@ -164,8 +162,8 @@ export function renderSections({ cfg, probe, t, readFile }) {
     if (!layered) {
       const raw = read(probe.profile.path)
       const block = renderFileBlock({ label: t('section.profile'), raw, limit: cfg.inject.limits.profile, sanitize, t })
-      if (block) sections.push({ name: 'workbuddy-memory:profile', order: SECTION_ORDER.profile, text: block })
-      states.profile = fileState(block)
+      if (block.text) sections.push({ name: 'workbuddy-memory:profile', order: SECTION_ORDER.profile, text: block.text })
+      states.profile = fileState(block.text)
     } else {
       states.profile = 'read-only-entry'
       profileTopics = [t('profileEntry')]
@@ -260,26 +258,39 @@ export function renderSections({ cfg, probe, t, readFile }) {
  * followed by the truncation note is honest, and the caller records the reason
  * in its state either way.
  *
- * @returns {string} the block, or '' when it contributes nothing.
+ * @returns {{ text: string, limit: number, need: number, used: number, truncated: boolean, omitted: boolean }}
+ *   `text` is the block ('' when it contributes nothing). `need` is what the
+ *   complete block — wrapper plus the whole body — would take; `used` is what
+ *   the block as emitted takes, truncation note included. `truncated` means
+ *   body text was cut; `omitted` means the limit could not hold a sayable
+ *   block, so nothing was emitted. Both are measured before path redaction,
+ *   which is the accounting the cut itself is decided in.
  */
-function renderFileBlock({ label, raw, limit, sanitize, t }) {
-  if (!raw?.trim() || !(limit > 0)) return ''
-  const body = raw.trim()
+function renderFileBlock({ label, raw, limit, sanitize = (text) => text, t }) {
   const prefix = `### ${label}\n\n`
-  if (prefix.length >= limit) return ''
+  const empty = { text: '', limit, need: 0, used: 0, truncated: false, omitted: false }
+  if (!raw?.trim() || !(limit > 0)) return empty
+  const body = raw.trim()
+  const measured = { limit, need: prefix.length + body.length, used: 0, truncated: false, omitted: false }
+  if (prefix.length >= limit) return { ...measured, text: '', omitted: true }
   const room = limit - prefix.length
   let kept = truncateUtf16(body, room)
-  if (cutsFirstHeading(body, kept)) return ''
+  if (cutsFirstHeading(body, kept)) return { ...measured, text: '', omitted: true }
   let note = ''
   if (kept.length < body.length) {
     const candidate = `\n\n_${t('truncated', { limit })}_`
     if (candidate.length <= room) {
       note = candidate
       kept = truncateUtf16(body, room - note.length)
-      if (cutsFirstHeading(body, kept)) return ''
+      if (cutsFirstHeading(body, kept)) return { ...measured, text: '', omitted: true }
     }
   }
-  return `${prefix}${sanitize(kept)}${note}`
+  return {
+    ...measured,
+    text: `${prefix}${sanitize(kept)}${note}`,
+    used: prefix.length + kept.length + note.length,
+    truncated: kept.length < body.length,
+  }
 }
 
 /**
@@ -310,12 +321,15 @@ function cutsFirstHeading(body, kept) {
  * @param {string} heading
  * @param {number} budget - UTF-16 code units for the whole block body.
  * @param {(key: string, vars?: Record<string, string|number>) => string} t
- * @returns {{ text: string, dropped: number, droppedChars: number }}
+ * @returns {{ text: string, dropped: number, droppedChars: number, need: number }}
+ *   `need` is the heading plus every entry, with no notice: what the block
+ *   would take if all of it fitted.
  */
 function renderEntries(entries, heading, budget, t) {
   const lines = [heading]
   const used = () => lines.join('\n').length
   const notice = (count) => t('coreOverBudget', { count })
+  const need = [heading, ...entries.map((entry) => `- ${entry.text}`)].join('\n').length
   // Reserve the notice slot before placing any entry, and reserve the worst
   // case: a longer count has more digits, and the notice must fit whatever the
   // final number turns out to be. `notice(dropped)` is therefore never longer
@@ -344,7 +358,109 @@ function renderEntries(entries, heading, budget, t) {
     const line = notice(dropped)
     if (used() + 1 + line.length <= budget) lines.push(line)
   }
-  return { text: lines.join('\n'), dropped, droppedChars }
+  return { text: lines.join('\n'), dropped, droppedChars, need }
+}
+
+/**
+ * The always-on block of a split file: its label, and the core that fits.
+ *
+ * One function for the prompt and for the panel's measurement, so the two
+ * cannot disagree about where the cut falls. The heading and the notice are
+ * rendered in the session's own language, because their lengths are part of
+ * what spends the budget.
+ *
+ * @param {object} input
+ * @param {ReturnType<typeof analyzeMemory>} input.parsed - a split file.
+ * @param {string} input.label - block label, e.g. `t('section.project')`.
+ * @param {number} input.budget - the source's share of `coreBudget`.
+ * @param {(key: string, vars?: object) => string} input.t
+ * @returns {{ text: string, budget: number, need: number, used: number, dropped: number, droppedChars: number }}
+ */
+function renderCore({ parsed, label, budget, t }) {
+  const prefix = `### ${label}\n\n`
+  const core = renderEntries(parsed.coreEntries, `## ${t('coreHeading')}`, Math.max(0, budget - prefix.length), t)
+  return {
+    text: `${prefix}${core.text}`,
+    budget,
+    need: prefix.length + core.need,
+    used: prefix.length + core.text.length,
+    dropped: core.dropped,
+    droppedChars: core.droppedChars,
+  }
+}
+
+/** The states the prompt records when a source is not injected at all. */
+const NOT_INJECTED = { missing: 'disabled', disabled: 'disabled', empty: 'unavailable', unmeasurable: 'unavailable' }
+
+/**
+ * How one memory source would be injected right now, measured rather than
+ * rendered — the panel's own account of the prompt's rules.
+ *
+ * The panel used to decide "over the limit" from the file's length against
+ * `limits.project`. Under layered injection that number is not what the prompt
+ * compares: a split file is cut at its share of `coreBudget`, and a whole-file
+ * block at its limit minus the wrapper. So a large file with a small core lit
+ * up red while a core that really was cut stayed dark. This runs the same
+ * functions `renderSections` runs and reports what they decided.
+ *
+ * The ladder is top-down and mirrors `renderSections`: a missing file, then
+ * the switches, then a file that could not be read whole, and only then the
+ * measurement. A switch that is off outranks everything after it, because
+ * there is nothing to measure.
+ *
+ * @param {object} input
+ * @param {object} input.cfg - normalized config.
+ * @param {(key: string, vars?: object) => string} input.t - the host translator.
+ * @param {'project'|'user'} input.key
+ * @param {object} input.file - `{ exists, read, text }`: `read` is `'ok'` with
+ *   the complete `text`, or the reason there is none (`unreadable`, `changed`,
+ *   `too_large`, `not_a_file`).
+ * @returns {{ status: string, mode: string|null, fallback: string|null, reason: string|null, overLimit: boolean, dropped: number, budget: number|null, need: number|null, used: number|null, state: string }}
+ *   `status` is one of `missing`, `disabled`, `empty`, `unmeasurable`,
+ *   `complete`, `core-over-budget`, `truncated`, `omitted`. `mode` is how the
+ *   file is injected (`layered` core or `whole`), `fallback` is `'legacy'` when
+ *   layered mode fell back to the whole file. `overLimit` is true exactly when
+ *   the prompt carries less than the file: core entries dropped, body text
+ *   cut, or no block at all. `state` is the string `renderSections` records.
+ */
+export function measureSource({ cfg, t, key, file }) {
+  const base = { mode: null, fallback: null, reason: null, overLimit: false, dropped: 0, budget: null, need: null, used: null }
+  const done = (status, state = NOT_INJECTED[status], extra = {}) => ({ ...base, status, state, ...extra })
+
+  if (!file?.exists) return done('missing')
+  const limit = Number(cfg.inject.limits[key]) || 0
+  if (!cfg.inject.enabled || !cfg.inject[key] || !(limit > 0)) return done('disabled')
+  if (file.read !== 'ok' || typeof file.text !== 'string') return done('unmeasurable', NOT_INJECTED.unmeasurable, { reason: file.read ?? 'unreadable' })
+  const raw = file.text
+  if (!raw.trim()) return done('empty')
+
+  const label = t(`section.${key}`)
+  const layered = cfg.inject.mode === 'layered'
+  const whole = (fallback, reason) => {
+    const block = renderFileBlock({ label, raw, limit, t })
+    const status = block.omitted ? 'omitted' : block.truncated ? 'truncated' : 'complete'
+    return done(status, fallback ? `legacy:${reason}` : fileState(block.text), {
+      mode: 'whole',
+      fallback,
+      reason,
+      overLimit: status !== 'complete',
+      budget: limit,
+      need: block.need,
+      used: block.used,
+    })
+  }
+  if (!layered) return whole(null, null)
+  const parsed = analyzeMemory(raw)
+  if (parsed.mode === 'legacy') return whole('legacy', parsed.reason)
+  const core = renderCore({ parsed, label, budget: shareOf(cfg.inject.coreBudget, key), t })
+  return done(core.dropped > 0 ? 'core-over-budget' : 'complete', core.dropped > 0 ? `layered:core-over-budget(${core.dropped})` : 'layered', {
+    mode: 'layered',
+    overLimit: core.dropped > 0,
+    dropped: core.dropped,
+    budget: core.budget,
+    need: core.need,
+    used: core.used,
+  })
 }
 
 /**
