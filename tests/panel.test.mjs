@@ -45,7 +45,7 @@ async function loadClient() {
 }
 
 const client = await loadClient()
-const { MemoryWorkspace, PruneDialog, HistoryDialog, DraftDialog } = client.__internals
+const { MemoryWorkspace, MemoryProjectTab, PruneDialog, HistoryDialog, DraftDialog } = client.__internals
 
 /** Expand nested function components (icons) so text is readable. */
 function expand(node) {
@@ -1893,6 +1893,111 @@ test('the archive dialog opens on the threshold /state reported', async () => {
     const recompute = walk(next).find((node) => node.type === 'button' && text(node) === '重新出计划')
     await runtime.fire(recompute, 'onClick', PruneDialog, props)
     assert.equal(actions.at(-1).beforeDays, 45, 'an explicit choice is sent as given')
+  } finally {
+    restore()
+  }
+})
+
+// ── P1: layout ───────────────────────────────────────────────────────────
+
+test('the first frame claims no counts, and an empty machine says so', async () => {
+  // Before /state arrives the header used to render "项目 0 / 有记忆 0 / 条目 0".
+  const restore = installTimers()
+  try {
+    // /state never answers, so the panel is stuck on its first frame.
+    const waiting = installFetch({ state: stateFor() })
+    globalThis.fetch = async () => new Promise(() => {})
+    void waiting
+    let tree = await runtime.settle(MemoryOverviewPanel, {})
+    let body = text(expand(tree))
+    assert.doesNotMatch(body, /项目 0|条目 0|已创建记忆文件/, 'no zero counts before the first state')
+    assert.match(body, /读取中/, 'a loading state instead')
+
+    // Loaded, and the machine knows no projects at all.
+    const empty = stateFor({ projects: [], projectsTotal: 0, attention: [], attentionTotal: 0, totals: { projects: 0, withMemory: 0, entries: 0, dailyFiles: 0, overLimit: 0, stale: 0, missing: 0, unmeasurable: 0 } })
+    installFetch({ state: empty })
+    runtime.reset()
+    tree = await runtime.settle(MemoryOverviewPanel, {})
+    body = text(expand(tree))
+    assert.match(body, /暂无项目/, 'the empty state is named')
+    assert.doesNotMatch(body, /项目 0/, 'and it is not a row of zeros')
+    assert.match(body, /用户 MEMORY\.md/, 'the user memory entry is still reachable')
+  } finally {
+    restore()
+  }
+})
+
+test('the overview breadcrumb follows the open project and offers one way back', async () => {
+  const restore = installTimers()
+  try {
+    installFetch()
+    let tree = await runtime.settle(MemoryOverviewPanel, {})
+    assert.match(text(expand(tree)), /全部项目/, 'nothing open: the breadcrumb is the scope')
+    tree = await openProject()
+    const body = text(expand(tree))
+    assert.match(body, /全部项目 › repo/, 'with a project open it names it')
+    assert.equal((body.match(/返回全部项目|全部项目/g) ?? []).length >= 1, true)
+    // Exactly one control goes back, and it is labelled as going back.
+    const back = walk(tree).filter((node) => node.type === 'button' && /^(返回全部项目|全部项目)$/.test(text(node)))
+    assert.equal(back.length, 1, `one back control, got ${back.length}`)
+    tree = await runtime.fire(back[0], 'onClick', MemoryWorkspace, OVERVIEW)
+    assert.doesNotMatch(text(expand(tree)), / › /, 'back on the overview')
+  } finally {
+    restore()
+  }
+})
+
+test('the narrow tab shortens the alert and the explanation is a keyboard-reachable disclosure', async () => {
+  const state = stateFor()
+  state.projects[0] = { ...state.projects[0], overLimit: true, status: 'over-limit', injection: judged('core-over-budget', { dropped: 3, need: 2100, used: 1375 }) }
+  const restore = installTimers()
+  try {
+    installFetch({ state })
+    // The right-sidebar tab: compact wording.
+    // The tab follows its own session; give it one.
+    const tab = { tab: true, sessionId: 's', useSessions: (selector) => selector({ byId: { s: { id: 's', cwd: 'C:\\repo', retainedBy: { mainView: 1 } } } }), useWorkspaces: (selector) => selector({ items: [] }) }
+    let tree = await runtime.settle(MemoryWorkspace, { mode: 'project', layout: 'wide', ...tab })
+    let body = text(expand(tree))
+    assert.match(body, /核心 3 条未注入/, 'short form in the tab')
+    assert.doesNotMatch(body, /核心超预算 · 3 条未注入/, 'not the long form')
+
+    // The explanation is a native <details>: focusable, toggleable without script.
+    const details = walk(tree).find((node) => node.type === 'details')
+    assert.ok(details, 'the state is a disclosure')
+    assert.ok(String(details.props.className).includes('wbm-explain'))
+    const summary = details.children.find((node) => node.type === 'summary')
+    assert.ok(summary, 'with a summary to focus')
+    assert.ok(summary.props['aria-label'], 'the summary names what it explains')
+    assert.match(text(expand(details)), /完整核心块需要 2100 码元，预算 1400 码元，本次注入 1375 码元/, 'the numbers are inside')
+
+    // The wide panel uses the long form.
+    runtime.reset()
+    installFetch({ state })
+    tree = await runtime.settle(MemoryOverviewPanel, {})
+    tree = await openProject()
+    assert.match(text(expand(tree)), /核心超预算 · 3 条未注入/, 'long form where there is room')
+  } finally {
+    restore()
+  }
+})
+
+test('no surface prints a raw revision, a KB% or a next-turn promise any more', async () => {
+  const state = stateFor()
+  state.projects[0] = { ...state.projects[0], overLimit: true, status: 'over-limit', injection: judged('truncated', { mode: 'whole', fallback: 'legacy', reason: 'missing_core', budget: 10000, need: 12000, used: 10000 }) }
+  state.attention = [{ key: 'proj-a', name: 'repo', title: 'repo', hasMemory: true, latestDaily: '2026-11-09', oldestDailyAgeDays: 1, injection: state.projects[0].injection, reasons: ['over-limit'] }]
+  state.attentionTotal = 1
+  const restore = installTimers()
+  try {
+    installFetch({ state })
+    const overview = text(expand(await runtime.settle(MemoryOverviewPanel, {})))
+    installFetch({ state })
+    runtime.reset()
+    const opened = text(expand(await openProject()))
+    for (const [name, body] of [['overview', overview], ['project', opened]]) {
+      assert.doesNotMatch(body, /\brev [0-9a-f]{6,}/, `${name}: raw revision`)
+      assert.doesNotMatch(body, /KB%|MB%|B%/, `${name}: bytes in a percent slot`)
+      assert.doesNotMatch(body, /下一轮注入会截断|已超注入限额|超注入限额/, `${name}: a promise about the next turn`)
+    }
   } finally {
     restore()
   }

@@ -9,6 +9,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 
 import { Config, normalizeConfig } from '../src/config.js'
@@ -127,7 +128,10 @@ test('the overview names the aggregate scope before anything is selected', () =>
   const tree = expand(MemoryOverviewPanel({}))
   const body = text(tree)
   assert.match(body, /全部项目/)
-  assert.match(body, /还没有任何项目写过记忆/)
+  // No state yet: the overview shows a loading state, never a row of zeros or
+  // an empty-machine message it has no evidence for.
+  assert.match(body, /读取中/)
+  assert.doesNotMatch(body, /项目 0|条目 0|还没有任何项目/)
 })
 
 test('the overview icon is a standalone svg', () => {
@@ -688,4 +692,22 @@ test('a stored 0 for the threshold is displayed as twice the limit', () => {
     .filter((node) => node.type === 'input')
     .map((node) => String(node.props.value ?? ''))
   assert.ok(shown.includes('20000'), 'an explicit threshold is not overridden by the derivation')
+})
+
+test('every literal the panel translates exists in both dictionaries', () => {
+  // A key added to one language and not the other shows up in the other
+  // language as the raw key — `panel.emptyOverview` did exactly that on its
+  // first run. This reads the source, so a new `t('…')` with no copy fails
+  // here before it fails in someone's panel.
+
+  const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+  const block = (name, next) => source.slice(source.indexOf(`const ${name} = {`), source.indexOf(`const ${next} = {`))
+  const zh = block('ZH', 'EN')
+  const en = source.slice(source.indexOf('const EN = {'), source.indexOf('function bindCopy'))
+  // Only keys that are really passed to the translator: `t('key'` or
+  // `t("key"`, not object property names or other functions' string arguments.
+  const keys = [...new Set([...source.matchAll(/\bt\(\s*'([a-z][a-zA-Z0-9]*\.[a-zA-Z0-9_.-]+)'/g)].map((match) => match[1]))]
+  const missing = keys.filter((key) => !zh.includes(`'${key}':`) || !en.includes(`'${key}':`)).sort()
+  assert.deepEqual(missing, [], 'keys with no copy in both languages')
+  assert.ok(keys.length > 100, `the scan found the dictionaries (${keys.length} keys)`)
 })

@@ -473,6 +473,7 @@ window.__ModuleLoader__.load({
       'attention.showAll': '查看全部',
       'doc.partialDetail': '只显示或只读到文件的一部分：条目数和长度只描述屏幕上的内容。',
       'panel.backToAll': '返回全部项目',
+      'panel.emptyOverview': '暂无项目',
 
       // source mode
       'source.title': '进入源码模式？',
@@ -880,6 +881,7 @@ window.__ModuleLoader__.load({
       'attention.showAll': "Show all",
       'doc.partialDetail': "Only part of the file is shown or was read: the count and length describe what is on screen.",
       'panel.backToAll': "Back to all projects",
+      'panel.emptyOverview': "No projects yet",
       'source.title': "Enter source mode?",
       'source.bodyAllowed': "Source mode writes the whole file. Structural checks, backups and undo still apply, but one mistake can hit several sections at once. This browser session will not ask again.",
       'source.confirmAllowed': "I understand — open source mode",
@@ -3098,6 +3100,7 @@ window.__ModuleLoader__.load({
       }
 
       function projectTree() {
+        if (!state) return h('div', { className: 'wbm-note' }, t('common.loading'))
         if (!filteredProjects.length) {
           return h('div', { className: 'wbm-note' }, railQuery ? t('state.noMatchingProject') : t('state.noWorkspaces'))
         }
@@ -3209,7 +3212,13 @@ window.__ModuleLoader__.load({
                 t('rail.onlyWithMemory'),
               ),
             ),
-            h('div', { className: 'wbm-rail-group' }, t('count.allProjects', { n: state?.projectsTotal ?? state?.projects?.length ?? 0 })),
+            // Nothing until the first state: "all projects 0" is a count nobody
+            // has made yet, and it flashed on every open.
+            state && (state.projectsTotal ?? state.projects?.length ?? 0) > 0
+              ? h('div', { className: 'wbm-rail-group' }, t('count.allProjects', { n: state.projectsTotal ?? state.projects?.length ?? 0 }))
+              : state
+                ? null
+                : h('div', { className: 'wbm-rail-group' }, t('common.loading')),
             state?.projectsTruncated
               ? h('div', { className: 'wbm-note' }, t('count.truncatedProjects', { n: state.projects?.length ?? 0 }))
               : null,
@@ -3313,8 +3322,10 @@ window.__ModuleLoader__.load({
               : [
                   // The neutral counts are one line: three chips for "how many"
                   // read as three facts, and they are one. No line at all until
-                  // the first state arrives, so nothing flashes "0 projects".
-                  state
+                  // the first state arrives, so nothing flashes "0 projects";
+                  // and none on an empty machine either — the body says "no
+                  // projects yet" once, in words.
+                  state && totals.projects > 0
                     ? h('span', { key: 'n', className: 'wbm-chip wbm-chip-quiet', title: t('stats.summaryDetail') }, t('stats.summaryLine', { projects: totals.projects, created: totals.withMemory, entries: totals.entries }))
                     : null,
                   totals.overLimit > 0 ? h('span', { key: 'o', className: 'wbm-chip warn', title: t('count.chipOverLimitDetail') }, t('count.chipOverLimit', { n: totals.overLimit })) : null,
@@ -3368,6 +3379,46 @@ window.__ModuleLoader__.load({
       // ── dashboard ─────────────────────────────────────────────────────────
 
       function dashboard() {
+        // Until the first /state arrives there are no numbers to show. The
+        // page used to render its stat cards as four zeros and then replace
+        // them, which read as "everything was lost" for the length of a poll.
+        if (!state) {
+          return h(
+            'div',
+            { className: 'wbm-content', role: 'status', 'aria-live': 'polite' },
+            h('div', { className: 'wbm-note', style: { padding: '12px 0' } }, t('common.loading')),
+            h('div', { className: 'wbm-skeleton', style: { width: '40%' } }),
+            h('div', { className: 'wbm-skeleton' }),
+            h('div', { className: 'wbm-skeleton', style: { width: '70%' } }),
+          )
+        }
+        // Loaded, and this machine knows no projects at all: say that, rather
+        // than a page of zeros. The user memory stays reachable.
+        if (totals.projects === 0 && state.projects?.length === 0) {
+          return h(
+            'div',
+            { className: 'wbm-content' },
+            h(
+              'div',
+              { className: 'wbm-empty' },
+              h(OverviewIcon, { size: 30 }),
+              h('div', { className: 't' }, t('panel.emptyOverview')),
+              h('div', { className: 'd' }, t('dash.noProjects')),
+            ),
+            h('div', { className: 'wbm-h2' }, t('dash.globalMemory')),
+            h(
+              'div',
+              { className: 'wbm-list' },
+              h(
+                'div',
+                { className: 'wbm-list-row' },
+                h('span', { className: 'wbm-name' }, t('target.userMemory')),
+                h('span', { className: 'wbm-meta' }, user ? t('count.entries', { n: user.entries ?? 0 }) : t('state.noUserMemory')),
+                user?.memoryExists ? h('button', { type: 'button', className: 'wbm-btn', onClick: () => openFile('user-memory', undefined, null) }, t('common.open')) : null,
+              ),
+            ),
+          )
+        }
         const rows = state?.projects ?? []
         // The flagged projects come from the host, over every known project,
         // and each keeps all of its reasons. Reading them off `rows` limited
