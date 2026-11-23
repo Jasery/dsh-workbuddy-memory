@@ -2789,6 +2789,40 @@ window.__ModuleLoader__.load({
         return details[key] ?? (key === effectiveKey ? state?.stores?.project ?? null : null)
       }
 
+      /**
+       * Open a flagged project from "needs attention".
+       *
+       * The flagged project is often *not* in `state.projects`: the list stops
+       * at the display bound, and the attention preview does not. So it is
+       * addressed by key alone, and every read resolves it server-side.
+       *
+       * @param {object} row - an attention item: `key`, `name`, `hasMemory`,
+       *   `latestDaily`, and its `injection`.
+       */
+      function openAttention(row) {
+        setActiveKey(row.key)
+        dropManagement()
+        if (row.hasMemory) openFile('project-memory', undefined, row.key)
+        else if (row.latestDaily) openFile('project-daily', row.latestDaily, row.key)
+        else {
+          setSelected(null)
+          setDoc(null)
+          setSourceEdit(null)
+        }
+      }
+
+      /** Ask the host for the whole attention list, past the preview bound. */
+      async function loadAllAttention() {
+        const suffix = effectiveKey ? `?project=${encodeURIComponent(effectiveKey)}&attention=all` : '?attention=all'
+        try {
+          const next = await getJson(`${API}/state${suffix}`)
+          setState(next)
+          setError('')
+        } catch (cause) {
+          setError(describeCode(String(cause?.message ?? cause)))
+        }
+      }
+
       // ── version history ────────────────────────────────────────────────────
 
       /** The frozen identity of the file a management surface is about. */
@@ -3335,14 +3369,22 @@ window.__ModuleLoader__.load({
 
       function dashboard() {
         const rows = state?.projects ?? []
-        const attention = []
-        for (const row of rows) {
-          if (row.status === 'over-limit') attention.push({ row, text: t('attention.overLimit') })
-          else if (row.status === 'stale') attention.push({ row, text: t('attention.stale', { date: row.oldestDaily ?? t('target.projectDaily'), days: row.oldestDailyAgeDays }) })
-          else if (row.status === 'missing') attention.push({ row, text: t('attention.missing') })
-          else if (row.status === 'unreadable') attention.push({ row, text: t('attention.unreadable') })
+        // The flagged projects come from the host, over every known project,
+        // and each keeps all of its reasons. Reading them off `rows` limited
+        // them to the display bound: "over limit 1" could sit beside a list
+        // with nothing in it, and one reason hid another.
+        const flagged = Array.isArray(state?.attention) ? state.attention : []
+        const attentionTotal = Number(state?.attentionTotal)
+        const beyond = Number.isFinite(attentionTotal) ? attentionTotal - flagged.length : 0
+        const describeReason = (item, reason) => {
+          if (reason === 'over-limit') return injectionState(item.injection).label
+          if (reason === 'stale') return t('attention.stale', { date: item.oldestDaily ?? t('target.projectDaily'), days: item.oldestDailyAgeDays })
+          if (reason === 'missing') return t('attention.missing')
+          return t('attention.unmeasurable')
         }
+        const attention = flagged.map((item) => ({ row: item, lines: (item.reasons ?? []).map((reason) => describeReason(item, reason)) }))
         const recent = rows.filter((row) => row.hasMemory).slice(0, 6)
+        const archiveDays = Number(state?.archiveAfterDays) || 30
         return h(
           'div',
           { className: 'wbm-content' },
@@ -3352,7 +3394,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('stats.projects')), h('div', { className: 'v' }, totals.projects)),
             h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('stats.entries')), h('div', { className: 'v' }, totals.entries)),
             h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('stats.dailyFiles')), h('div', { className: 'v' }, totals.dailyFiles)),
-            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('stats.pendingArchive')), h('div', { className: 'v' }, totals.stale)),
+            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, `${t('stats.pendingArchive')} · ${t('count.days', { n: archiveDays })}`), h('div', { className: 'v' }, totals.stale)),
           ),
           attention.length
             ? h(
@@ -3362,17 +3404,28 @@ window.__ModuleLoader__.load({
                 h(
                   'div',
                   { className: 'wbm-list' },
-                  attention.slice(0, 6).map((item) =>
+                  attention.map(({ row, lines }) =>
                     h(
                       'div',
-                      { className: 'wbm-list-row', key: item.row.key },
+                      { className: 'wbm-list-row', key: row.key },
                       h('span', { className: 'wbm-dot warn' }),
-                      h('span', { className: 'wbm-name' }, item.row.title || item.row.name),
-                      h('span', { className: 'wbm-meta' }, item.text),
-                      h('button', { type: 'button', className: 'wbm-btn', onClick: () => selectProject(item.row) }, t('common.view')),
+                      h('span', { className: 'wbm-name' }, row.title || row.name),
+                      h('span', { className: 'wbm-meta' }, lines.join(' · ')),
+                      // The row may sit outside the displayed list; it is
+                      // opened by key, and `/state?project=` resolves it.
+                      h('button', { type: 'button', className: 'wbm-btn', onClick: () => openAttention(row) }, t('common.view')),
                     ),
                   ),
                 ),
+                beyond > 0
+                  ? h(
+                      'div',
+                      { className: 'wbm-note', style: { padding: '6px 8px' } },
+                      t('attention.partialNote', { shown: attention.length, total: attentionTotal }),
+                      ' ',
+                      h('button', { type: 'button', className: 'wbm-btn', onClick: loadAllAttention }, t('attention.showAll')),
+                    )
+                  : null,
               )
             : h('div', { className: 'wbm-note', style: { padding: '12px 0' } }, t('attention.none')),
           h('div', { className: 'wbm-h2' }, t('dash.recentActivity')),
@@ -3386,7 +3439,7 @@ window.__ModuleLoader__.load({
                     { className: 'wbm-list-row', key: row.key },
                     h('span', { className: `wbm-dot ${row.status === 'ok' ? 'ok' : 'empty'}` }),
                     h('span', { className: 'wbm-name' }, row.title || row.name),
-                    h('span', { className: 'wbm-meta' }, `${t('count.entries', { n: row.entries ?? 0 })} · ${humanBytes(row.bytes)} · ${relativeTime(row.lastActiveAt)}`),
+                    h('span', { className: 'wbm-meta' }, `${t('count.entries', { n: row.entries ?? 0 })} · ${humanUnits(row.chars) || humanBytes(row.bytes)} · ${relativeTime(row.lastActiveAt)}`),
                     h('button', { type: 'button', className: 'wbm-btn', onClick: () => selectProject(row) }, t('common.open')),
                   ),
                 ),
@@ -3404,7 +3457,7 @@ window.__ModuleLoader__.load({
               'div',
               { className: 'wbm-list-row' },
               h('span', { className: 'wbm-name' }, t('target.userMemory')),
-              h('span', { className: 'wbm-meta' }, user ? t('count.entriesPercent', { n: user.entries ?? 0, percent: ratio(user.chars, limits.user).percent }) : t('file.unreadable')),
+              h('span', { className: 'wbm-meta' }, user ? t('count.entries', { n: user.entries ?? 0 }) : t('file.unreadable')),
               h('button', { type: 'button', className: 'wbm-btn', onClick: () => openFile('user-memory', undefined, null) }, t('common.open')),
             ),
             profile?.exists
