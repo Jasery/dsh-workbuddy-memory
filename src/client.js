@@ -2355,7 +2355,13 @@ window.__ModuleLoader__.load({
         return () => clearTimeout(timer)
       }, [undo])
 
-      const project = effectiveKey ? (state?.projects ?? []).find((row) => row.key === effectiveKey) ?? null : null
+      // The selected project's row, in full, wherever it sits. `/state` sends
+      // it as `project`, resolved by key against every known project, so one
+      // past the display bound is as addressable as the first. Older hosts
+      // did not send it; the list is the fallback for them.
+      const project = effectiveKey
+        ? (state?.project?.key === effectiveKey ? state.project : null) ?? (state?.projects ?? []).find((row) => row.key === effectiveKey) ?? null
+        : null
 
       // The project surface is a single project: when the session resolves (or a
       // fallback picker changes it), start from the file a person most likely
@@ -3206,38 +3212,79 @@ window.__ModuleLoader__.load({
 
       // ── header ────────────────────────────────────────────────────────────
 
+      /**
+       * The injection state of the open project, as a chip with its explanation.
+       *
+       * The chip carries the state in visible text — colour is never the only
+       * signal — and the numbers behind it sit in a native disclosure: a
+       * `<details>` is focusable and toggleable from the keyboard with no
+       * script, and the summary keeps its focus after the toggle, so nothing
+       * has to be managed by hand.
+       *
+       * @param {object} input
+       * @param {object|null|undefined} input.injection - the row's judgment.
+       * @param {boolean} [input.short] - the compact wording, for a narrow sidebar.
+       * @param {string} [input.className] - wrapper class, e.g. `wbm-chip`.
+       */
+      function injectionChip({ injection: state, short = false, className = 'wbm-chip' }) {
+        const view = injectionState(state)
+        if (!view.label) return null
+        const label = short ? view.short : view.label
+        if (!view.detail && !view.why) {
+          return h('span', { className: `${className} ${view.tone}`.trim(), title: view.label }, label)
+        }
+        return h(
+          'details',
+          { className: `${className} wbm-explain ${view.tone}`.trim() },
+          h('summary', { title: t('inject.more'), 'aria-label': `${label} — ${t('inject.more')}` }, label),
+          h('div', { className: 'wbm-explain-body' }, view.detail ? h('div', null, view.detail) : null, view.why ? h('div', null, view.why) : null),
+        )
+      }
+
       function header() {
         const title = mode === 'overview' ? t('panel.memory') : t('panel.projectMemory')
-        const scope = mode === 'overview' ? t('rail.allProjects') : project ? project.title || project.name : t('state.undetermined')
-        const projectRatio = project ? ratio(project.chars, limits.project) : null
+        // Selecting a project in the overview moves the breadcrumb with it;
+        // it used to keep saying "all projects" beside a button of that name.
+        const scope = mode === 'overview'
+          ? activeKey && project
+            ? `${t('rail.allProjects')} › ${project.title || project.name}`
+            : t('rail.allProjects')
+          : project
+            ? project.title || project.name
+            : t('state.undetermined')
+        const view = project ? injectionState(project.injection) : null
+        const fill = project && view?.status === 'complete' ? fillOf(project.injection) : null
+        const units = project ? humanUnits(project.chars) : ''
         return h(
           'div',
           { className: 'wbm-header' },
           h('span', { className: 'wbm-title' }, title),
           h('span', { className: 'wbm-crumb' }, '·'),
-          h('span', { className: 'wbm-crumb' }, scope),
+          h('span', { className: 'wbm-crumb wbm-crumb-scope' }, scope),
           h(
             'div',
             { className: 'wbm-chips' },
-            mode === 'overview'
+            // Which chips a header shows follows what is *open*, not which
+            // surface it is: the overview with a project selected is looking
+            // at one project, and that project's state belongs in its header
+            // exactly as in the project tab.
+            project
               ? [
-                  h('span', { key: 'p', className: 'wbm-chip' }, t('count.chipProjects', { n: totals.projects })),
-                  h('span', { key: 'm', className: 'wbm-chip ok' }, t('count.chipWithMemory', { n: totals.withMemory })),
-                  h('span', { key: 'e', className: 'wbm-chip' }, t('count.chipEntries', { n: totals.entries })),
-                  totals.overLimit > 0 ? h('span', { key: 'o', className: 'wbm-chip warn' }, t('count.chipOverLimit', { n: totals.overLimit })) : null,
-                  totals.stale > 0 ? h('span', { key: 's', className: 'wbm-chip warn' }, t('count.chipPending', { n: totals.stale })) : null,
+                  project.hasMemory
+                    ? h('span', { key: 'e', className: 'wbm-chip' }, t('count.memoryLineUnits', { n: project.entries ?? 0, units: units ? ` · ${units}` : '' }))
+                    : h('span', { key: 'e', className: 'wbm-chip' }, t('count.memoryLineNoFile')),
+                  injectionChip({ injection: project.injection, short: Boolean(props?.tab) }),
+                  fill && fill.percent !== null ? h('span', { key: 'u', className: `wbm-chip ${fill.level === 'warn' ? 'warn' : ''}` }, t('inject.usedPercent', { percent: fill.percent })) : null,
                 ]
               : [
-                  project ? h('span', { key: 'e', className: 'wbm-chip' }, t('count.memoryLine', { n: project.entries ?? 0, bytes: humanBytes(project.bytes) })) : null,
-                  projectRatio
-                    ? h(
-                        'span',
-                        { key: 'u', className: `wbm-chip ${projectRatio.level === 'over' ? 'bad' : projectRatio.level === 'warn' ? 'warn' : ''}` },
-                        t('count.usedPercent', { percent: projectRatio.percent }),
-                      )
+                  // The neutral counts are one line: three chips for "how many"
+                  // read as three facts, and they are one. No line at all until
+                  // the first state arrives, so nothing flashes "0 projects".
+                  state
+                    ? h('span', { key: 'n', className: 'wbm-chip wbm-chip-quiet', title: t('stats.summaryDetail') }, t('stats.summaryLine', { projects: totals.projects, created: totals.withMemory, entries: totals.entries }))
                     : null,
-                  project?.overLimit ? h('span', { key: 'o', className: 'wbm-chip bad' }, t('editor.overLimitChip')) : null,
-                  project?.revision ? h('span', { key: 'r', className: 'wbm-chip' }, `rev ${project.revision}`) : null,
+                  totals.overLimit > 0 ? h('span', { key: 'o', className: 'wbm-chip warn', title: t('count.chipOverLimitDetail') }, t('count.chipOverLimit', { n: totals.overLimit })) : null,
+                  totals.stale > 0 ? h('span', { key: 's', className: 'wbm-chip warn', title: t('count.chipPendingDetail', { days: state?.archiveAfterDays ?? 30 }) }, t('count.chipPending', { n: totals.stale })) : null,
                 ],
           ),
           h('span', { className: 'wbm-spacer' }),
