@@ -22,6 +22,7 @@ import { summarizeMemory } from '../layers.js'
 import { readTextSafe } from '../fsx.js'
 import { contentRevision } from '../write/fslock.js'
 import { ACTIONS, resolveTarget, TARGETS } from '../write/store.js'
+import { overviewOf } from './catalog.js'
 
 const PREFIX = '/workbuddy-memory'
 const MAX_BODY_BYTES = 2 * 1024 * 1024
@@ -294,11 +295,16 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
     current: recent?.cwd ?? null,
   })
 
-  /** Projects from the catalog, or the original recent-only list as a fallback. */
-  const projectRows = (probe) => {
+  /**
+   * Projects from the catalog, or the original recent-only list as a fallback.
+   *
+   * Either way the result carries the overview: totals over every known
+   * project, a bounded attention preview, and how many more sit past it.
+   */
+  const projectRows = (probe, attention) => {
     if (catalog?.list) {
-      const result = catalog.list({ ...catalogOptions(probe), limit: cfg.ui.maxProjects })
-      return { rows: result.rows, total: result.total, truncated: result.truncated }
+      const { rows, total, truncated, totals, attention: preview, attentionTotal, attentionMore } = catalog.list({ ...catalogOptions(probe), limit: cfg.ui.maxProjects, attention })
+      return { rows, total, truncated, totals, attention: preview, attentionTotal, attentionMore }
     }
     const seen = recent?.seen instanceof Map ? [...recent.seen.entries()] : []
     if (recent?.cwd && !seen.some(([cwd]) => cwd === recent.cwd)) seen.push([recent.cwd, Date.now()])
@@ -322,7 +328,7 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
           daily,
         }
       })
-    return { rows, total: rows.length, truncated: false }
+    return { rows, total: rows.length, truncated: false, ...overviewOf(rows, attention) }
   }
 
   /**
@@ -331,16 +337,21 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
    * A `project` key is only honoured for a path this plugin can enumerate — one
    * DSH registered as a workspace or one it saw during a prompt assembly. The
    * set is finite and lived, so it cannot be used to read an arbitrary path.
+   *
+   * The key is resolved against every known project, not only the rows the
+   * display bound returned: a project the overview flagged from outside its own
+   * list is still one a person must be able to open. The resolved row travels
+   * with the pick so `/state` can describe the selection on its own.
    */
   const pickCwd = (key) => {
-    if (!key) return { ok: true, cwd: recent?.cwd ?? null }
-    if (key === keyFor(recent?.cwd ?? '')) return { ok: true, cwd: recent.cwd }
+    if (!key) return { ok: true, cwd: recent?.cwd ?? null, row: null }
+    if (key === keyFor(recent?.cwd ?? '')) return { ok: true, cwd: recent.cwd, row: null }
     if (catalog?.resolve) {
       const row = catalog.resolve(key, catalogOptions(probeNow(null)))
-      if (row) return { ok: true, cwd: row.path }
+      if (row) return { ok: true, cwd: row.path, row }
     }
     if (recent?.seen instanceof Map) {
-      for (const cwd of recent.seen.keys()) if (keyFor(cwd) === key) return { ok: true, cwd }
+      for (const cwd of recent.seen.keys()) if (keyFor(cwd) === key) return { ok: true, cwd, row: null }
     }
     return { ok: false }
   }
@@ -365,21 +376,17 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
     return { count, latest }
   }
 
-  /** Aggregate counters for the global overview. */
-  const totalsOf = (rows) => ({
-    projects: rows.length,
-    withMemory: rows.filter((row) => row.hasMemory).length,
-    entries: rows.reduce((sum, row) => sum + (Number(row.entries) || 0), 0),
-    dailyFiles: rows.reduce((sum, row) => sum + (Number(row.daily) || 0), 0),
-    overLimit: rows.filter((row) => row.overLimit).length,
-    stale: rows.filter((row) => row.stale).length,
-  })
-
-  const state = (cwd) => {
+  const state = (cwd, selection, attention) => {
     const probe = probeNow(cwd)
     const project = describe(probe.project.memoryPath)
     const user = describe(probe.user.memoryPath)
-    const list = projectRows(probe)
+    const list = projectRows(probe, attention)
+    // The selected project is resolved on its own. Looking for it only among
+    // `projects` made a project past the display bound unaddressable: the
+    // overview could flag it, and "open" had nothing to show.
+    const selected = selection?.key
+      ? list.rows.find((item) => item.key === selection.key) ?? selection.row ?? null
+      : list.rows.find((item) => item.current) ?? null
     return {
       ok: true,
       version,
@@ -388,11 +395,21 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
       projects: list.rows,
       projectsTotal: list.total,
       projectsTruncated: list.truncated,
-      totals: { ...totalsOf(list.rows), projects: list.total },
+      // Over every known project, not only the rows above: "60 projects, 1
+      // over limit" must not sit beside a list that cannot hold that one.
+      totals: list.totals,
+      attention: list.attention,
+      attentionTotal: list.attentionTotal,
+      attentionMore: list.attentionMore,
+      // The row of the selected project, in full, wherever it sits in the list.
+      project: selected,
       readOnly: cfg.readOnly,
       writeEnabled: cfg.write.enabled,
       allowWriteActions: cfg.ui.allowWriteActions,
       limits: cfg.inject.limits,
+      // What the panel needs to know before it says anything about injection:
+      // whether there is any, in which mode, and for which sources.
+      inject: { enabled: Boolean(cfg.inject.enabled), mode: cfg.inject.mode, project: Boolean(cfg.inject.project), coreBudget: cfg.inject.coreBudget },
       backupKeep: cfg.write.backupKeep,
       dataFolderName: cfg.dataFolderName || '.workbuddy',
       // Where the operation receipts live. The panel needs it to tell a person
@@ -416,6 +433,9 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
           // `layering.mode === 'legacy'` is the state the panel has to surface:
           // the file is injected whole, so its whole length is always-on.
           layering: layeringOf(probe.project.memoryPath),
+          // The same judgment the project row carries, so the panel reads one
+          // answer whether it looks at the list or at the open project.
+          injection: selected?.injection ?? null,
           daily: listDaily(probe.layout.projectMemoryDir),
         },
         user: {
@@ -628,7 +648,10 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
             const picked = pickCwd(url.searchParams.get('project') ?? undefined)
             if (!picked.ok) return send(res, 404, { ok: false, code: 'unknown_project' })
 
-            if (route === '/state') return send(res, 200, state(picked.cwd))
+            if (route === '/state') {
+              const key = url.searchParams.get('project')
+              return send(res, 200, state(picked.cwd, key ? { key, row: picked.row ?? null } : null, url.searchParams.get('attention') ?? undefined))
+            }
 
             if (route === '/content') {
               const target = url.searchParams.get('target') ?? ''

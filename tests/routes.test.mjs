@@ -2,26 +2,30 @@
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'node:test'
 
 import { normalizeConfig } from '../src/config.js'
+import { createProjectCatalog } from '../src/host/catalog.js'
+import { createTranslator } from '../src/locale.js'
 import { registerRoutes } from '../src/host/routes.js'
 import { createStore } from '../src/write/store.js'
 
 /** Capture the registered route and answer one request against it. */
-async function harness({ readOnly = false, allowWriteActions = false, recent = { cwd: null }, connection } = {}) {
+async function harness({ readOnly = false, allowWriteActions = false, recent = { cwd: null }, connection, config = {}, catalog: withCatalog = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'wbm-routes-'))
   const home = join(root, 'home')
   mkdirSync(join(home, 'memory'), { recursive: true })
   writeFileSync(join(home, 'MEMORY.md'), '## 偏好\n- 用简体中文\n', 'utf8')
 
   const stateDir = join(root, 'state')
-  const cfg = normalizeConfig({ workbuddyHome: home, stateDir, readOnly, ui: { allowWriteActions } })
+  const cfg = normalizeConfig({ workbuddyHome: home, stateDir, readOnly, ui: { allowWriteActions }, ...config })
   const store = createStore({ cfg, stateDir })
+  // Wired the way pply wires it when asked: the same recent list, the same translator.
+  const catalog = withCatalog ? createProjectCatalog({ cfg, recent, registry: () => [], t: createTranslator('zh') }) : undefined
   const routes = []
   const ctx = {
     webServer: {
@@ -39,7 +43,7 @@ async function harness({ readOnly = false, allowWriteActions = false, recent = {
     },
   }
 
-  const registered = registerRoutes(ctx, { cfg, recent, stateDir, version: 'test', store })
+  const registered = registerRoutes(ctx, { cfg, recent, stateDir, version: 'test', store, catalog })
   assert.equal(registered, true)
   assert.equal(routes.length, 1)
   assert.equal(routes[0].kind, 'prefix')
@@ -434,3 +438,79 @@ test('an actually empty daily note still reports zero entries', async () => {
   assert.equal(parsed.sections.length, 0)
 })
 
+
+/** The core of an over-budget split file: six entries, far past a 1400 share. */
+const OVER_CORE = `# M\n\n## 常驻记忆\n${Array.from({ length: 6 }, (_, index) => `- 核心条目 ${index} ${'重要'.repeat(140)}`).join('\n')}\n`
+const FITS = '# M\n\n## 常驻记忆\n- one\n'
+
+/** `count` projects under one root; `over` names the indexes that are over budget. */
+function manyProjects(root, count, over = []) {
+  const seen = new Map()
+  let clock = Date.now() - 3_600_000
+  const old = new Date(clock - 3_600_000)
+  for (let index = 0; index < count; index += 1) {
+    const cwd = join(root, `p${String(index).padStart(2, '0')}`)
+    const dir = join(cwd, '.workbuddy', 'memory')
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'MEMORY.md')
+    writeFileSync(file, over.includes(index) ? OVER_CORE : FITS, 'utf8')
+    // The seen stamps own the activity order; a file written "now" would not.
+    utimesSync(file, old, old)
+    clock += 1000
+    seen.set(cwd, clock)
+  }
+  return seen
+}
+
+test('state totals cover every project, and one past the display bound can still be opened', async () => {
+  // Acceptance 7: 60 projects, a display bound of 50, and the only over-budget
+  // project is the 51st by activity. The totals used to be summed over the 50
+  // rows returned, and the attention list could not hold that one at all.
+  const root = mkdtempSync(join(tmpdir(), 'wbm-routes-many-'))
+  const seen = manyProjects(root, 60, [9])
+  const { call } = await harness({ recent: { cwd: null, seen }, config: { ui: { maxProjects: 50 } }, catalog: true })
+
+  const state = JSON.parse((await call('/workbuddy-memory/state')).body)
+  assert.equal(state.projects.length, 50, 'the display bound still holds')
+  assert.equal(state.projectsTotal, 60)
+  assert.equal(state.projects.some((row) => row.name === 'p09'), false)
+  assert.equal(state.totals.projects, 60)
+  assert.equal(state.totals.withMemory, 60)
+  assert.equal(state.totals.overLimit, 1, 'one project lost core entries')
+  assert.equal(state.attentionTotal, 1)
+  assert.equal(state.attention[0].name, 'p09', 'the preview is not limited to the listed rows')
+  assert.equal(state.attention[0].injection.status, 'core-over-budget')
+  assert.equal(state.project, null, 'nothing is selected')
+
+  const key = state.attention[0].key
+  const opened = JSON.parse((await call(`/workbuddy-memory/state?project=${key}`)).body)
+  assert.equal(opened.project.name, 'p09', 'the selected project resolves on its own')
+  assert.equal(opened.project.overLimit, true)
+  assert.equal(opened.projects.some((row) => row.key === key), false, 'and the list is unchanged by selecting it')
+  assert.equal(opened.stores.project.injection.status, 'core-over-budget', 'the store view and the row agree')
+  assert.equal(opened.stores.project.layering.mode, 'layered')
+
+  const content = JSON.parse((await call(`/workbuddy-memory/content?target=project-memory&project=${key}`)).body)
+  assert.equal(content.ok, true)
+  assert.match(content.text, /核心条目 0/)
+})
+
+test('the attention preview is bounded by default and complete on request', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wbm-routes-attention-'))
+  const seen = manyProjects(root, 12, Array.from({ length: 12 }, (_, index) => index))
+  const { call } = await harness({ recent: { cwd: null, seen }, catalog: true })
+
+  const page = JSON.parse((await call('/workbuddy-memory/state')).body)
+  assert.equal(page.attentionTotal, 12)
+  assert.equal(page.attention.length, 8, 'the preview carries the first few')
+  assert.equal(page.attentionMore['over-limit'], 4, 'and says how many more there are')
+  assert.equal(page.totals.overLimit, 12, 'the total was never limited to the preview')
+
+  const all = JSON.parse((await call('/workbuddy-memory/state?attention=all')).body)
+  assert.equal(all.attention.length, 12)
+  assert.equal(all.attentionMore['over-limit'], 0)
+
+  // An unusable value falls back to the default bound rather than to nothing.
+  const bogus = JSON.parse((await call('/workbuddy-memory/state?attention=not-a-number')).body)
+  assert.equal(bogus.attention.length, 8)
+})

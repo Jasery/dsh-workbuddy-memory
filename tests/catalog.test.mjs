@@ -1,7 +1,7 @@
 /** The project catalog: how it reads, what it caches, and what it reports. */
 
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -22,13 +22,18 @@ function workspace(config = LAYERED) {
   const home = join(root, 'home')
   mkdirSync(join(home, 'memory'), { recursive: true })
   const seen = new Map()
-  let clock = 1
+  let clock = Date.now() - 3_600_000
   const add = (name, memory, daily = []) => {
     const cwd = join(root, name)
     const dir = join(cwd, '.workbuddy', 'memory')
     mkdirSync(dir, { recursive: true })
-    if (memory !== undefined) writeFileSync(join(dir, 'MEMORY.md'), memory, 'utf8')
-    for (const date of daily) writeFileSync(join(dir, `${date}.md`), '- 一天\n', 'utf8')
+    const files = [join(dir, 'MEMORY.md'), ...daily.map((date) => join(dir, `${date}.md`))]
+    if (memory !== undefined) writeFileSync(files[0], memory, 'utf8')
+    daily.forEach((date, index) => writeFileSync(files[index + 1], '- 一天\n', 'utf8'))
+    // A file written "now" would outrank the seen stamps below and make the
+    // activity order depend on write timing; the stamps own the order here.
+    const old = new Date(clock - 3_600_000)
+    for (const file of files) if (existsSync(file)) utimesSync(file, old, old)
     clock += 1000
     seen.set(cwd, clock)
     return cwd
@@ -205,4 +210,75 @@ test('a directory where MEMORY.md should be is not a file', () => {
   assert.equal(row.injection.status, 'unmeasurable')
   assert.equal(row.injection.reason, 'not_a_file')
   assert.deepEqual(readdirSync(join(cwd, '.workbuddy', 'memory')), ['MEMORY.md'], 'nothing was written')
+})
+
+/** A calendar date `days` before today, as a daily file names it. */
+const daysAgo = (days) => {
+  const date = new Date()
+  date.setDate(date.getDate() - days)
+  return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-')
+}
+
+test('totals count every project, not only the rows returned', () => {
+  // Acceptance 7: 60 projects, a display bound of 50, and the one project
+  // that is over budget is the 51st by activity — past the bound.
+  const ws = workspace()
+  ws.cfg.ui.maxProjects = 50
+  for (let index = 0; index < 60; index += 1) {
+    const memory = index === 9 ? OVER_SHARE : '# M\n\n## 常驻记忆\n- one\n'
+    ws.add(`p${String(index).padStart(2, '0')}`, memory, index === 9 ? [daysAgo(31)] : [])
+  }
+  const page = ws.open().list()
+
+  assert.equal(page.rows.length, 50)
+  assert.equal(page.total, 60)
+  assert.equal(page.truncated, true)
+  assert.equal(page.rows.some((row) => row.name === 'p09'), false, 'the 51st project is not in the list')
+
+  assert.equal(page.totals.projects, 60, 'every project, not the 50 shown')
+  assert.equal(page.totals.withMemory, 60)
+  assert.equal(page.totals.entries, 59 + 6, 'every entry of every file')
+  assert.equal(page.totals.overLimit, 1, 'counted once for the one project that lost core entries')
+  assert.equal(page.totals.stale, 1)
+
+  assert.equal(page.attentionTotal, 1)
+  assert.equal(page.attention.length, 1)
+  const [item] = page.attention
+  assert.equal(item.name, 'p09')
+  assert.equal(typeof item.key, 'string')
+  assert.equal(item.hasMemory, true, 'the preview carries enough to open the project')
+  assert.equal(item.latestDaily, daysAgo(31))
+  assert.deepEqual(item.reasons, ['over-limit', 'stale'], 'one project, both reasons')
+  assert.equal(item.injection.status, 'core-over-budget')
+})
+
+test('the attention preview is bounded and says how many more there are, by kind', () => {
+  const ws = workspace()
+  for (let index = 0; index < 12; index += 1) ws.add(`over${String(index).padStart(2, '0')}`, OVER_SHARE)
+  for (let index = 0; index < 3; index += 1) ws.add(`stale${index}`, '# M\n\n## 常驻记忆\n- one\n', [daysAgo(40)])
+  const page = ws.open().list()
+
+  assert.equal(page.attentionTotal, 15)
+  assert.ok(page.attention.length < 15, `the preview is bounded: ${page.attention.length}`)
+  const previewed = new Set(page.attention.map((item) => item.key))
+  const beyond = page.attentionMore
+  assert.equal(beyond['over-limit'], 12 - page.attention.filter((item) => item.reasons.includes('over-limit')).length)
+  assert.equal(beyond.stale, 3 - page.attention.filter((item) => item.reasons.includes('stale')).length)
+  assert.equal(previewed.size, page.attention.length, 'a project with two reasons is listed once')
+
+  // Asking for the whole list is the caller's decision, and it is honoured.
+  const all = ws.open().list({ attention: 'all' })
+  assert.equal(all.attention.length, 15)
+  assert.deepEqual(all.attentionMore, { 'over-limit': 0, stale: 0, missing: 0, unmeasurable: 0 }, 'every kind is always present')
+})
+
+test('a project whose directory is gone is attention, and is counted on its own', () => {
+  const ws = workspace()
+  const gone = ws.add('gone', '# M\n\n## 常驻记忆\n- one\n')
+  rmSync(gone, { recursive: true, force: true })
+  const page = ws.open().list()
+  assert.equal(page.totals.projects, 1)
+  assert.equal(page.totals.missing, 1)
+  assert.deepEqual(page.attention[0].reasons, ['missing'])
+  assert.equal(page.attention[0].exists, false)
 })

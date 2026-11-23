@@ -48,6 +48,75 @@ const MAX_CACHED_FILES = 512
 
 const NO_FILE = Object.freeze({ exists: false, read: 'missing' })
 
+/**
+ * How many flagged projects `/state` carries before it says how many more
+ * there are. The preview is what a person scans; the rest is one request away.
+ */
+export const ATTENTION_PREVIEW = 8
+
+/**
+ * Why a project needs attention, in a stable order. Several at once is the
+ * normal case — a long-neglected project is over budget *and* behind on
+ * archiving — and listing each reason once keeps the summary counts and the
+ * preview telling the same story.
+ */
+const reasonsOf = (row) => {
+  const reasons = []
+  if (row.overLimit) reasons.push('over-limit')
+  if (row.stale) reasons.push('stale')
+  if (!row.exists) reasons.push('missing')
+  if (row.injection?.status === 'unmeasurable') reasons.push('unmeasurable')
+  return reasons
+}
+
+/** Aggregate counters for the global overview, over exactly the rows given. */
+export function totalsOf(rows) {
+  return {
+    projects: rows.length,
+    withMemory: rows.filter((row) => row.hasMemory).length,
+    entries: rows.reduce((sum, row) => sum + (row.entries ?? 0), 0),
+    dailyFiles: rows.reduce((sum, row) => sum + (row.daily ?? 0), 0),
+    // One project, one count, however many entries it lost.
+    overLimit: rows.filter((row) => row.overLimit).length,
+    stale: rows.filter((row) => row.stale).length,
+    missing: rows.filter((row) => row.exists === false).length,
+    unmeasurable: rows.filter((row) => row.injection?.status === 'unmeasurable').length,
+  }
+}
+
+/**
+ * The overview that goes with a full, sorted row list: its totals, a bounded
+ * preview of the projects that need attention, and how many more of each kind
+ * sit past the preview.
+ *
+ * Exported for the route's recent-only fallback, which has rows without the
+ * judgment fields and so gets the same shape with nothing flagged in it.
+ */
+export function overviewOf(rows, attention) {
+  const flagged = rows.filter((row) => reasonsOf(row).length > 0)
+  const shown = attention === 'all' ? flagged.length : Math.max(0, Math.min(Number(attention) || ATTENTION_PREVIEW, flagged.length))
+  const preview = flagged.slice(0, shown).map((row) => ({
+    key: row.key,
+    name: row.name,
+    title: row.title,
+    exists: row.exists,
+    // Enough for "open" to land on the file a person most likely wants.
+    hasMemory: row.hasMemory,
+    latestDaily: row.latestDaily,
+    oldestDaily: row.oldestDaily,
+    oldestDailyAgeDays: row.oldestDailyAgeDays,
+    injection: row.injection,
+    reasons: reasonsOf(row),
+  }))
+  // Every kind is always present, so a reader never has to test for a missing
+  // key to learn that there is nothing more.
+  const attentionMore = { 'over-limit': 0, stale: 0, missing: 0, unmeasurable: 0 }
+  for (const row of flagged.slice(shown)) {
+    for (const reason of reasonsOf(row)) attentionMore[reason] += 1
+  }
+  return { totals: totalsOf(rows), attention: preview, attentionTotal: flagged.length, attentionMore }
+}
+
 /** Stable, non-reversible handle for a workspace path. */
 export function projectKey(path) {
   return createHash('sha1').update(String(path)).digest('hex').slice(0, 8)
@@ -296,14 +365,21 @@ export function createProjectCatalog({ cfg, recent, registry, t = createTranslat
   /**
    * Every known project, current first, then most recently active.
    *
+   * The totals and the attention preview are taken over *all* the rows, before
+   * the display bound is applied. Summing the rows returned instead made the
+   * overview contradict itself past `ui.maxProjects`: "60 projects, 1 over
+   * limit" beside a "needs attention" list that could not contain the one.
+   *
    * @param {object} input
    * @param {string} input.home - WorkBuddy home.
    * @param {string} input.dataFolderName - per-workspace memory folder name.
    * @param {string|null} [input.current] - the live session cwd.
    * @param {number} [input.limit] - display bound.
-   * @returns {{ rows: object[], truncated: boolean, total: number }}
+   * @param {number|'all'} [input.attention] - how many flagged projects the
+   *   preview carries; `'all'` for the whole list.
+   * @returns {{ rows: object[], truncated: boolean, total: number, totals: object, attention: object[], attentionTotal: number, attentionMore: Record<string, number> }}
    */
-  function list({ home, dataFolderName, current = recent?.cwd ?? null, limit = cfg.ui.maxProjects }) {
+  function list({ home, dataFolderName, current = recent?.cwd ?? null, limit = cfg.ui.maxProjects, attention }) {
     const rows = [...seeds().values()].map((seed) => describe(seed, { home, dataFolderName, current }))
     rows.sort((a, b) => {
       if (a.current !== b.current) return a.current ? -1 : 1
@@ -312,7 +388,7 @@ export function createProjectCatalog({ cfg, recent, registry, t = createTranslat
       return a.name.localeCompare(b.name)
     })
     const bound = Math.max(1, Number(limit) || cfg.ui.maxProjects)
-    return { rows: rows.slice(0, bound), truncated: rows.length > bound, total: rows.length }
+    return { rows: rows.slice(0, bound), truncated: rows.length > bound, total: rows.length, ...overviewOf(rows, attention) }
   }
 
   /**
