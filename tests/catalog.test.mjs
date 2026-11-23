@@ -1,0 +1,208 @@
+/** The project catalog: how it reads, what it caches, and what it reports. */
+
+import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test from 'node:test'
+
+import { normalizeConfig } from '../src/config.js'
+import { readTextSafe } from '../src/fsx.js'
+import { createProjectCatalog } from '../src/host/catalog.js'
+
+const LAYERED = { inject: { mode: 'layered' } }
+const OVER_SHARE = `# M\n\n## 常驻记忆\n${Array.from({ length: 6 }, (_, index) => `- 核心条目 ${index} ${'重要'.repeat(140)}`).join('\n')}\n`
+
+/** A topic section long enough to bring the whole file to `total` UTF-16 units. */
+const padded = (head, total) => head + '- 资料条目，占位。\n'.repeat(Math.ceil((total - head.length) / 11))
+
+/** A home with projects, and a catalog over it whose file reads are counted. */
+function workspace(config = LAYERED) {
+  const root = mkdtempSync(join(tmpdir(), 'wbm-catalog-'))
+  const home = join(root, 'home')
+  mkdirSync(join(home, 'memory'), { recursive: true })
+  const seen = new Map()
+  let clock = 1
+  const add = (name, memory, daily = []) => {
+    const cwd = join(root, name)
+    const dir = join(cwd, '.workbuddy', 'memory')
+    mkdirSync(dir, { recursive: true })
+    if (memory !== undefined) writeFileSync(join(dir, 'MEMORY.md'), memory, 'utf8')
+    for (const date of daily) writeFileSync(join(dir, `${date}.md`), '- 一天\n', 'utf8')
+    clock += 1000
+    seen.set(cwd, clock)
+    return cwd
+  }
+  const cfg = normalizeConfig({ workbuddyHome: home, stateDir: join(root, 'state'), ...config })
+  const open = (overrides = {}) => {
+    const counts = { reads: 0, lists: 0 }
+    const catalog = createProjectCatalog({
+      cfg,
+      recent: { cwd: null, seen },
+      registry: () => [],
+      read: (path, options) => {
+        counts.reads += 1
+        return readTextSafe(path, options)
+      },
+      ...overrides,
+    })
+    const list = (options = {}) => {
+      counts.lists += 1
+      return catalog.list({ home, dataFolderName: '.workbuddy', ...options })
+    }
+    return { catalog, counts, list }
+  }
+  return { root, home, cfg, add, seen, open }
+}
+
+test('a cold catalog reads each memory file once; a warm one reads nothing', () => {
+  const ws = workspace()
+  const a = ws.add('a', '# A\n\n## 常驻记忆\n- a\n')
+  ws.add('b', '# B\n\n## 常驻记忆\n- b\n')
+  ws.add('c')
+  const { list, counts } = ws.open()
+
+  assert.equal(list().rows.length, 3)
+  assert.equal(counts.reads, 2, 'one read per memory file that exists')
+
+  list()
+  list()
+  assert.equal(counts.reads, 2, 'an unchanged file is not read again')
+
+  writeFileSync(join(a, '.workbuddy', 'memory', 'MEMORY.md'), '# A\n\n## 常驻记忆\n- a, changed\n', 'utf8')
+  const [row] = list().rows
+  assert.equal(counts.reads, 3, 'a changed file is read exactly once more')
+  assert.equal(row.entries, 1)
+})
+
+test('the state follows the config on every call, without another read', () => {
+  const ws = workspace()
+  ws.add('a', padded('# M\n\n## 常驻记忆\n- core\n\n## 资料\n', 12000).slice(0, 12000))
+  const { list, counts } = ws.open()
+
+  assert.equal(list().rows[0].injection.status, 'complete')
+  assert.equal(counts.reads, 1)
+
+  // A volatile update deep-assigns into the one `cfg` object every closure holds.
+  ws.cfg.inject.limits.project = 0
+  assert.equal(list().rows[0].injection.status, 'disabled')
+
+  ws.cfg.inject.limits.project = 10000
+  ws.cfg.inject.project = false
+  assert.equal(list().rows[0].injection.status, 'disabled')
+
+  ws.cfg.inject.project = true
+  ws.cfg.inject.mode = 'full'
+  const whole = list().rows[0].injection
+  assert.equal(whole.status, 'truncated', 'whole-file injection cuts a 12,000-unit file at 10,000')
+
+  ws.cfg.inject.mode = 'layered'
+  ws.cfg.inject.coreBudget = 4000
+  assert.equal(list().rows[0].injection.status, 'complete')
+  assert.equal(counts.reads, 1, 'no configuration change touched the disk')
+})
+
+test('a core past its share is reported from the renderer, with the count it dropped', () => {
+  const ws = workspace()
+  ws.add('a', OVER_SHARE)
+  const { injection, overLimit, status } = ws.open().list().rows[0]
+
+  assert.equal(injection.status, 'core-over-budget')
+  assert.equal(injection.overLimit, true)
+  assert.equal(injection.dropped > 0, true)
+  assert.equal(injection.mode, 'layered')
+  assert.equal(injection.fallback, null)
+  assert.equal(injection.budget, 1400)
+  assert.equal(injection.need > injection.budget, true)
+  // `overLimit` and `status` stay as the projections older callers read.
+  assert.equal(overLimit, true)
+  assert.equal(status, 'over-limit')
+})
+
+test('a file past the read cap is unmeasurable, and no length is invented for it', () => {
+  const ws = workspace()
+  ws.add('a', `${'- 很长\n'.repeat(260000)}\n## 常驻记忆\n- core\n`)
+  const row = ws.open().list().rows[0]
+
+  assert.ok(row.bytes > 2 * 1024 * 1024, `fixture is ${row.bytes} bytes`)
+  assert.equal(row.hasMemory, true, 'the file exists')
+  assert.equal(row.injection.status, 'unmeasurable')
+  assert.equal(row.injection.reason, 'too_large')
+  assert.equal(row.injection.overLimit, false, 'an unmeasured file is not counted')
+  assert.equal(row.chars, null)
+  assert.equal(row.entries, null)
+  assert.equal(row.overLimit, false)
+  assert.equal(row.status, 'unreadable')
+})
+
+test('a large file inside the cap is judged by everything in it', () => {
+  // The catalog used to parse only the first 256 KiB, so a core heading that
+  // came later was never seen (the file read as "no core") and a second core
+  // heading past the cap was never noticed (the file read as split).
+  const filler = '- 资料条目，占位。\n'.repeat(40000)
+  const ws = workspace()
+  ws.add('late', `## 资料\n${filler}\n## 常驻记忆\n- core\n`)
+  ws.add('twice', `## 常驻记忆\n- a\n\n## 资料\n${filler}\n## 常驻记忆\n- b\n`)
+  const rows = ws.open().list().rows
+  const late = rows.find((row) => row.name === 'late').injection
+  const twice = rows.find((row) => row.name === 'twice').injection
+
+  assert.equal(late.status, 'complete')
+  assert.equal(late.mode, 'layered')
+  assert.equal(late.fallback, null, 'the core heading past 256 KiB is found')
+
+  assert.equal(twice.mode, 'whole')
+  assert.equal(twice.fallback, 'legacy')
+  assert.equal(twice.reason, 'ambiguous_core', 'the second core past 256 KiB is found')
+})
+
+test('entries include the bullets written above the first heading', () => {
+  const ws = workspace()
+  ws.add('a', '- 顶部一条\n\n## 小节\n- 小节一条\n')
+  const row = ws.open().list().rows[0]
+  assert.equal(row.entries, 2, 'the detail view counts both; so must the catalog')
+})
+
+test('no entry text leaves the catalog', () => {
+  // `/state` is polled every few seconds: a row may carry counts, never content.
+  const ws = workspace()
+  const secret = 'SUPER-SECRET-ENTRY-TEXT'
+  ws.add('a', `# M\n\n## 常驻记忆\n- ${secret}\n\n## 主题\n- 也提到 ${secret}\n`)
+  const serialized = JSON.stringify(ws.open().list())
+  assert.equal(serialized.includes(secret), false, 'entry text appears in the catalog output')
+})
+
+test('a missing, blank, and unreadable file are three different states', () => {
+  const ws = workspace()
+  ws.add('none')
+  ws.add('blank', '  \n\n')
+  ws.add('legacy', '## 偏好\n- 一条\n')
+  const rows = ws.open().list().rows
+  const byName = (name) => rows.find((row) => row.name === name)
+
+  assert.equal(byName('none').injection.status, 'missing')
+  assert.equal(byName('none').hasMemory, false)
+  assert.equal(byName('blank').injection.status, 'empty')
+  assert.equal(byName('blank').hasMemory, true, 'created, even though blank')
+  assert.equal(byName('legacy').injection.fallback, 'legacy')
+  assert.equal(byName('legacy').injection.status, 'complete')
+  assert.equal(byName('legacy').injection.mode, 'whole')
+
+  const { list } = ws.open({
+    read: () => ({ ok: false, text: '', bytes: 0, mtimeMs: 0, truncated: false, error: 'EACCES' }),
+  })
+  const denied = list().rows.find((row) => row.name === 'legacy')
+  assert.equal(denied.injection.status, 'unmeasurable')
+  assert.equal(denied.injection.reason, 'unreadable')
+  assert.equal(denied.chars, null)
+})
+
+test('a directory where MEMORY.md should be is not a file', () => {
+  const ws = workspace()
+  const cwd = ws.add('dir')
+  mkdirSync(join(cwd, '.workbuddy', 'memory', 'MEMORY.md'), { recursive: true })
+  const row = ws.open().list().rows[0]
+  assert.equal(row.injection.status, 'unmeasurable')
+  assert.equal(row.injection.reason, 'not_a_file')
+  assert.deepEqual(readdirSync(join(cwd, '.workbuddy', 'memory')), ['MEMORY.md'], 'nothing was written')
+})

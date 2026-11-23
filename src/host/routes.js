@@ -291,7 +291,6 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
   const catalogOptions = (probe) => ({
     home: probe.home.path,
     dataFolderName: probe.dataFolderName,
-    limits: cfg.inject.limits,
     current: recent?.cwd ?? null,
   })
 

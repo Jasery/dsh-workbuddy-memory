@@ -15,22 +15,38 @@
  * cross permissions and symlinks for no gain when the host already owns the
  * authoritative list.
  *
- * Stats are cached per file identity (`mtimeMs` + `size`), so a panel polling
- * every few seconds stats files instead of re-reading them. Only counts leave
- * this module; entry text stays behind `/content`.
+ * A row's `injection` is the judgment the prompt makes about the same file
+ * (`measureSource`), so the panel calls out exactly the files the prompt cuts
+ * and no others. What is cached per file identity (`mtimeMs` + `ctimeMs` +
+ * `size`) is the *parse* — everything that does not depend on configuration.
+ * The judgment is re-run from that parse on every request, so a settings
+ * change shows on the next poll without touching the disk. Content never
+ * leaves this module: a row carries the numbers, never the text.
+ *
+ * A stat-based identity has one blind spot, inherent to the filesystem: two
+ * same-size writes inside one clock tick carry the same timestamps. The
+ * plugin's own writes never rely on it (`invalidate` runs after each commit);
+ * an external edit seconds apart is always seen.
  */
 
 import { readdirSync, statSync } from 'node:fs'
 import { basename, join, resolve as resolvePath } from 'node:path'
 import { createHash } from 'node:crypto'
 import { memoryLayout } from '../paths.js'
-import { parseSections } from '../markdown.js'
+import { parseSections, topSection } from '../markdown.js'
 import { readTextSafe } from '../fsx.js'
+import { completeSnapshot, MAX_FILE_BYTES } from '../cache.js'
+import { measureSource } from '../render.js'
+import { analyzeMemory } from '../layers.js'
+import { createTranslator, resolveLanguage } from '../locale.js'
 import { contentRevision } from '../write/fslock.js'
 import { ageInDays } from '../env.js'
 
-/** A memory file larger than this is described by its size alone. */
-const MAX_PARSE_BYTES = 262144
+/** Parse results held for re-judging, bounded so a long session cannot grow them without end. */
+const MAX_CACHED_BYTES = 8 * 1024 * 1024
+const MAX_CACHED_FILES = 512
+
+const NO_FILE = Object.freeze({ exists: false, read: 'missing' })
 
 /** Stable, non-reversible handle for a workspace path. */
 export function projectKey(path) {
@@ -51,14 +67,27 @@ function pathIdentity(path) {
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized
 }
 
-/** Count bullets inside level-2+ sections, the same rows the detail view shows. */
+/**
+ * Count the rows the detail view shows: one per bullet line, including the
+ * ones written above the first `##`.
+ *
+ * The ranges are walked exactly as `/content` walks them — every level-2+
+ * section, then the region above the first one — so the overview's "N 条"
+ * and the detail page's rows cannot disagree. Counting only `parseSections`
+ * used to drop the top bullets: a file whose entries all sat above the first
+ * heading read as "0 entries" in the overview while the detail page listed
+ * them all.
+ */
 function countDocumentEntries(text) {
   const lines = text.split(/\r?\n/)
+  const bullet = (index) => Boolean(/^[ \t]*[-*][ \t]+\S/.test(lines[index] ?? ''))
   let count = 0
   for (const section of parseSections(text)) {
-    for (let index = section.line + 1; index <= section.endLine; index += 1) {
-      if (/^[ \t]*[-*][ \t]+\S/.test(lines[index] ?? '')) count += 1
-    }
+    for (let index = section.line + 1; index <= section.endLine; index += 1) if (bullet(index)) count += 1
+  }
+  const top = topSection(text)
+  if (top) {
+    for (let index = top.line + 1; index <= top.endLine; index += 1) if (bullet(index)) count += 1
   }
   return count
 }
@@ -88,15 +117,22 @@ function listDaily(dir) {
  * Create the catalog.
  *
  * @param {object} deps
- * @param {object} deps.cfg - normalized config.
+ * @param {object} deps.cfg - normalized config. Read on every call, never
+ *   copied: the host deep-updates this one object in place, and a judgment
+ *   made against a stale copy is the bug this module exists to remove.
  * @param {{ seen?: Map<string, number>, cwd?: string|null }} deps.recent
  * @param {() => Array<{ path?: string, title?: string, updatedAt?: string }>} [deps.registry]
  *   Lazy workspace registry reader; called per request so a late service
  *   activation is picked up without a reload.
+ * @param {(key: string, vars?: object) => string} [deps.t] - the host translator,
+ *   the same one the prompt renders its headings in.
+ * @param {(path: string, options: object) => object} [deps.read] - bounded file
+ *   reader; `readTextSafe` unless a test wants to count the reads.
  */
-export function createProjectCatalog({ cfg, recent, registry }) {
-  /** path identity → { stamp, memory, daily } */
+export function createProjectCatalog({ cfg, recent, registry, t = createTranslator(resolveLanguage(cfg.locale)), read = readTextSafe }) {
+  /** path → { stamp, held, meta }, least recently used first. */
   const stats = new Map()
+  let heldBytes = 0
 
   function registryRows() {
     try {
@@ -143,42 +179,78 @@ export function createProjectCatalog({ cfg, recent, registry }) {
     return rows
   }
 
-  /** Count entries without exposing the text. Re-parsed only when the file changes. */
-  function memoryStats(path) {
-    const stat = statSafe(path)
-    if (!stat || !stat.isFile()) {
-      return { exists: false, bytes: 0, chars: 0, entries: 0, revision: null, mtime: null, unreadable: false }
+  /** Keep one parse, evicting the least recently used when the bounds are reached. */
+  function remember(path, entry) {
+    const old = stats.get(path)
+    if (old) {
+      heldBytes -= old.held
+      stats.delete(path)
     }
-    const stamp = `${stat.mtimeMs}:${stat.size}`
-    const cached = stats.get(path)
-    if (cached && cached.stamp === stamp) return cached.memory
-
-    const file = readTextSafe(path, { maxBytes: MAX_PARSE_BYTES })
-    const memory = file.ok
-      ? {
-          exists: true,
-          bytes: file.bytes,
-          chars: file.text.length,
-          entries: countDocumentEntries(file.text),
-          revision: file.truncated ? null : contentRevision(file.text),
-          mtime: stat.mtimeMs,
-          unreadable: false,
-        }
-      : { exists: true, bytes: stat.size, chars: 0, entries: 0, revision: null, mtime: stat.mtimeMs, unreadable: true }
-    stats.set(path, { ...(cached ?? {}), stamp, memory })
-    return memory
+    stats.set(path, entry)
+    heldBytes += entry.held
+    while (heldBytes > MAX_CACHED_BYTES || stats.size > MAX_CACHED_FILES) {
+      const [key, evicted] = stats.entries().next().value
+      heldBytes -= evicted.held
+      stats.delete(key)
+    }
   }
 
-  function describe(seed, { home, dataFolderName, limits, current }) {
+  /**
+   * Everything about one memory file that does not depend on configuration.
+   *
+   * Read whole and bounded, exactly as the prompt reads it: a file past the
+   * cap is *not* described from its prefix — a prefix can hide the core
+   * heading, or a second one — but reported as unmeasured, with no length.
+   *
+   * `file` is for `measureSource` and never leaves this module: it carries
+   * the text and its parse.
+   */
+  function memoryStats(path) {
+    const stat = statSafe(path)
+    if (!stat) return { exists: false, bytes: 0, chars: null, entries: null, revision: null, mtime: null, file: NO_FILE }
+    const mtime = stat.mtimeMs
+    if (!stat.isFile()) return { exists: true, bytes: stat.size, chars: null, entries: null, revision: null, mtime, file: { exists: true, read: 'not_a_file' } }
+
+    const stamp = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`
+    const cached = stats.get(path)
+    if (cached && cached.stamp === stamp) {
+      // Re-inserted so it is the most recently used.
+      stats.delete(path)
+      stats.set(path, cached)
+      return cached.meta
+    }
+
+    // A file the stat already puts past the cap is not read at all.
+    const raw = stat.size > MAX_FILE_BYTES ? { ok: true, truncated: true, text: '', bytes: stat.size } : read(path, { maxBytes: MAX_FILE_BYTES })
+    const snapshot = completeSnapshot(raw)
+    const meta = snapshot.ok
+      ? {
+          exists: true,
+          bytes: snapshot.bytes,
+          chars: snapshot.text.length,
+          entries: countDocumentEntries(snapshot.text),
+          revision: contentRevision(snapshot.text),
+          mtime,
+          file: { exists: true, read: 'ok', text: snapshot.text, parsed: analyzeMemory(snapshot.text) },
+        }
+      : { exists: true, bytes: snapshot.bytes || stat.size, chars: null, entries: null, revision: null, mtime, file: { exists: true, read: snapshot.reason } }
+    remember(path, { stamp, held: snapshot.ok ? snapshot.bytes : 0, meta })
+    return meta
+  }
+
+  function describe(seed, { home, dataFolderName, current }) {
     const layout = memoryLayout({ home, cwd: seed.path, dataFolderName })
     const memory = memoryStats(layout.projectMemory)
     const daily = listDaily(layout.projectMemoryDir)
     const missing = !statSafe(seed.path)
-    const overLimit = Boolean(limits?.project) && memory.chars > limits.project
+    const injection = measureSource({ cfg, t, key: 'project', file: memory.file })
+    // `overLimit` and `status` remain as projections of `injection` for callers
+    // written against the first panel; the panel itself reads `injection`.
+    const overLimit = injection.overLimit
     const stale = daily.oldestAgeDays !== null && daily.oldestAgeDays > 30
     const status = missing
       ? 'missing'
-      : memory.unreadable
+      : injection.status === 'unmeasurable'
         ? 'unreadable'
         : overLimit
           ? 'over-limit'
@@ -207,11 +279,14 @@ export function createProjectCatalog({ cfg, recent, registry }) {
       latestDailyBytes: daily.latestBytes,
       oldestDaily: daily.oldestDate,
       oldestDailyAgeDays: daily.oldestAgeDays,
+      // `null` when the file could not be read whole: a length nobody measured
+      // is not a length of zero.
       entries: memory.entries,
       bytes: memory.bytes,
       chars: memory.chars,
       revision: memory.revision,
       mtime: memory.mtime,
+      injection,
       overLimit,
       stale,
       status,
@@ -224,13 +299,12 @@ export function createProjectCatalog({ cfg, recent, registry }) {
    * @param {object} input
    * @param {string} input.home - WorkBuddy home.
    * @param {string} input.dataFolderName - per-workspace memory folder name.
-   * @param {object} [input.limits] - injection limits, used for `overLimit`.
    * @param {string|null} [input.current] - the live session cwd.
    * @param {number} [input.limit] - display bound.
    * @returns {{ rows: object[], truncated: boolean, total: number }}
    */
-  function list({ home, dataFolderName, limits, current = recent?.cwd ?? null, limit = cfg.ui.maxProjects }) {
-    const rows = [...seeds().values()].map((seed) => describe(seed, { home, dataFolderName, limits, current }))
+  function list({ home, dataFolderName, current = recent?.cwd ?? null, limit = cfg.ui.maxProjects }) {
+    const rows = [...seeds().values()].map((seed) => describe(seed, { home, dataFolderName, current }))
     rows.sort((a, b) => {
       if (a.current !== b.current) return a.current ? -1 : 1
       const byActive = (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0)
@@ -246,17 +320,14 @@ export function createProjectCatalog({ cfg, recent, registry }) {
    *
    * The key is only honoured for a path this catalog listed: the set is finite
    * and lived, so a stale or hostile key cannot address an arbitrary directory.
+   * It resolves against every known project, not only the rows `list` returned:
+   * a project past the display bound is still one the panel may open.
    */
   function resolveKey(key, options) {
     if (!key) return null
     for (const seed of seeds().values()) {
       if (projectKey(seed.path) !== key) continue
-      return describe(seed, {
-        home: options.home,
-        dataFolderName: options.dataFolderName,
-        limits: options.limits,
-        current: options.current,
-      })
+      return describe(seed, { home: options.home, dataFolderName: options.dataFolderName, current: options.current })
     }
     return null
   }
@@ -264,6 +335,7 @@ export function createProjectCatalog({ cfg, recent, registry }) {
   /** Drop cached stats after a write so the next poll sees the new revision. */
   function invalidate() {
     stats.clear()
+    heldBytes = 0
   }
 
   return { list, resolve: resolveKey, invalidate, keyFor: projectKey, pathIdentity }

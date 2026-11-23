@@ -132,11 +132,13 @@ export function apply(ctx, config) {
   // The panel's project list prefers DSH's durable workspace registry. It is
   // read without declaring a dependency: the service may activate after this
   // plugin, and the catalog degrades to `recent.seen` when a profile does not
-  // compose it.
+  // compose it. The catalog judges each file with the same translator the
+  // prompt renders in: a heading's length is part of what spends the budget.
   const catalog = createProjectCatalog({
     cfg,
     recent,
     registry: () => ctx.get?.('workspaceRegistry')?.list?.() ?? [],
+    t,
   })
 
   let stateDir = ''

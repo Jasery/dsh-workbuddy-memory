@@ -1,4 +1,5 @@
 import { readTextSafe, truncateChars, truncateUtf16 } from './fsx.js'
+import { completeSnapshot, MAX_FILE_BYTES } from './cache.js'
 import { analyzeMemory } from './layers.js'
 
 export const SECTION_ORDER = { project: 200, rules: 210, user: 220, profile: 230 }
@@ -76,9 +77,9 @@ export function renderSections({ cfg, probe, t, readFile }) {
   const states = {}
   /** Sources that carry more than their layered share; reported in the directory. */
   const overShare = []
-  const read = readFile ?? ((path, maxBytes = 2 * 1024 * 1024) => {
-    const file = readTextSafe(path, { maxBytes })
-    return file.ok && !file.truncated ? file.text : ''
+  const read = readFile ?? ((path) => {
+    const snapshot = completeSnapshot(readTextSafe(path, { maxBytes: MAX_FILE_BYTES }))
+    return snapshot.ok ? snapshot.text : ''
   })
   const sanitize = cfg.inject.sanitizePaths ? (text) => redact(text, probe.layout.home) : (text) => text
   const layered = cfg.inject.mode === 'layered'
@@ -507,8 +508,8 @@ export function distillHint({ cfg, probe, t }) {
 
 function fileCharCount(path) {
   if (!path) return 0
-  const file = readTextSafe(path, { maxBytes: 2 * 1024 * 1024 })
-  return file.ok ? file.text.length : 0
+  const file = readTextSafe(path, { maxBytes: MAX_FILE_BYTES })
+  return completeSnapshot(file).ok ? file.text.length : 0
 }
 
 export function redact(text, home) {
