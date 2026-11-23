@@ -108,10 +108,16 @@ const reasonsOf = (row) => {
 
 /** Aggregate counters for the global overview, over exactly the rows given. */
 export function totalsOf(rows) {
+  // A file nobody read whole has no entry count (`null`). Summing it as 0
+  // made the total look complete while quietly leaving such files out; the
+  // count of them travels beside the sum so the panel can say so.
+  const uncounted = rows.filter((row) => row.hasMemory && row.entries === null || row.entries === undefined && row.hasMemory).length
   return {
     projects: rows.length,
     withMemory: rows.filter((row) => row.hasMemory).length,
-    entries: rows.reduce((sum, row) => sum + (row.entries ?? 0), 0),
+    entries: rows.reduce((sum, row) => sum + (Number(row.entries) || 0), 0),
+    // Memory files whose entries are not in `entries` because nobody measured them.
+    entriesUncounted: uncounted,
     dailyFiles: rows.reduce((sum, row) => sum + (row.daily ?? 0), 0),
     // One project, one count, however many entries it lost.
     overLimit: rows.filter((row) => row.overLimit).length,

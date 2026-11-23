@@ -154,7 +154,7 @@ function statSafe(path) {
 function describe(path, limit = MAX_TEXT_CHARS) {
   if (!path || !existsSync(path)) return null
   const file = readTextSafe(path, { maxBytes: MAX_BODY_BYTES })
-  if (!file.ok) return { path, exists: true, readable: false, error: file.error, bytes: 0, chars: null, entries: 0, sections: [] }
+  if (!file.ok) return { path, exists: true, readable: false, error: file.error, bytes: 0, chars: null, entries: null, sections: [] }
 
   // Only a prefix reached memory: the file is past the read cap. `file.text`
   // ends wherever the cap fell, possibly in the middle of a line.
@@ -447,7 +447,7 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
           memoryExists: probe.project.memoryExists,
           bytes: probe.project.memoryBytes,
           writable: probe.project.writable,
-          entries: project?.entries ?? 0,
+          entries: project?.entries ?? null,
           // `null` when only a prefix was read: an unmeasured length is not 0.
           chars: project?.chars ?? null,
           revision: project?.revision ?? null,
@@ -467,7 +467,7 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
           memoryExists: probe.user.memoryExists,
           bytes: probe.user.memoryBytes,
           writable: probe.user.writable,
-          entries: user?.entries ?? 0,
+          entries: user?.entries ?? null,
           chars: user?.chars ?? null,
           revision: user?.revision ?? null,
           mtime: user?.mtime ?? null,

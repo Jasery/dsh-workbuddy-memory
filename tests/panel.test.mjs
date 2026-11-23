@@ -2107,3 +2107,38 @@ test('after "show all", a poll does not shrink the attention list back to the pr
     restore()
   }
 })
+
+test('an unmeasured file never shows "0 entries" anywhere', async () => {
+  // A MEMORY.md past the read cap exists but nobody has counted its entries.
+  // The rule "a number nobody measured is not zero" was applied to the
+  // length only; the entry count still came through as 0 — "MEMORY 0 条 ·
+  // 无法测量" in the header, "big 0 条" in the rail and in recent activity.
+  const state = stateFor()
+  state.projects[0] = { ...state.projects[0], entries: null, chars: null, bytes: 3 * 1024 * 1024, injection: judged('unmeasurable', { reason: 'too_large' }), status: 'unreadable' }
+  state.stores.project = { ...state.stores.project, entries: null, chars: null, injection: state.projects[0].injection }
+  state.totals = { ...state.totals, entries: null, unmeasurable: 1 }
+  state.attention = [{ key: 'proj-a', name: 'repo', title: 'repo', hasMemory: true, latestDaily: '2026-11-09', oldestDailyAgeDays: 1, injection: state.projects[0].injection, reasons: ['unmeasurable'] }]
+  state.attentionTotal = 1
+  state.attentionMore = { 'over-limit': 0, stale: 0, missing: 0, unmeasurable: 0 }
+  const restore = installTimers()
+  try {
+    // Project tab: the header of the project itself.
+    installFetch({ state })
+    let tree = await runtime.settle(MemoryProjectPanel, PROJECT)
+    let body = text(expand(tree))
+    assert.doesNotMatch(body, /0 条/, 'an unmeasured file has no entry count, not a count of zero')
+    assert.match(body, /无法测量/, 'and says it cannot be measured')
+    assert.doesNotMatch(body, /条目0/, 'the stat card does not show 0 either')
+
+    // Overview: the rail row, the attention row and the summary line.
+    installFetch({ state })
+    runtime.reset()
+    tree = await runtime.settle(MemoryOverviewPanel, OVERVIEW)
+    body = text(expand(tree))
+    assert.doesNotMatch(body, /repo\s*0 条/, 'the rail row')
+    assert.doesNotMatch(body, /已创建记忆文件 · 0 条/, 'the summary line does not claim zero entries')
+    assert.match(body, /MEMORY\.md 无法按完整内容判断/, 'the attention row names the reason')
+  } finally {
+    restore()
+  }
+})

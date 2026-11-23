@@ -455,7 +455,8 @@ window.__ModuleLoader__.load({
       'stats.summaryLine': '{projects} 个项目 · {created} 个已创建记忆文件 · {entries} 条',
       'stats.summaryDetail': '「已创建」只表示 MEMORY.md 存在，包括空白文件；条目按全部项目统计。',
       'stats.summaryGone': ' 其中 {n} 个的目录已不存在。',
-      'count.memoryLineUnits': 'MEMORY {n} 条{units}',
+      'stats.summaryUncounted': '（{n} 个文件未计入）',
+      'stats.uncounted': '{n} 个文件未计入',
       'count.memoryLineNoFile': 'MEMORY 未创建',
       'count.entriesUnits': '{n} 条 · {units}',
       'count.entriesShownUnits': '已显示 {n} 条 · {units}',
@@ -847,7 +848,8 @@ window.__ModuleLoader__.load({
       'stats.summaryLine': "{projects} projects · {created} with a memory file · {entries} entries",
       'stats.summaryDetail': "Created means MEMORY.md exists, blank files included; entries are counted over every project.",
       'stats.summaryGone': " {n} of them no longer exist on disk.",
-      'count.memoryLineUnits': "MEMORY {n} entries{units}",
+      'stats.summaryUncounted': " ({n} files not counted)",
+      'stats.uncounted': "{n} files not counted",
       'count.memoryLineNoFile': "MEMORY not created",
       'count.entriesUnits': "{n} entries · {units}",
       'count.entriesShownUnits': "{n} entries shown · {units}",
@@ -1669,6 +1671,23 @@ window.__ModuleLoader__.load({
       const n = Number(units)
       if (!Number.isFinite(n) || n < 0) return ''
       return t('inject.units', { n: n >= 10000 ? `${Math.round(n / 100) / 10}k` : n })
+    }
+
+    /**
+     * An entry count a file header or row may show.
+     *
+     * `null` means nobody counted: the file exists but could not be read
+     * whole. Rendering that as `0` put "MEMORY 0 条" beside "cannot measure"
+     * — a count of zero is a claim, and an unmeasured file supports none. The
+     * state chip beside it says why; this returns nothing to print.
+     *
+     * @param {object|null|undefined} row - anything with `entries`.
+     * @returns {string} "N 条", or '' when the count is not known.
+     */
+    function entryCount(row) {
+      const n = row?.entries
+      if (n === null || n === undefined) return ''
+      return t('count.entries', { n: Number(n) || 0 })
     }
 
     /**
@@ -3151,7 +3170,8 @@ window.__ModuleLoader__.load({
               h(
                 'span',
                 { className: `wbm-meta${row.overLimit ? ' wbm-meta-bad' : ''}` },
-                row.hasMemory ? t('count.entries', { n: row.entries ?? 0 }) : row.daily ? t('count.days', { n: row.daily }) : tone.label,
+                // An unmeasured file falls through to its state, never to "0 条".
+                row.hasMemory && entryCount(row) ? entryCount(row) : row.daily ? t('count.days', { n: row.daily }) : row.hasMemory ? injectionState(row.injection).short : tone.label,
               ),
             ),
             isOpen
@@ -3163,7 +3183,7 @@ window.__ModuleLoader__.load({
                     'project-memory',
                     undefined,
                     t('target.projectMemory'),
-                    row.hasMemory ? t('count.entries', { n: row.entries ?? 0 }) : t('file.notCreated'),
+                    row.hasMemory ? entryCount(row) || injectionState(row.injection).short : t('file.notCreated'),
                     selected?.target === 'project-memory' && selected?.key === row.key,
                   ),
                   dailyRows(row.key, detail),
@@ -3185,7 +3205,7 @@ window.__ModuleLoader__.load({
             'project-memory',
             undefined,
             t('target.projectMemory'),
-            project.hasMemory ? t('count.entries', { n: project.entries ?? 0 }) : t('file.notCreated'),
+            project.hasMemory ? entryCount(project) || injectionState(project.injection).short : t('file.notCreated'),
             selected?.target === 'project-memory',
           ),
           dailyRows(project.key, projectDetail),
@@ -3205,7 +3225,7 @@ window.__ModuleLoader__.load({
                 'user-memory',
                 undefined,
                 t('target.userMemory'),
-                [t('count.entries', { n: user.entries ?? 0 }), humanUnits(user.chars)].filter(Boolean).join(' · '),
+                [entryCount(user), humanUnits(user.chars)].filter(Boolean).join(' · '),
                 selected?.target === 'user-memory',
               )
             : h('div', { className: 'wbm-note' }, t('state.noUserMemory')),
@@ -3268,9 +3288,10 @@ window.__ModuleLoader__.load({
                   h(
                     'button',
                     { key: row.key, type: 'button', className: 'wbm-project', onClick: () => selectProject(row) },
-                    h('span', { className: `wbm-dot ${row.hasMemory ? 'ok' : 'empty'}` }),
+                    // Not green: a file that exists is a fact, not a grade.
+                    h('span', { className: `wbm-dot ${row.hasMemory ? (row.overLimit ? 'bad' : '') : 'empty'}` }),
                     h('span', { className: 'wbm-name' }, row.title || row.name),
-                    h('span', { className: 'wbm-meta' }, row.hasMemory ? t('count.entries', { n: row.entries ?? 0 }) : t('rail.noMemory')),
+                    h('span', { className: 'wbm-meta' }, row.hasMemory ? entryCount(row) || injectionState(row.injection).short : t('rail.noMemory')),
                   ),
                 ),
               )
@@ -3338,9 +3359,15 @@ window.__ModuleLoader__.load({
             // exactly as in the project tab.
             project
               ? [
-                  project.hasMemory
-                    ? h('span', { key: 'e', className: 'wbm-chip' }, t('count.memoryLineUnits', { n: project.entries ?? 0, units: units ? ` · ${units}` : '' }))
-                    : h('span', { key: 'e', className: 'wbm-chip' }, t('count.memoryLineNoFile')),
+                  // Only what is known. A file nobody read whole has neither a
+                  // count nor a length, and "MEMORY 0 条" beside "cannot
+                  // measure" was a claim the file did not support; then the
+                  // state chip below is the whole story.
+                  !project.hasMemory
+                    ? h('span', { key: 'e', className: 'wbm-chip' }, t('count.memoryLineNoFile'))
+                    : entryCount(project) || units
+                      ? h('span', { key: 'e', className: 'wbm-chip' }, [project.entries === null || project.entries === undefined ? '' : t('count.entries', { n: project.entries }), units].filter(Boolean).join(' · '))
+                      : null,
                   injectionChip({ injection: project.injection, short: Boolean(props?.tab) }),
                   fill && fill.percent !== null ? h('span', { key: 'u', className: `wbm-chip ${fill.level === 'warn' ? 'warn' : ''}` }, t('inject.usedPercent', { percent: fill.percent })) : null,
                 ]
@@ -3351,7 +3378,15 @@ window.__ModuleLoader__.load({
                   // and none on an empty machine either — the body says "no
                   // projects yet" once, in words.
                   state && totals.projects > 0
-                    ? h('span', { key: 'n', className: 'wbm-chip wbm-chip-quiet', title: summaryDetail() }, t('stats.summaryLine', { projects: totals.projects, created: totals.withMemory, entries: totals.entries }))
+                    ? h(
+                        'span',
+                        { key: 'n', className: 'wbm-chip wbm-chip-quiet', title: summaryDetail() },
+                        // The entry total leaves out any file nobody read
+                        // whole; when it does, it says so instead of passing
+                        // for the whole machine.
+                        t('stats.summaryLine', { projects: totals.projects, created: totals.withMemory, entries: totals.entries }) +
+                          (totals.entriesUncounted > 0 ? t('stats.summaryUncounted', { n: totals.entriesUncounted }) : ''),
+                      )
                     : null,
                   totals.overLimit > 0 ? h('span', { key: 'o', className: 'wbm-chip warn', title: t('count.chipOverLimitDetail') }, t('count.chipOverLimit', { n: totals.overLimit })) : null,
                   totals.stale > 0 ? h('span', { key: 's', className: 'wbm-chip warn', title: t('count.chipPendingDetail', { days: state?.archiveAfterDays ?? 30 }) }, t('count.chipPending', { n: totals.stale })) : null,
@@ -3438,7 +3473,7 @@ window.__ModuleLoader__.load({
                 'div',
                 { className: 'wbm-list-row' },
                 h('span', { className: 'wbm-name' }, t('target.userMemory')),
-                h('span', { className: 'wbm-meta' }, user ? t('count.entries', { n: user.entries ?? 0 }) : t('state.noUserMemory')),
+                h('span', { className: 'wbm-meta' }, user ? entryCount(user) || injectionState({ status: 'unmeasurable' }).short : t('state.noUserMemory')),
                 user?.memoryExists ? h('button', { type: 'button', className: 'wbm-btn', onClick: () => openFile('user-memory', undefined, null) }, t('common.open')) : null,
               ),
             ),
@@ -3468,7 +3503,7 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'wbm-stats' },
             h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('stats.projects')), h('div', { className: 'v' }, totals.projects)),
-            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('stats.entries')), h('div', { className: 'v' }, totals.entries)),
+            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, totals.entriesUncounted > 0 ? `${t('stats.entries')} · ${t('stats.uncounted', { n: totals.entriesUncounted })}` : t('stats.entries')), h('div', { className: 'v' }, totals.entries)),
             h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('stats.dailyFiles')), h('div', { className: 'v' }, totals.dailyFiles)),
             h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, `${t('stats.pendingArchive')} · ${t('count.days', { n: archiveDays })}`), h('div', { className: 'v' }, totals.stale)),
           ),
@@ -3518,7 +3553,7 @@ window.__ModuleLoader__.load({
                     { className: 'wbm-list-row', key: row.key },
                     h('span', { className: `wbm-dot ${row.status === 'ok' ? 'ok' : 'empty'}` }),
                     h('span', { className: 'wbm-name' }, row.title || row.name),
-                    h('span', { className: 'wbm-meta' }, `${t('count.entries', { n: row.entries ?? 0 })} · ${humanUnits(row.chars) || humanBytes(row.bytes)} · ${relativeTime(row.lastActiveAt)}`),
+                    h('span', { className: 'wbm-meta' }, [entryCount(row), humanUnits(row.chars) || humanBytes(row.bytes), relativeTime(row.lastActiveAt)].filter(Boolean).join(' · ')),
                     h('button', { type: 'button', className: 'wbm-btn', onClick: () => selectProject(row) }, t('common.open')),
                   ),
                 ),
@@ -3536,7 +3571,7 @@ window.__ModuleLoader__.load({
               'div',
               { className: 'wbm-list-row' },
               h('span', { className: 'wbm-name' }, t('target.userMemory')),
-              h('span', { className: 'wbm-meta' }, user ? t('count.entries', { n: user.entries ?? 0 }) : t('file.unreadable')),
+              h('span', { className: 'wbm-meta' }, user ? entryCount(user) || injectionState({ status: 'unmeasurable' }).short : t('file.unreadable')),
               h('button', { type: 'button', className: 'wbm-btn', onClick: () => openFile('user-memory', undefined, null) }, t('common.open')),
             ),
             profile?.exists
