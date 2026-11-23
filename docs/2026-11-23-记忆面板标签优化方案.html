@@ -13,9 +13,9 @@
 <body>
 <div class="wrap">
 <header>
-<div class="meta">2026-11-23 · dsh-workbuddy-memory 0.2.6 · 标签审计 + 优化方案 · 未实施，待确认</div>
+<div class="meta">2026-11-23 · dsh-workbuddy-memory 0.2.6 · 评审修订稿 · 待实施</div>
 <h1>记忆面板顶部标签：审计与优化方案</h1>
-<div class="note warning"><strong>本稿只处理面板顶部与文件头部这排小标签的判定、单位与版面。</strong>不改记忆文件格式、分层解析、注入预算或写入链；不发布、不打 tag。P0 是修正口径，P1 是收口版面，P2 是细节。</div>
+<div class="note warning"><strong>范围为项目记忆的注入提示、总览告警和文件头部。</strong>同步使用同一注入判定的面板入口。P0 修正口径，P1 收口版面，P2 补细节。</div>
 <p>面板顶部那排 <code>.wbm-chip</code> 是记忆面板的“仪表盘”。本稿逐个核对它什么时候亮、亮什么颜色、数字从哪来，并把发现的问题整理成可评审、可验收的两阶段方案。</p>
 <button class="print-button" type="button" onclick="window.print()">打印 / 保存 PDF</button>
 </header>
@@ -30,7 +30,7 @@
 <p>它们本来只回答两个问题：<strong>有没有事？要不要现在处理？</strong>但 0.2.0 起默认分层注入，记忆文件不再整本塞进上下文，只塞“常驻记忆”这一节。文件很大，不代表注入很多；<strong>整份文件超过 10000 字，也不再等于“下一轮会被截断”</strong>。</p>
 <p>可标签的判据还停在分层之前：对已经分层的文件，仍然拿<strong>整份文件大小</strong>去比 10000，于是 12k 文件配 1k 核心也会亮红字；真正被截断的“核心超预算”，反而没有任何标签。这不是文案问题，是仪表盘指错了表。</p>
 <p>另外还有几处小毛病：<strong>KB 和“已用 %”用的不是同一个单位</strong>；项目超过 50 个时，只有“项目 N”统计了全部，其余四个只统计前 50 行；没有 MEMORY.md 的项目显示“0 条 / 已用 0%”，而左栏写的是“无记忆”；文件头把 KB 塞进了 <code>%</code> 的位置，显示成“18.2 KB%”。</p>
-<div class="note"><strong>三句话版本：</strong>先把“分层文件到底超没超”判对（P0）；再把中性计数从 chip 降成一行小字，只让告警占 chip（P1）；最后补 tooltip、读屏和边角状态（P2）。P0 可以单独发一个小版本，P1 需要先定版面。</div>
+<div class="note"><strong>先修告警，再收版面。</strong>让面板直接沿用注入端的判定，同时让「需要处理」能打开告警对应的项目。第二阶段把统计合成一行，窄栏保留醒目的告警，并提供键盘可访问的详细说明。</div>
 </section>
 
 <section id="background">
@@ -41,9 +41,8 @@
 <li><strong>项目页签</strong>回答“这个抽屉里的本子现在怎么样”。所以顶部是本子的条数、体积、注入占用、版本号。</li>
 <li><strong>文件头部</strong>回答“我正打开的这一页是什么”。所以是只读 / 追加、条数、版本号。</li>
 </ul>
-<p>这排标签像仪表盘上的指示灯：灯太多会麻木，灯说谎更糟。它们是在 <strong>2026-11-11</strong> 的面板重构里加的（提交 <code>b0308d8</code>），当时默认还是整份注入——文件多大，注入就多大，所以“整文件超过 10000 字”确实等于“会被截断”。</p>
-<p><strong>2026-11-16</strong> 默认改成按主题分层（提交 <code>65fd674</code>，随 0.2.0 在 11-17 发布）。注入的只剩 <code>## 常驻记忆</code> 这一节，其余小节只列名字、按需读取；配置项说明也写得很清楚：“分层模式下 <code>inject.limits.project</code> 只决定这一路源开不开”（<code>src/client.js:211</code>）。标签比分层早五天，判据却没有跟着改。</p>
-<p>更具体地说，分层模式下真正决定“会不会丢内容”的是<strong>核心预算</strong>：<code>inject.coreBudget</code> 默认 4000 码元，项目核心分到 35%，约 1400 码元；再扣掉块标题，核心块大约只有 1390 码元可用（标题和溢出提示也占这里）。核心放不下时，注入端会丢掉后面的条目，并写一条“另有 N 条核心条目超出预算，未注入”。这个状态在提示词里有，在面板顶部没有。</p>
+<p>这排指示灯加进面板时，默认会把整本记事本带进对话，文件大小自然是最容易看的指标。后来改成分层，平时只带常驻页，其余只带目录，需要时再翻。面板依然盯着整本记事本的大小，于是有些灯亮错了。</p>
+<p>常驻页能带多少，取决于留给它的空间。标题和提示也要占位置。如果后面的条目放不下，这次对话只能看到前面一部分，文件里的原文仍然可以打开查看。</p>
 </section>
 
 <section id="current">
@@ -69,7 +68,7 @@
 <tr><td><code>MEMORY N 条 · 大小</code></td><td>已解析到项目</td><td>灰</td><td><code>entries</code> + <code>bytes</code>；文件不存在也显示 0 条 · 0 B</td></tr>
 <tr><td><code>已用 X%</code></td><td>已解析到项目</td><td>&lt;80% 灰；80–99% 黄；≥100% 红</td><td><code>chars ÷ limits.project</code>，四舍五入</td></tr>
 <tr><td><code>超注入限额</code></td><td><code>overLimit</code> 为真</td><td>红</td><td>与全局「超限」同一判断</td></tr>
-<tr><td><code>rev …</code></td><td><code>revision</code> 非空</td><td>灰</td><td>内容 SHA-256 前 16 位；文件超过 262,144 字符或不可读时为 null</td></tr>
+<tr><td><code>rev …</code></td><td><code>revision</code> 非空</td><td>灰</td><td>内容 SHA-256 前 16 位。目录统计的读取上限为 256 KiB，超过上限或文件不可读时为 null</td></tr>
 </tbody>
 </table></div>
 
@@ -103,7 +102,7 @@
 <tr><td>4</td><td><span class="sev p0">P0</span></td><td>「项目 N」用全量，其余四个只统计前 50 行</td><td>项目多时五个数字彼此矛盾</td></tr>
 <tr><td>5</td><td><span class="sev p0">P0</span></td><td>没有 MEMORY.md 时仍显示「0 条 · 0 B / 已用 0%」</td><td>和左栏「无记忆」互相打架</td></tr>
 <tr><td>6</td><td><span class="sev p0">P0</span></td><td>文件头把字节串塞进 <code>{percent}%</code></td><td>渲染成「42 条 · 18.2 KB%」</td></tr>
-<tr><td>7</td><td><span class="sev p0">P0</span></td><td>“30 天”边界与归档动作差一天，且三处硬编码</td><td>整 30 天的文件能被归档，标签却不提示</td></tr>
+<tr><td>7</td><td><span class="sev p0">P0</span></td><td>“30 天”边界与归档动作差一天，且四处硬编码</td><td>整 30 天的文件能被归档，标签却不提示</td></tr>
 <tr><td>8</td><td><span class="sev p1">P1</span></td><td>「有记忆」用绿色，且空文件 / 不可读文件也算</td><td>绿色暗示健康，实际可能只是存在一个空壳</td></tr>
 <tr><td>9</td><td><span class="sev p1">P1</span></td><td>「条目」只数 H2 及以下，漏掉第一个 H2 之前的 bullet</td><td>与详情页 / 0.2.2 的 <code>(top)</code> 修复不一致</td></tr>
 <tr><td>10</td><td><span class="sev p1">P1</span></td><td><code>rev</code> 是 16 位十六进制，占顶部且没有解释</td><td>窄栏噪声；没人知道它是什么</td></tr>
@@ -136,7 +135,15 @@ states[key] = core.dropped &gt; 0 ? `layered:core-over-budget(${core.dropped})` 
 <p><code>catalog.list()</code> 先为全部项目算统计，再按 <code>ui.maxProjects</code>（默认 50）切片。但 <code>totalsOf()</code> 是对<strong>切片后的 rows</strong> 求和，只有 <code>projects</code> 被 <code>list.total</code> 覆盖（<code>src/host/routes.js:392</code>）。项目超过 50 个时，就会出现“项目 120 / 有记忆 20 / 条目 400 / 超限 1”，其中后四个只代表前 50 行。</p>
 
 <h3>P0-7：30 天边界</h3>
-<p>标签用 <code>oldestAgeDays &gt; 30</code>（严格大于），归档扫描用 <code>ageInDays(date) &lt; beforeDays</code> 才跳过（即 <code>&gt;= 30</code> 都算候选，<code>src/write/archive.js:84</code>）。整 30 天的文件已经能被归档，顶部却还不提示。30 这个数字还散落在 <code>catalog.js</code>、<code>client.js</code> 的 <code>beforeDays</code> 默认值、<code>store.js</code> 的入参兜底三处。</p>
+<p>标签用 <code>oldestAgeDays &gt; 30</code>（严格大于），归档扫描在 <code>ageInDays(date) &lt; beforeDays</code> 时跳过（<code>src/write/archive.js:84</code>）。整 30 天的有效日期笔记已进入默认归档预览，顶部却不提示。默认值分散在目录统计、面板对话框、<code>/action</code> 的 <code>prune</code> 分支和写入 store 四处。</p>
+
+<h3>评审补充的边界</h3>
+<ul>
+<li>英文项目包装占 20 UTF-16 码元。实测 9,998 码元正文配 10,000 码元限额，<code>full</code> 和分层模式下的 <code>legacy</code> 都发生正文截断。整份渲染先去掉首尾空白，再扣除包装并处理截断提示。限额太小时还可能省略整个块。</li>
+<li>实测完整核心块恰好需要 1,400 码元时，单条核心仍可能因预留溢出提示位置而未注入。渲染器的 <code>dropped</code> 记录最终未注入条数。</li>
+<li>目录统计最多读取 256 KiB，注入端最多读取 2 MiB 并拒绝截断快照。目录只解析前缀时，可能漏掉后面的核心标题或第二个同名核心。</li>
+<li>「需要处理」目前只读已显示的项目，最多列 6 项。只把顶部改成全量统计时，唯一超限项目排在第 51 位就会出现「超限 1」和「没有需要处理的项目」并存。项目列表的百分比、项目摘要和文件横幅也各有旧判定或旧文案。</li>
+</ul>
 
 <h3>P1-8 到 P1-14：语义与版面</h3>
 <ul>
@@ -155,157 +162,143 @@ states[key] = core.dropped &gt; 0 ? `layered:core-over-budget(${core.dropped})` 
 <div class="scroll"><table>
 <thead><tr><th>方案</th><th>做什么</th><th>成本</th><th>风险</th><th>建议</th></tr></thead>
 <tbody>
-<tr><td><strong>A 只修口径</strong></td><td>保留现有 5 + 4 个标签的位置与数量，只改判定、单位、文案、边界</td><td>低：catalog / routes / client + 测试</td><td>低：不动布局，不改注入</td><td><strong>P0 必做</strong></td></tr>
-<tr><td><strong>B A + 收口版面</strong></td><td>中性计数从 chip 降为一行小字；告警继续用 chip；项目页签按注入方式显示；窄栏只留告警</td><td>中：多一轮面板测试与视觉验收</td><td>中：信息变少，需要 tooltip 兜底</td><td><strong>推荐，紧随 P0</strong></td></tr>
+<tr><td><strong>A 修正口径</strong></td><td>统一判定、单位和归档边界，让全量告警能定位到项目</td><td>复用渲染结果，更新目录、路由、面板和测试</td><td>需要控制完整读取带来的轮询成本，并验证注入行为一致</td><td>P0</td></tr>
+<tr><td><strong>B A + 收口版面</strong></td><td>中性统计收成一行，窄栏保留短告警，详细信息可通过键盘访问</td><td>增加一轮视觉和无障碍验收</td><td>窄栏需检验文字截短和键盘访问</td><td><strong>推荐，分两阶段实施</strong></td></tr>
 <tr><td><strong>C 状态中心</strong></td><td>顶部只留一个总状态，点开是完整分诊面板</td><td>高：新面板、新路由、新交互</td><td>高：为一个次要入口重做导航</td><td>暂不做</td></tr>
 </tbody>
 </table></div>
-<p>推荐路径：<strong>P0 单独一个 PR 先合</strong>，把“说错话”修掉；<strong>P1 再单独一个 PR</strong>，把“话太多”收掉。两者都可以在不改注入算法的前提下完成。</p>
+<p>建议先提交口径修正，再单独提交版面调整。两阶段分别验收，合并与发版按当次授权操作。</p>
 </section>
 
 <section id="target">
 <h2>目标形态</h2>
 <p>原则五条：</p>
 <ol>
-<li><strong>说真话：</strong>标签的判据必须和注入端一致；分层文件只看核心预算。</li>
-<li><strong>一个条件一个标签：</strong>同一个“超了”不要既叫「超限」又叫「超注入限额」。</li>
-<li><strong>单位统一：</strong>限额是字符，展示就用字符；字节只在文件详情里出现。</li>
-<li><strong>告警优先：</strong>中性计数不抢颜色、不抢位置；黄/红只留给需要动作的状态。</li>
-<li><strong>窄栏克制：</strong>右栏页签只保留“条数 + 一个状态”，其余进 tooltip。</li>
+<li>面板沿用注入端的判定。总览、项目列表、项目摘要和文件打开后的提示对同一状态使用一致文案。</li>
+<li>每个项目的同一预算问题只显示一个注入状态。总览保留汇总数量，并提供打开相关项目的入口。</li>
+<li>文件长度和注入限额使用相同的 UTF-16 码元。详情可另列磁盘字节数。</li>
+<li>中性统计用灰色，警示颜色配具体状态文字。</li>
+<li>右栏页签保留条数和最值得关注的注入状态。详细原因可通过键盘打开。</li>
 </ol>
 
 <h3>推荐后的顶部</h3>
-<div class="mock"><span class="t">记忆</span><span class="crumb">· 全部项目</span><span class="crumb">12 个项目 · 9 个有记忆 · 87 条</span><span class="tag warn">超限 1</span><span class="tag warn">待归档 2</span><span class="spacer"></span><span class="tag">刷新</span></div>
-<div class="mock"><span class="t">项目记忆</span><span class="crumb">· dsh-workbuddy-memory</span><span class="tag">MEMORY 42 条 · 6.2k 字</span><span class="tag bad">核心 1.6k/1.4k · 丢 3 条</span><span class="spacer"></span><span class="tag">刷新</span></div>
+<div class="mock"><span class="t">记忆</span><span class="crumb">· 全部项目</span><span class="crumb">12 个项目 · 9 个已创建记忆文件 · 87 条</span><span class="tag warn">超限 1</span><span class="tag warn">待归档 2</span><span class="spacer"></span><span class="tag">刷新</span></div>
+<div class="mock"><span class="t">项目记忆</span><span class="crumb">· dsh-workbuddy-memory</span><span class="tag">MEMORY 42 条 · 6.2k 码元</span><span class="tag bad">核心超预算 · 3 条未注入</span><span class="spacer"></span><span class="tag">刷新</span></div>
 <div class="mock"><span class="t">项目记忆</span><span class="crumb">· other</span><span class="tag">未创建</span><span class="spacer"></span><span class="tag">刷新</span></div>
 <p class="muted">第三行是“项目还没有 MEMORY.md”的目标形态：只给「未创建」，不再给 0 条 / 0 B / 已用 0%。</p>
 
-<h3>判定规则（按注入方式，不按文件感觉）</h3>
+<h3>项目记忆的注入状态</h3>
+<p>面板依据当前文件和配置计算预计注入结果。状态按下表从上到下匹配。注入总开关、项目开关、项目限额和文件读取结果都参与判定。</p>
 <div class="scroll"><table>
-<thead><tr><th>注入模式</th><th>文件形态</th><th>实际注入</th><th>“超了”的判据</th><th>标签</th></tr></thead>
+<thead><tr><th>条件</th><th>判定</th><th>标签</th></tr></thead>
 <tbody>
-<tr><td><code>layered</code></td><td>已分层</td><td>只有核心</td><td><code>核心条目 + 标题 + 溢出提示 &gt; 核心预算</code></td><td>正常：<code>核心 1.1k/1.4k</code>；超：<code>核心 1.6k/1.4k · 丢 3 条</code>（红）</td></tr>
-<tr><td><code>layered</code></td><td>legacy（未分层）</td><td>整份，受 <code>limits.project</code> 限制</td><td><code>chars &gt; limits.project</code></td><td>超：<code>超注入限额</code>（红）</td></tr>
-<tr><td><code>full</code></td><td>任意</td><td>整份，受 <code>limits.project</code> 限制</td><td><code>chars &gt; limits.project</code></td><td>正常：<code>已用 62%</code>；超：<code>已用 120%</code> + <code>超注入限额</code></td></tr>
-<tr><td>任意</td><td><code>limits.project = 0</code></td><td>不注入</td><td>不适用</td><td><code>源已关闭</code>（灰）</td></tr>
+<tr><td>确认文件不存在</td><td>未创建</td><td>未创建</td></tr>
+<tr><td>总开关关闭、项目开关关闭，或 <code>limits.project = 0</code></td><td>已关闭，超限统计为否</td><td>注入已关闭</td></tr>
+<tr><td>已读取完整文件，正文为空白</td><td>无内容可注入</td><td>文件为空</td></tr>
+<tr><td>不可读、读取时文件变化，或超过注入读取上限</td><td>未测得注入占用，单独显示原因</td><td>无法测量</td></tr>
+<tr><td><code>layered</code> 且文件已分层</td><td>复用核心渲染的 <code>dropped</code>。标题、项目包装和溢出提示预留都计入预算</td><td>核心可完整注入，或「核心超预算 · N 条未注入」</td></tr>
+<tr><td><code>full</code> 任意文件，或 <code>layered</code> 下的 <code>legacy</code></td><td>复用整份渲染的处理结果，区分完整、正文截断、限额太小导致整块省略</td><td>已用 X%、超注入限额，或「限额过小 · 未注入」</td></tr>
 </tbody>
 </table></div>
-<p>这里刻意<strong>不</strong>把“文件超过核心份额”当告警：<code>render.js</code> 在 <code>raw.length &gt; budget</code> 时会往主题目录写一句“常驻只取核心，其余请按需查询”，这是分层的正常状态，不是故障。只有核心条目真的放不下、被丢掉，才是红字。</p>
+<p>分层项目默认分到 1,400 UTF-16 码元（总预算 4,000 的 35%）。整份文件大于该份额时，主题仍然可以按需读取。只有 <code>dropped &gt; 0</code> 才触发核心超预算告警。详情可分别列出完整核心块所需空间、实际注入量和预算，便于解释提示预留造成的边界结果。</p>
+<p>整份模式的占用率使用包含标题的完整块所需空间除以限额，截断判定来自渲染结果。占用率接近或等于 100% 可以提示接近上限，红色只在正文确实被截断或整块无法注入时出现。</p>
 
 <h3>每个标签的新规则</h3>
 <div class="scroll"><table>
 <thead><tr><th>位置</th><th>标签</th><th>新规则</th><th>颜色</th></tr></thead>
 <tbody>
-<tr><td>总览</td><td><code>12 个项目 · 9 个有记忆 · 87 条</code></td><td>三个中性数收成一行小字；都按全量项目统计；项目为 0 时整行不显示</td><td>灰</td></tr>
-<tr><td>总览</td><td><code>超限 N</code></td><td>N &gt; 0 才出现；按新判据统计“整文件超限 + 核心超预算”的项目数，一个项目只算一次；tooltip 给拆分</td><td>黄</td></tr>
-<tr><td>总览</td><td><code>待归档 N</code></td><td>N &gt; 0 才出现；最旧日期笔记 ≥ 30 天的项目数；tooltip 写“N 个项目”</td><td>黄</td></tr>
-<tr><td>项目</td><td><code>MEMORY 42 条 · 6.2k 字</code></td><td>有文件才出现；单位改成字符，与 <code>limits</code> 对齐</td><td>灰</td></tr>
-<tr><td>项目</td><td><code>未创建</code></td><td><code>hasMemory</code> 为假时替代整排数字</td><td>灰</td></tr>
-<tr><td>项目</td><td><code>核心 x/y</code></td><td>分层文件专用；分子是核心实际占用，分母是核心预算；超了追加「· 丢 N 条」</td><td>灰 / 黄 / 红</td></tr>
-<tr><td>项目</td><td><code>已用 X%</code></td><td>仅 full / legacy 文件使用；<code>chars ÷ limits.project</code></td><td>灰 / 黄 / 红</td></tr>
-<tr><td>项目</td><td><code>源已关闭</code></td><td><code>limits.project = 0</code> 时替代 <code>已用 0%</code></td><td>灰</td></tr>
-<tr><td>项目 / 文件</td><td><code>rev …</code></td><td>从顶部移除；放进路径的 <code>title</code> 或源码 / 冲突弹层；<code>memory_status</code> 可选补一个字段</td><td>—</td></tr>
-<tr><td>文件</td><td><code>42 条 · 6.2k 字</code></td><td>把 <code>entriesPercent</code> 换成新的“条数 + 字符数”键，不再显示 <code>%</code></td><td>灰</td></tr>
+<tr><td>总览</td><td><code>12 个项目 · 9 个已创建记忆文件 · 87 条</code></td><td>三项均按全量项目统计。已创建只表示文件存在，包含空白和确认存在但不可读的文件。项目为 0 时隐藏整行</td><td>灰</td></tr>
+<tr><td>总览</td><td><code>超限 N</code></td><td>统计因预算未完整注入的项目，每项目只计一次。详情区分整份截断、限额过小和核心超预算</td><td>黄</td></tr>
+<tr><td>总览</td><td><code>待归档 N</code></td><td>统计默认归档阈值下有候选日记的项目。详情标明统计单位为项目</td><td>黄</td></tr>
+<tr><td>项目</td><td><code>MEMORY 42 条 · 6.2k 码元</code></td><td>文件长度用 UTF-16 码元，与注入限额同单位。仅有部分统计时明确标注</td><td>灰</td></tr>
+<tr><td>项目</td><td>核心或整份注入状态</td><td>遵循上表。缺文件时只显示「未创建」</td><td>灰 / 黄 / 红</td></tr>
+<tr><td>项目 / 文件</td><td><code>rev …</code></td><td>从顶部移除。冲突弹层继续展示完整 revision</td><td>—</td></tr>
+<tr><td>文件</td><td><code>42 条 · 6.2k 码元</code></td><td>使用 <code>/content</code> 提供的完整长度。条目只统计可显示的部分时，标为「已显示 N 条」。文件只读到前缀时，省略完整长度</td><td>灰</td></tr>
 </tbody>
 </table></div>
 
 <h3>版面规则</h3>
 <ul>
-<li><strong>宽面板：</strong>标题 + crumb + 一行中性小字 + 告警 chip + 刷新。中性小字不换行，超出用 <code>title</code> 补全。</li>
-<li><strong>项目页签：</strong>第 1 个 chip 固定是「条数 + 字符数」，第 2 个是状态（<code>核心 x/y</code> 或 <code>已用 %</code> 或 <code>未创建</code>），其余全是条件性告警。</li>
-<li><strong>右栏页签（<code>.wbm-tab</code>）：</strong>只留「条数 + 状态」一个 chip；项目名用 <code>ellipsis</code>；告警用短文案「丢 3 条」。</li>
-<li><strong>总览选中项目：</strong>crumb 换成项目名，返回总览用面包屑或标题旁的返回箭头，不再并排两个「全部项目」。</li>
-<li><strong>空心状态：</strong>没有项目时只显示一句「还没有任何项目写过记忆」，不显示三个 0。</li>
-<li><strong>首帧：</strong><code>state</code> 未到时 chip 区留空（或骨架），不渲染 0。</li>
+<li>宽面板显示标题、面包屑、一行中性统计、告警和刷新。截短信息的完整内容可通过键盘访问。</li>
+<li>项目顶部显示文件统计和一个有效注入状态。右栏页签缩短为条数和状态，例如「核心 3 条未注入」。项目名可省略，告警文字保持可见。</li>
+<li>总览选中项目后，面包屑显示项目名并提供一个明确的返回入口。</li>
+<li>项目列表仍有展示上限。「需要处理」从全量异常中单独取有上限的项目预览，可打开左侧列表以外的项目。超过预览上限时，显示未展示数量并提供查看入口。</li>
+<li>首帧保留加载状态。加载完成且项目总数为 0 时，显示「暂无项目」，用户记忆和画像入口仍可见。</li>
 </ul>
 </section>
 
 <section id="phases">
 <h2>动作清单</h2>
-<p>按可独立交付的粒度拆。P0 不改版面，P1 只改版面，P2 只补细节。</p>
-
-<h3>P0：修正口径（建议先合）</h3>
+<h3>P0 · 修正口径</h3>
 <div class="scroll"><table>
 <thead><tr><th>#</th><th>文件</th><th>动作</th></tr></thead>
 <tbody>
-<tr><td>1</td><td><code>src/render.js</code></td><td>把 <code>renderEntries</code> 里的“标题 + 条目 + 溢出提示”计算抽成纯函数并导出；注入端继续用它，保证面板与提示词同一套算法。</td></tr>
-<tr><td>2</td><td><code>src/host/catalog.js</code></td><td>给 <code>catalogOptions</code> 增加 <code>mode</code>、<code>coreBudget</code>、<code>t</code>；缓存里增加 <code>layering.mode</code>、<code>coreChars</code>、<code>coreLengths</code>；<code>describe</code> 输出 <code>inject: { kind, over, dropped, coreChars, coreCap }</code>。保留 <code>overLimit</code> 布尔兼容旧调用。</td></tr>
-<tr><td>3</td><td><code>src/host/catalog.js</code></td><td><code>list()</code> 在切片前计算 <code>totals</code> 并返回；<code>entries</code> 统计改用与详情页一致的 <code>topSection()</code>。</td></tr>
-<tr><td>4</td><td><code>src/host/routes.js</code></td><td>把 <code>mode</code> / <code>coreBudget</code> / <code>t</code> 传进 catalog；<code>state.totals</code> 直接用全量结果，不再在路由里对切片求和。</td></tr>
-<tr><td>5</td><td><code>src/client.js</code></td><td>顶部标签按 <code>inject.over</code> / <code>inject.kind</code> 分支；<code>MEMORY</code> 改字符单位；未创建 / 源关闭状态；文件头换新键；<code>ratio</code> 在分层模式改吃 <code>coreChars / coreCap</code>。</td></tr>
-<tr><td>6</td><td><code>src/config.js</code> / <code>src/host/archive.js</code></td><td>抽一个 <code>ARCHIVE_AFTER_DAYS = 30</code> 共享常量；<code>stale</code> 改成 <code>&gt;=</code>，与归档候选对齐；面板从 <code>/state</code> 读同一个值。</td></tr>
-<tr><td>7</td><td><code>tests/</code></td><td>新增 catalog 判定测试；更新 <code>panel.test.mjs</code> 里“超限 1”的断言；补文件头、未创建、超 50 项目、30 天边界用例。</td></tr>
+<tr><td>1</td><td><code>src/render.js</code></td><td>从核心和整份渲染提取可复用的测量结果。核心使用同一语言下的标题、已格式化条目和预留逻辑。整份记录是否截断或因限额太小被省略。对照重构前后的注入文本与状态。</td></tr>
+<tr><td>2</td><td><code>src/index.js</code> / <code>src/cache.js</code> / <code>src/host/catalog.js</code></td><td>面板沿用注入端的开关、模式、预算、限额和宿主翻译器。注入判定使用完整且受限的快照。缓存与配置无关的解析元数据，按文件身份失效，每次使用当前配置重新判定。冷缓存和热缓存分别核对读取量，文件内容只留在服务端。</td></tr>
+<tr><td>3</td><td><code>src/host/catalog.js</code> / <code>src/host/routes.js</code></td><td>项目行返回有效注入方式、状态、是否超限以及适用的占用信息。可保留 <code>overLimit</code> 作为兼容投影。切片前计算总计并提取有上限的异常预览，返回各类异常剩余数量。项目条目统计包含 <code>(top)</code>。</td></tr>
+<tr><td>4</td><td><code>src/host/routes.js</code> / <code>src/client.js</code></td><td>保留按项目 key 路由的约束。让「需要处理」能打开主列表之外的项目，选中项目独立于 <code>projects</code> 切片解析。项目同时超限和待归档时，汇总各计一次，异常预览保留两个原因。</td></tr>
+<tr><td>5</td><td><code>src/client.js</code></td><td>统一项目页头、项目文件列表、总览「需要处理」、项目摘要和项目文件横幅。旧文件分层建议仅在实际因结构走 legacy 回退时使用。用户记忆的注入判定另行评审，本轮统一各文件类型共用的文件头单位。</td></tr>
+<tr><td>6</td><td><code>src/host/routes.js</code> / <code>src/client.js</code></td><td><code>/content</code> 提供完整文件的码元数或 <code>null</code>，并明确标记正文及条目统计是否为部分结果。文件头使用新文案和接口字段。</td></tr>
+<tr><td>7</td><td><code>src/host/catalog.js</code> / <code>src/host/routes.js</code> / <code>src/write/archive.js</code> / <code>src/write/store.js</code> / <code>src/client.js</code></td><td>共享默认阈值 <code>ARCHIVE_AFTER_DAYS = 30</code>。目录统计与默认预览复用有效日期的 <code>ageDays &gt;= beforeDays</code> 判定。<code>/action</code> 与 store 使用同一个兜底，面板从 <code>/state</code> 读取默认值。</td></tr>
+<tr><td>8</td><td><code>tests/</code></td><td>用相同文件、配置和语言对照注入结果与面板状态。覆盖完整读取边界、路由与 UI 入口、列表外项目告警和归档边界。</td></tr>
 </tbody>
 </table></div>
 
-<h3>P1：收口版面（P0 合入后再做）</h3>
+<h3>P1 · 收口版面</h3>
 <ul>
-<li>总览：三个中性 chip 收成一行小字；告警 chip 保持条件显示。</li>
-<li>项目页签：按注入方式只显示一个状态 chip；<code>rev</code> 从顶部移除。</li>
-<li>右栏页签（<code>.wbm-tab</code>）：隐藏中性小字，只留条数 + 状态。不要用视口 <code>@media</code> 猜页签宽度，侧栏在宽窗口里也可能很窄。</li>
-<li>总览选中项目：crumb 换成项目名；去掉重复的「全部项目」按钮，改为明确的“返回总览”。</li>
-<li>0 项目 / 首帧：不渲染 0。</li>
+<li>总览的中性统计收成一行。合并同一项目的占用率和预算告警，移除项目与文件头部的 <code>rev</code>。</li>
+<li>在实际右栏宽度下验证短告警。用页签容器或页签布局识别窄栏，覆盖宽窗口内拖窄右栏的情况。</li>
+<li>简化总览返回入口，区分加载中与已加载但没有项目。完整告警说明与窄栏版面一起验收键盘操作和读屏。</li>
 </ul>
 
-<h3>P2：细节</h3>
+<h3>P2 · 细节</h3>
 <ul>
-<li>每个 chip 补 <code>title</code>（完整解释）与 <code>aria-label</code>。</li>
-<li>「超限」tooltip 给“整文件 a · 核心 b”的拆分。</li>
-<li>删除未使用的 <code>.wbm-chip.accent</code>，或把它留给“筛选生效”。</li>
-<li>「项目 N」tooltip 补“其中 M 个目录不存在”。</li>
+<li>项目数的可访问说明可补充目录已不存在的数量。</li>
+<li>清理未使用的 <code>.wbm-chip.accent</code> 样式。</li>
 </ul>
-
-<h3>待确认的三个决策</h3>
-<ol>
-<li><strong>分层文件的状态词：</strong>用「核心超预算」还是「核心 1.6k/1.4k · 丢 3 条」？前者短、后者直接给数。</li>
-<li><strong>中性计数：</strong>保留三个灰 chip，还是收成一行小字？这决定 P1 的版面。</li>
-<li><strong>rev：</strong>从顶部彻底移除，还是缩成 7 位并加 tooltip？我倾向移除，冲突弹层里本来就有完整 revision。</li>
-</ol>
 </section>
 
 <section id="acceptance">
 <h2>验收</h2>
 <h3>命令</h3>
-<pre><code>node --test
-node --test tests/panel.test.mjs tests/routes.test.mjs</code></pre>
-<p>如果新增 <code>tests/catalog.test.mjs</code>，单独再跑一次。发布前按项目规则走 PR，不直接推 main。</p>
+<pre><code>node --test tests/render.test.mjs tests/routes.test.mjs tests/panel.test.mjs
+node --test</code></pre>
+<p>评审时运行了渲染、路由和面板的现有基线，116 项通过。下表为方案实施后的回归验收。</p>
 
 <h3>场景</h3>
 <div class="scroll"><table>
 <thead><tr><th>#</th><th>准备</th><th>期望</th></tr></thead>
 <tbody>
-<tr><td>1</td><td>layered，已分层，12000 字，核心 1000 字</td><td>顶部不红；项目显示 <code>核心 1.0k/1.4k</code>；总览 <code>超限</code> 不出现</td></tr>
-<tr><td>2</td><td>layered，已分层，9000 字，核心 1800 字</td><td>项目红字 <code>核心 1.8k/1.4k · 丢 N 条</code>；总览 <code>超限 1</code>；摘要横幅改说核心超预算</td></tr>
-<tr><td>3</td><td>layered，legacy，12000 字</td><td>项目 <code>超注入限额</code>（红）；总览 <code>超限 1</code></td></tr>
-<tr><td>4</td><td><code>mode: full</code>，12000 字</td><td><code>已用 120%</code> + <code>超注入限额</code>；与旧行为一致</td></tr>
-<tr><td>5</td><td><code>limits.project = 0</code></td><td>项目 <code>源已关闭</code>；不出现 <code>已用 0%</code> / 超限</td></tr>
-<tr><td>6</td><td>项目没有 MEMORY.md</td><td>只显示 <code>未创建</code>，不显示 0 条 / 0 B / 已用 0%</td></tr>
-<tr><td>7</td><td>打开一个有内容的 MEMORY.md</td><td>文件头 <code>42 条 · 6.2k 字</code>，不出现 <code>KB%</code></td></tr>
-<tr><td>8</td><td>60 个项目，<code>ui.maxProjects = 50</code></td><td><code>项目 60</code>，条目 / 有记忆 / 超限 / 待归档都按 60 个统计；左栏仍有“只显示前 50 个”提示</td></tr>
-<tr><td>9</td><td>最旧日期笔记正好 30 天</td><td><code>待归档 1</code>，且归档预览也能列出该文件</td></tr>
-<tr><td>10</td><td>右栏页签拖到约 360px</td><td>头部不超过两行；不出现水平滚动</td></tr>
-<tr><td>11</td><td><code>state</code> 首帧未返回</td><td>不显示三个 0</td></tr>
+<tr><td>1</td><td>已分层文件总长度 12,000 码元，核心正文 1,000 码元</td><td>核心完整注入，总览超限计数为 0。项目各入口使用同一有效状态</td></tr>
+<tr><td>2</td><td>已分层文件总长度 9,000 码元，核心正文 1,800 码元。另测完整核心块所需空间恰好 1,400 码元的单条边界</td><td>按同一语言下的渲染结果核对「N 条未注入」、摘要和总览计数。测试预留提示位导致的差异</td></tr>
+<tr><td>3</td><td>分别用 <code>full</code> 和 <code>layered</code> 下的 <code>legacy</code> 测英文正文 9,998 码元配 10,000 限额。再覆盖首尾空白、中文、emoji、完整块刚好装下与限额太小</td><td>标签与渲染结果一致，分别显示完整、正文截断或整块省略。刚好装下时没有红色告警</td></tr>
+<tr><td>4</td><td>保持文件超预算，分别关闭 <code>inject.enabled</code>、<code>inject.project</code> 或把 <code>limits.project</code> 置零</td><td>项目状态为「注入已关闭」，超限计数为 0。重新打开后按当前配置计算</td></tr>
+<tr><td>5</td><td>分别准备未创建、空白、不可读的文件。另测在 256 KiB 之后出现核心标题或第二个同名核心，以及超过 2 MiB 的文件</td><td>分别显示「未创建」「文件为空」「无法测量」。上限内的大文件按完整内容判定，超过读取上限时显示无法测量及原因</td></tr>
+<tr><td>6</td><td>打开包含中英文、emoji 和 <code>(top)</code> 条目的文件。分别覆盖完整文件、显示正文被截短和只读到文件前缀</td><td>完整文件按 UTF-16 码元计长，条目包含 <code>(top)</code>。部分结果标明统计范围，文件头不出现 <code>KB%</code></td></tr>
+<tr><td>7</td><td>60 个项目，<code>ui.maxProjects = 50</code>，唯一超限项目排第 51 位，且同项目有待归档笔记</td><td>总计以 60 个项目为基础，左栏仍显示前 50 个。「需要处理」可打开第 51 个项目并显示两项原因。另测异常项目超过预览上限时可查看剩余项目</td></tr>
+<tr><td>8</td><td>分别以 29、30、31 天为项目最旧笔记年龄。归档请求省略 <code>beforeDays</code></td><td>30、31 天同时进入告警和默认归档预览，29 天均不进入</td></tr>
+<tr><td>9</td><td>宽窗口下把右栏拖到约 360px。另测总览首次加载和加载后无项目</td><td>窄栏告警可读，头部最多两行，无水平滚动。首帧无统计闪动，空列表显示「暂无项目」</td></tr>
 </tbody>
 </table></div>
 
 <h3>视觉与无障碍</h3>
 <ul>
-<li>宽面板 / 右栏页签 / 360px 三档截图，确认 chip 不压住标题、不换三行。</li>
-<li>每个 chip 有可读的 <code>title</code>；悬浮能看到完整解释。</li>
-<li>颜色不是唯一信息：红色 chip 的文案本身要能读出“超了”。</li>
+<li>检查宽面板、常规右栏和 360px 右栏的标题、统计、告警与刷新按钮。</li>
+<li>用键盘打开、阅读和关闭详细说明，并验证关闭后焦点回到触发入口。读屏能读出告警状态及原因。</li>
+<li>告警始终有可见文字。验证深浅主题和中英文文案。</li>
 </ul>
 </section>
 
 <section id="tradeoffs">
 <h2>原因与取舍</h2>
 <ul>
-<li><strong>为什么不反过来改注入算法，让整份文件都受 10000 限制？</strong>分层的目的就是不再为整份文件付上下文；让标签去迁就旧判据，会把 0.2.0 的核心收益抵消掉。标签应当描述注入，而不是指挥注入。</li>
-<li><strong>为什么不用“文件超过核心份额”当告警？</strong>那是分层的正常状态：文件比核心大，才会产生按需主题。提示词里已经用“常驻只取核心，其余请按需查询”说明了；把它染红会让每个正常的分层文件都报警。</li>
-<li><strong>为什么不直接复用 <code>lastAssembly.states</code>？</strong>那只覆盖当前会话的项目和用户文件；总览要的是所有项目的状态，而且面板轮询时不一定有本轮的 assembly。</li>
-<li><strong>为什么保留 <code>overLimit</code> 布尔？</strong>它已经被 <code>status</code>、总览 attention、项目摘要和现有测试使用。新增 <code>inject</code> 细节，旧字段继续表示“有超限”，是成本最低的兼容方式。</li>
-<li><strong>为什么把 30 天改成 <code>&gt;=</code>？</strong>归档动作在整 30 天时已经会列出文件；标签晚一天才提示，等于让人以为“还不能归档”。共享一个常量后，文案、候选、标签三处不会再各自漂移。</li>
-<li><strong>为什么先 P0 再 P1？</strong>P0 是“说错话”，改动小、可独立验证、风险低；P1 是“话太多”，需要先确认信息取舍。把两件事塞进一个 PR，会让 review 分不清哪部分在修 bug、哪部分在改产品。</li>
-<li><strong>为什么从顶部拿掉 rev？</strong>它是写入冲突令牌，不是用户需要每秒看的健康指标；16 位十六进制在窄栏里占掉一整行。放到路径 tooltip、源码模式和冲突弹层，需要时仍然找得到。</li>
+<li>分层项目的主题正文按需读取。整份文件超出核心分配空间是常态，告警依据实际有无核心条目未注入。</li>
+<li><code>lastAssembly.states</code> 记录当前会话上次装配。面板的预计状态覆盖全部项目，使用当前磁盘与配置。使用 <code>first-turn</code> 的会话可能继续沿用上次装配，面板避免承诺「下一轮一定截断」。</li>
+<li><code>overLimit</code> 可以从新状态生成，供现有调用者过渡。新版面板使用带原因的注入状态，区分核心条目未注入、整份截断、限额过小和无法测量。</li>
+<li>注入与面板读取共用上限和完整性判断。轮询仅在文件身份变化时重新解析，配置变化直接用缓存的解析元数据重新计算。</li>
+<li>30 天阈值表示默认归档预览的时间范围，恰好 30 天的有效笔记应进入候选。手动调整预览天数时，该阈值仍用于全局告警。</li>
+<li>口径修复可单独验收注入与告警是否一致。版面调整随后用宽窄栏截图和键盘操作验收。</li>
+<li>完整 revision 仍可在冲突弹层查看。项目与文件顶部腾出它占用的空间，写入时继续使用同一令牌。</li>
 </ul>
 </section>
 
@@ -344,8 +337,13 @@ node --test tests/panel.test.mjs tests/routes.test.mjs</code></pre>
 <tr><td><code>src/host/routes.js:160-169</code></td><td>详情页已把 <code>(top)</code> 作为节上报</td></tr>
 <tr><td><code>src/host/routes.js:370-377</code> / <code>392</code></td><td><code>totalsOf</code> 对切片行求和；仅 <code>projects</code> 用 total 覆盖</td></tr>
 <tr><td><code>src/render.js:112-119</code></td><td>分层注入用 <code>coreBudget</code> 份额；超出记 <code>layered:core-over-budget</code></td></tr>
-<tr><td><code>src/render.js:99-110</code></td><td>legacy 文件仍按 <code>limits.project</code> 整份注入</td></tr>
-<tr><td><code>src/write/archive.js:84</code></td><td>归档候选：<code>ageInDays(date) &lt; beforeDays</code> 才跳过，即整 30 天算候选</td></tr>
+<tr><td><code>src/render.js:99-110, 265-283</code></td><td>legacy 与 full 共用整份渲染，去掉首尾空白后扣包装和截断提示</td></tr>
+<tr><td><code>src/render.js:315-347</code></td><td>核心渲染预留提示空间，按顺序保留整条内容，通过 <code>dropped</code> 报告未注入数</td></tr>
+<tr><td><code>src/inject.js:57-69</code> / <code>src/render.js:140-141</code></td><td>注入总开关、会话刷新策略与项目开关</td></tr>
+<tr><td><code>src/host/catalog.js:32-33, 147-170</code> / <code>src/cache.js:4-6, 18-39</code></td><td>目录读取 256 KiB，注入缓存支持 2 MiB 完整快照</td></tr>
+<tr><td><code>src/client.js:2929-2945, 3102-3143, 3497-3513</code></td><td>项目列表百分比、总览异常预览和文件分层横幅的现行逻辑</td></tr>
+<tr><td><code>src/host/routes.js:450-483, 572-576</code></td><td>文件响应尚未返回 <code>chars</code>，归档路由仍用独立的 30 天默认值</td></tr>
+<tr><td><code>src/write/archive.js:84</code> / <code>src/write/store.js:822</code></td><td>整 30 天的有效日期进入默认候选，store 仍有独立阈值</td></tr>
 <tr><td><code>src/write/fslock.js:35</code></td><td>revision = SHA-256 前 16 位</td></tr>
 <tr><td><code>src/config.js:43-55</code></td><td>默认 <code>layered</code>、<code>coreBudget 4000</code>、<code>limits.project 10000</code></td></tr>
 <tr><td><code>CHANGELOG.zh.md</code> 0.2.0</td><td>分层默认；<code>limits.project</code> / <code>.user</code> 在分层模式只决定源开不开</td></tr>
@@ -355,7 +353,7 @@ node --test tests/panel.test.mjs tests/routes.test.mjs</code></pre>
 </section>
 
 <footer>
-<p>本稿是方案，不是发布说明：代码未改，测试未跑。P0 / P1 分两个 PR；是否合并、是否发版，按当次指令走。</p>
+<p>本次修订更新设计与验收标准。评审基线和边界复核见「现有问题」与「验收」。</p>
 </footer>
 </div>
 </body>
