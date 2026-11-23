@@ -506,10 +506,20 @@ export function distillHint({ cfg, probe, t }) {
   return ''
 }
 
+/**
+ * A lower bound on a file's length in UTF-16 code units, for a hint that only
+ * needs to know "past the threshold".
+ *
+ * A file past the read cap yields its prefix, which is still a length the
+ * whole file is *at least*. That is exactly what `distillHint` asks, and
+ * returning 0 for it (as a stricter "complete or nothing" reading once did)
+ * silently dropped the distillation hint for the very files that most needed
+ * it — the largest ones.
+ */
 function fileCharCount(path) {
   if (!path) return 0
   const file = readTextSafe(path, { maxBytes: MAX_FILE_BYTES })
-  return completeSnapshot(file).ok ? file.text.length : 0
+  return file.ok ? file.text.length : 0
 }
 
 export function redact(text, home) {

@@ -1,7 +1,7 @@
 /** Section rendering: what gets injected, in what order, and how it is trimmed. */
 
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -1032,4 +1032,26 @@ test('measureSource agrees with the prompt on every block it injects', () => {
       assert.equal(result.need > result.budget, lost, `${label}: what was lost did not fit`)
     }
   }
+})
+
+test('the full-mode distillation hint still fires for a user file past the read cap', () => {
+  // Regression guard. A stricter "complete snapshot or nothing" reading made
+  // the helper return 0 for a file over 2 MiB, and the hint — whose only job
+  // is to say "this file is past the threshold" — vanished for exactly the
+  // largest files. The prefix's length is a lower bound the whole file is at
+  // least, which is all the hint needs.
+  const big = '- 很长的一条记录，用来占位置。\n'.repeat(200000)
+  const { cfg, probe } = fixture({ user: big, config: { inject: { mode: 'full', limits: { user: 8000 }, distillAbove: 16000 } } })
+  assert.ok(statSync(probe.user.memoryPath).size > 2 * 1024 * 1024, 'fixture is past the read cap')
+  assert.ok(cfg.inject.distillAbove > cfg.inject.limits.user)
+
+  const hint = distillHint({ cfg, probe, t })
+  assert.notEqual(hint, '', 'a file nobody can read whole is still one that is too long')
+  assert.match(hint, /8000/, 'it names the limit, as for any other oversized file')
+  const reported = Number(/已到 (\d+) 字符/.exec(hint)?.[1])
+  // Units, not bytes: the 2 MiB read cap is bytes, the hint counts UTF-16
+  // units, and a Chinese line costs three bytes per unit. What must hold is
+  // that the hint reports a real lower bound on the file, not a token number.
+  assert.ok(reported > cfg.inject.distillAbove, `reports a length past the threshold: ${reported}`)
+  assert.ok(reported < big.length, 'and does not pretend to know the whole length')
 })
