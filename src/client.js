@@ -1022,6 +1022,42 @@ window.__ModuleLoader__.load({
       .wbm-chip.warn { color: var(--wbm-warn); border-color: color-mix(in srgb, var(--wbm-warn) 35%, transparent); }
       .wbm-chip.bad { color: var(--wbm-danger); border-color: color-mix(in srgb, var(--wbm-danger) 35%, transparent); }
       .wbm-chip.accent { color: var(--wbm-accent); border-color: color-mix(in srgb, var(--wbm-accent) 35%, transparent); }
+      /* An injection state that has numbers behind it. A native disclosure:
+         the summary is focusable and toggles from the keyboard with no script,
+         and keeps its focus after the toggle. */
+      .wbm-explain { padding: 0; }
+      .wbm-explain > summary {
+        list-style: none; cursor: pointer; padding: 1px 7px; border-radius: 999px;
+        display: inline-flex; align-items: center; gap: 4px;
+      }
+      .wbm-explain > summary::-webkit-details-marker { display: none; }
+      .wbm-explain > summary::after {
+        content: ''; width: 0; height: 0; opacity: .7;
+        border-left: 4px solid transparent; border-right: 4px solid transparent;
+        border-top: 5px solid currentColor; margin-top: 2px;
+      }
+      .wbm-explain[open] > summary::after { border-top: none; border-bottom: 5px solid currentColor; margin-top: -2px; }
+      .wbm-explain > summary:focus-visible {
+        outline: 2px solid var(--dsw-focus-ring-color, var(--wbm-accent)); outline-offset: 1px;
+      }
+      .wbm-explain-body {
+        flex-basis: 100%; margin-top: 4px; padding: 7px 10px; border-radius: 7px;
+        border: 1px solid var(--wbm-border); background: var(--wbm-panel);
+        color: var(--wbm-text-2); font-size: 12px; line-height: 1.55; white-space: normal;
+      }
+      .wbm-meta-bad { color: var(--wbm-danger); }
+      /* The panel is its own sizing context: the right-sidebar tab can be
+         dragged narrow inside a wide window, and a viewport media query would
+         never notice. */
+      .wbm-root { container: wbm / inline-size; }
+      .wbm-crumb-scope { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+      @container wbm (max-width: 420px) {
+        .wbm-header { gap: 6px; }
+        .wbm-chips { flex: 1 1 100%; flex-wrap: nowrap; min-width: 0; overflow: hidden; }
+        .wbm-chip { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+        .wbm-crumb-scope { max-width: 60vw; }
+        .wbm-explain-body { max-height: 30vh; overflow: auto; }
+      }
       .wbm-btn {
         display: inline-flex; align-items: center; gap: 5px;
         border: 1px solid var(--wbm-border); background: transparent; color: var(--wbm-text-2);
