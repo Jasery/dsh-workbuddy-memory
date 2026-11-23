@@ -2142,6 +2142,64 @@ test('after "show all", a poll does not shrink the attention list back to the pr
   }
 })
 
+test('a preview poll that was already in flight when "show all" was clicked cannot shrink the list', async () => {
+  // The sequence a person can hit: a poll leaves, "show all" is clicked, the
+  // poll's answer (the preview) arrives last. It used to overwrite the
+  // expanded list and leave it at eight until the next poll — the same
+  // shrink, now with a narrower window.
+  const N = 12
+  const state = stateFor()
+  state.attentionTotal = N
+  state.attentionMore = { 'over-limit': N - 8, stale: 0, missing: 0, unmeasurable: 0 }
+  const row = (i) => ({ key: `k${i}`, name: `p${i}`, title: `p${i}`, hasMemory: true, latestDaily: null, injection: judged('core-over-budget', { dropped: 1 }), reasons: ['over-limit'] })
+  const calls = installFetch({ state, content: () => projectContent })
+  const base = globalThis.fetch
+  let held = null
+  globalThis.fetch = async (url, init = {}) => {
+    if (init.method === 'POST') return base(url, init)
+    const href = String(url)
+    calls.gets.push(href)
+    const body = href.includes('/content') ? projectContent : { ...state, attention: Array.from({ length: href.includes('attention=all') ? N : 8 }, (_, i) => row(i)) }
+    // Hold one request until the test releases it.
+    if (held && held.armed) {
+      held.armed = false
+      await held.promise
+    }
+    return { ok: true, status: 200, json: async () => body }
+  }
+  const restore = installTimers()
+  const count = (tree) => {
+    let inAttention = false
+    let seen = 0
+    for (const node of walk(tree)) {
+      if (node.type === 'div' && String(node.props?.className ?? '').includes('wbm-h2')) inAttention = text(node) === '需要关注'
+      else if (inAttention && node.type === 'button' && text(node) === '查看') seen += 1
+    }
+    return seen
+  }
+  try {
+    let tree = await runtime.settle(MemoryOverviewPanel, OVERVIEW)
+    assert.equal(count(tree), 8)
+
+    // A preview poll leaves and is held…
+    let release
+    held = { armed: true, promise: new Promise((resolve) => { release = resolve }) }
+    const poll = walk(tree).find((node) => node.type === 'button' && node.props?.title === '刷新')
+    const inFlight = runtime.fire(poll, 'onClick', MemoryWorkspace, OVERVIEW)
+    // …then "show all" is clicked and answered…
+    const showAll = walk(tree).find((node) => node.type === 'button' && text(node) === '查看全部')
+    tree = await runtime.fire(showAll, 'onClick', MemoryWorkspace, OVERVIEW)
+    assert.equal(count(tree), N, 'the expanded list arrived')
+    // …and the held preview lands last.
+    release()
+    tree = await inFlight
+    assert.equal(count(tree), N, 'the stale preview answer is dropped, not applied')
+  } finally {
+    globalThis.fetch = base
+    restore()
+  }
+})
+
 test('an unmeasured file never shows "0 entries" anywhere', async () => {
   // A MEMORY.md past the read cap exists but nobody has counted its entries.
   // The rule "a number nobody measured is not zero" was applied to the

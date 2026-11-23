@@ -2304,6 +2304,8 @@ window.__ModuleLoader__.load({
       // fetches the same list, and the note stops offering a further page.
       // A ref on purpose — see `refresh`.
       const wantAllAttention = React.useRef(false)
+      /** Request sequence for `/state`: a stale answer is dropped, not applied. */
+      const stateSeq = React.useRef(0)
       // Both management surfaces keep their own frozen target: a list or a diff
       // is about one file, and it must not be reused for another one that
       // happens to be open when the response arrives.
@@ -2352,8 +2354,15 @@ window.__ModuleLoader__.load({
           if (effectiveKey) params.push(`project=${encodeURIComponent(effectiveKey)}`)
           if (everything) params.push('attention=all')
           const suffix = params.length ? `?${params.join('&')}` : ''
+          // Only the newest request's answer is applied. A poll that left
+          // before "show all" was clicked can land after it, and applying its
+          // preview answer cut the expanded list back to eight until the next
+          // poll — the same shrink through a narrower window. (The same guard
+          // `contentSeq` uses for file reads.)
+          const seq = (stateSeq.current += 1)
           try {
             const next = await getJson(`${API}/state${suffix}`)
+            if (seq !== stateSeq.current) return next
             setState(next)
             setError('')
             if (effectiveKey && next.stores?.project) {
@@ -2361,6 +2370,7 @@ window.__ModuleLoader__.load({
             }
             return next
           } catch (cause) {
+            if (seq !== stateSeq.current) return null
             const code = String(cause?.message ?? cause)
             setError(describeCode(code))
             return null
