@@ -431,6 +431,49 @@ window.__ModuleLoader__.load({
       'editor.limitWarning': '已用 {chars} 字，超过注入限额 {limit}，下一轮注入会截断。',
       'editor.overLimitChip': '超注入限额',
 
+      // injection state. One ladder for every surface (header chips, project
+      // list, "needs attention", project summary, file header): the panel says
+      // what the prompt does with the file, not what its length is.
+      'inject.units': '{n} 码元',
+      'inject.complete': '核心可完整注入',
+      'inject.coreOver': '核心超预算 · {n} 条未注入',
+      'inject.coreOverShort': '核心 {n} 条未注入',
+      'inject.truncated': '整份截断',
+      'inject.omitted': '限额过小 · 未注入',
+      'inject.disabled': '注入已关闭',
+      'inject.empty': '文件为空',
+      'inject.unmeasurable': '无法测量',
+      'inject.missing': '未创建',
+      'inject.why.unreadable': 'MEMORY.md 读不出来。',
+      'inject.why.changed': '读取时文件正在变化。',
+      'inject.why.too_large': '文件超过 2 MiB 的读取上限，无法按完整内容判断。',
+      'inject.why.not_a_file': '这个路径不是普通文件。',
+      'inject.why.whole': '这个文件没有分成「常驻记忆」和主题小节，按整份注入。',
+      'inject.detail.core': '完整核心块需要 {need} 码元，预算 {budget} 码元，本次注入 {used} 码元。',
+      'inject.detail.whole': '完整块需要 {need} 码元，限额 {budget} 码元，本次注入 {used} 码元。',
+      'inject.detailNotice': '标题和提示也占预算，所以刚好装满的核心仍可能有条目放不下。',
+      'inject.usedPercent': '已用 {percent}%',
+      'inject.more': '查看说明',
+      'inject.lengthUnits': '长度',
+      'inject.onDisk': '磁盘',
+      'inject.reason.stale': '{date} 已 {days} 天未归档',
+      'inject.reason.missing': '工作区目录不存在',
+      'inject.reason.unmeasurable': 'MEMORY.md 无法按完整内容判断',
+      'stats.summaryLine': '{projects} 个项目 · {created} 个已创建记忆文件 · {entries} 条',
+      'stats.summaryDetail': '「已创建」只表示 MEMORY.md 存在，包括空白文件；条目按全部项目统计。',
+      'count.memoryLineUnits': 'MEMORY {n} 条{units}',
+      'count.memoryLineNoFile': 'MEMORY 未创建',
+      'count.entriesUnits': '{n} 条 · {units}',
+      'count.entriesShownUnits': '已显示 {n} 条 · {units}',
+      'count.entriesShown': '已显示 {n} 条',
+      'count.chipOverLimitDetail': '有项目记忆未完整注入：核心有条目未注入、整份被截断，或限额过小。点开「需要关注」查看是哪些项目。',
+      'count.chipPendingDetail': '按项目统计：有日期笔记达到默认归档天数（{days} 天）的项目数。',
+      'attention.unmeasurable': 'MEMORY.md 无法按完整内容判断',
+      'attention.partialNote': '只显示前 {shown} 个，共 {total} 个。',
+      'attention.showAll': '查看全部',
+      'doc.partialDetail': '只显示或只读到文件的一部分：条目数和长度只描述屏幕上的内容。',
+      'panel.backToAll': '返回全部项目',
+
       // source mode
       'source.title': '进入源码模式？',
       'source.bodyAllowed': '源码模式会整文件写入。结构校验、备份和撤销仍然生效，但一次误改可能同时影响多个小节。确认后本次浏览器会话不再重复提示。',
@@ -796,6 +839,47 @@ window.__ModuleLoader__.load({
       'editor.keepDraft': "Keep the draft and keep editing",
       'editor.limitWarning': "Using {chars} characters against a {limit}-character limit; the next turn truncates it.",
       'editor.overLimitChip': "Over the injection limit",
+
+      // injection state (see the Chinese block for the ladder)
+      'inject.units': "{n} units",
+      'inject.complete': "Core fits in full",
+      'inject.coreOver': "Core over budget · {n} entries not injected",
+      'inject.coreOverShort': "Core: {n} not injected",
+      'inject.truncated': "Whole file, truncated",
+      'inject.omitted': "Limit too small · not injected",
+      'inject.disabled': "Injection off",
+      'inject.empty': "File is empty",
+      'inject.unmeasurable': "Cannot measure",
+      'inject.missing': "Not created",
+      'inject.why.unreadable': "MEMORY.md cannot be read.",
+      'inject.why.changed': "The file was changing while it was read.",
+      'inject.why.too_large': "The file is past the 2 MiB read cap, so it cannot be judged as a whole.",
+      'inject.why.not_a_file': "This path is not a regular file.",
+      'inject.why.whole': "This file has no \"Core Memory\" split, so it is injected whole.",
+      'inject.detail.core': "The complete core block needs {need} units against a budget of {budget}; {used} units are injected.",
+      'inject.detail.whole': "The complete block needs {need} units against a limit of {budget}; {used} units are injected.",
+      'inject.detailNotice': "The heading and the notices spend budget too, so a core that just fits can still lose an entry.",
+      'inject.usedPercent': "{percent}% used",
+      'inject.more': "Explain",
+      'inject.lengthUnits': "Length",
+      'inject.onDisk': "on disk",
+      'inject.reason.stale': "{date} has not been archived for {days} days",
+      'inject.reason.missing': "The workspace directory does not exist",
+      'inject.reason.unmeasurable': "MEMORY.md cannot be judged as a whole",
+      'stats.summaryLine': "{projects} projects · {created} with a memory file · {entries} entries",
+      'stats.summaryDetail': "Created means MEMORY.md exists, blank files included; entries are counted over every project.",
+      'count.memoryLineUnits': "MEMORY {n} entries{units}",
+      'count.memoryLineNoFile': "MEMORY not created",
+      'count.entriesUnits': "{n} entries · {units}",
+      'count.entriesShownUnits': "{n} entries shown · {units}",
+      'count.entriesShown': "{n} entries shown",
+      'count.chipOverLimitDetail': "Some project memory is not injected in full: core entries left out, the whole file cut, or a limit too small. Open \"Needs attention\" to see which.",
+      'count.chipPendingDetail': "Counted per project: projects with a daily note past the default archive age ({days} days).",
+      'attention.unmeasurable': "MEMORY.md cannot be judged as a whole",
+      'attention.partialNote': "Showing the first {shown} of {total}.",
+      'attention.showAll': "Show all",
+      'doc.partialDetail': "Only part of the file is shown or was read: the count and length describe what is on screen.",
+      'panel.backToAll': "Back to all projects",
       'source.title': "Enter source mode?",
       'source.bodyAllowed': "Source mode writes the whole file. Structural checks, backups and undo still apply, but one mistake can hit several sections at once. This browser session will not ask again.",
       'source.confirmAllowed': "I understand — open source mode",
@@ -1555,6 +1639,92 @@ window.__ModuleLoader__.load({
       if (l <= 0) return { value: 0, percent: 0, level: 'none' }
       const raw = b / l
       return { value: Math.min(raw, 1), percent: Math.round(raw * 100), level: raw >= 1 ? 'over' : raw >= 0.8 ? 'warn' : 'ok' }
+    }
+
+    /**
+     * A file length in the unit the injection limit is stated in.
+     *
+     * `null` is "not measured" (only a prefix was read). `Number(null)` is 0,
+     * so it is checked first: a file nobody measured must not read as "0 units".
+     *
+     * @param {number|null|undefined} units - UTF-16 code units.
+     * @returns {string} the formatted length, or '' when none is known.
+     */
+    function humanUnits(units) {
+      if (units === null || units === undefined || units === '') return ''
+      const n = Number(units)
+      if (!Number.isFinite(n) || n < 0) return ''
+      return t('inject.units', { n: n >= 10000 ? `${Math.round(n / 100) / 10}k` : n })
+    }
+
+    /**
+     * How full a source is, from the prompt's own numbers.
+     *
+     * The old `ratio(chars, limit)` compared the file's length with the limit
+     * whatever the mode. Under layered injection the prompt never makes that
+     * comparison, so the percentage described nothing. The fill is now the
+     * block the prompt would need divided by what it allows itself — the core
+     * against its share, a whole file against its limit — and the level comes
+     * from what was actually lost, never from the ratio alone.
+     *
+     * @param {object|undefined} injection - a row's `injection`.
+     * @returns {{ percent: number|null, level: 'none'|'ok'|'warn'|'over', near: boolean }}
+     */
+    function fillOf(injection) {
+      if (!injection || !(injection.budget > 0) || !(injection.need >= 0)) return { percent: null, level: 'none', near: false }
+      const raw = injection.need / injection.budget
+      const near = raw >= 0.9
+      return { percent: Math.round(raw * 100), level: injection.overLimit ? 'over' : near ? 'warn' : 'ok', near }
+    }
+
+    /**
+     * The injection state of one project as every surface shows it.
+     *
+     * One function for the header chips, the project list, "needs attention",
+     * the project summary and the file header, so the same file cannot be
+     * "over the limit" in one place and "fine" in another. The judgment itself
+     * is the host's (`row.injection`, from `measureSource`): this only turns
+     * it into copy, a tone and the numbers behind it.
+     *
+     * `detail` is the sentence a person needs to understand an alert, and
+     * `why` the reason a state is what it is. Both are reached through the
+     * keyboard (a details disclosure), because the chip itself has to stay
+     * short in a narrow sidebar.
+     *
+     * @param {object|null|undefined} injection
+     * @returns {{ status: string, tone: ''|'warn'|'bad', label: string, short: string, detail: string, why: string, alert: boolean }}
+     */
+    function injectionState(injection) {
+      const status = injection?.status ?? 'missing'
+      const none = { status, tone: '', label: '', short: '', detail: '', why: '', alert: false }
+      if (status === 'missing') return { ...none, label: t('inject.missing'), short: t('inject.missing') }
+      if (status === 'disabled') return { ...none, label: t('inject.disabled'), short: t('inject.disabled') }
+      if (status === 'empty') return { ...none, label: t('inject.empty'), short: t('inject.empty') }
+      if (status === 'unmeasurable') {
+        return { ...none, label: t('inject.unmeasurable'), short: t('inject.unmeasurable'), why: t(`inject.why.${injection.reason ?? 'unreadable'}`) }
+      }
+      const fill = fillOf(injection)
+      const numbers = { need: injection.need, budget: injection.budget, used: injection.used }
+      const detail = t(injection.mode === 'layered' ? 'inject.detail.core' : 'inject.detail.whole', numbers)
+      const why = injection.fallback === 'legacy' ? t('inject.why.whole') : ''
+      if (status === 'omitted') return { status, tone: 'bad', label: t('inject.omitted'), short: t('inject.omitted'), detail, why, alert: true }
+      if (status === 'truncated') return { status, tone: 'bad', label: t('inject.truncated'), short: t('inject.truncated'), detail, why, alert: true }
+      if (status === 'core-over-budget') {
+        return {
+          status,
+          tone: 'bad',
+          label: t('inject.coreOver', { n: injection.dropped }),
+          short: t('inject.coreOverShort', { n: injection.dropped }),
+          detail: `${detail}${t('inject.detailNotice')}`,
+          why,
+          alert: true,
+        }
+      }
+      // `complete`: nothing is lost. A block close to its budget is worth a
+      // quiet word — the next entry written may not fit — but it is not an
+      // alert, and it is never shown in the alert colour.
+      void fill
+      return { status, tone: fill.near ? 'warn' : '', label: t('inject.complete'), short: t('inject.complete'), detail, why, alert: false }
     }
 
     function filterEntries(entries, query) {
