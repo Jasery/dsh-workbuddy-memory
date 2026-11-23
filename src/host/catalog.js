@@ -321,18 +321,26 @@ export function createProjectCatalog({ cfg, recent, registry, t = createTranslat
     // A file the stat already puts past the cap is not read at all.
     const raw = stat.size > MAX_FILE_BYTES ? { ok: true, truncated: true, text: '', bytes: stat.size } : read(path, { maxBytes: MAX_FILE_BYTES })
     const snapshot = completeSnapshot(raw)
-    const meta = snapshot.ok
-      ? {
-          exists: true,
-          bytes: snapshot.bytes,
-          chars: snapshot.text.length,
-          entries: countDocumentEntries(snapshot.text),
-          revision: contentRevision(snapshot.text),
-          mtime,
-          file: { exists: true, read: 'ok', text: snapshot.text, parsed: analyzeMemory(snapshot.text) },
-        }
-      : { exists: true, bytes: snapshot.bytes || stat.size, chars: null, entries: null, revision: null, mtime, file: { exists: true, read: snapshot.reason } }
-    remember(path, { stamp, held: snapshot.ok ? snapshot.bytes : 0, meta })
+    if (!snapshot.ok) {
+      // A failure is a result of *this* read, not a fact about the file, so
+      // it is not cached. A sharing violation during an editor save makes
+      // exactly one read fail; the prompt's fileCache never caches it and
+      // injects the file normally on the next turn, and the panel has to
+      // recover on the same terms instead of saying "cannot measure" until
+      // the file changes. (A file past the cap lands here too, and is
+      // re-decided from `stat.size` above without a read — cheap.)
+      return { exists: true, bytes: snapshot.bytes || stat.size, chars: null, entries: null, revision: null, mtime, file: { exists: true, read: snapshot.reason } }
+    }
+    const meta = {
+      exists: true,
+      bytes: snapshot.bytes,
+      chars: snapshot.text.length,
+      entries: countDocumentEntries(snapshot.text),
+      revision: contentRevision(snapshot.text),
+      mtime,
+      file: { exists: true, read: 'ok', text: snapshot.text, parsed: analyzeMemory(snapshot.text) },
+    }
+    remember(path, { stamp, held: snapshot.bytes, meta })
     return meta
   }
 

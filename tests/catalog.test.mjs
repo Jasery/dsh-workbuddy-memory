@@ -323,3 +323,37 @@ test('the master injection switch reaches the catalog, and a file that is over b
   assert.equal(back.rows[0].injection.status, 'core-over-budget', 'back on, judged from the current config')
   assert.equal(back.totals.overLimit, 1)
 })
+
+test('a transient read failure is not cached: the next poll measures the file', () => {
+  // A Windows sharing violation during an editor save makes one read fail.
+  // The prompt's fileCache never caches a failure, so it injects the file
+  // normally on the next turn — while the panel, caching its "unmeasurable",
+  // kept saying 无法测量 until the file changed.
+  const ws = workspace()
+  ws.add('a', '# M\n\n## 常驻记忆\n- one\n')
+  let fail = true
+  // Count the reads here: the helper's own counter sits inside the reader
+  // this test replaces.
+  let reads = 0
+  const { list } = ws.open({
+    read: (path, options) => {
+      reads += 1
+      return fail ? { ok: false, text: '', bytes: 0, mtimeMs: 0, truncated: false, error: 'EBUSY' } : readTextSafe(path, options)
+    },
+  })
+
+  const locked = list().rows[0]
+  assert.equal(locked.injection.status, 'unmeasurable')
+  assert.equal(locked.injection.reason, 'unreadable')
+  assert.equal(reads, 1)
+
+  fail = false
+  const freed = list().rows[0]
+  assert.equal(freed.injection.status, 'complete', 'the lock is gone, so the file is measured')
+  assert.equal(freed.entries, 1)
+  assert.equal(reads, 2, 'one more read, not zero (a failure is not a cache entry)')
+
+  // A success IS cached, as before.
+  list()
+  assert.equal(reads, 2)
+})
