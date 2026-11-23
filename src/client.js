@@ -103,7 +103,6 @@ window.__ModuleLoader__.load({
       'dash.needsAttention': '需要关注',
       'dash.recentActivity': '最近活跃',
       'dash.globalMemory': '全局记忆',
-      'dash.neverArchived': '{days} 天未归档',
       'dash.noProjects': '还没有认到项目：先在这个项目的会话里发一句话，再回来刷新。',
 
       // targets
@@ -235,7 +234,6 @@ window.__ModuleLoader__.load({
       // of a raw key.
       'layer.legacyReason.non_entry_content': '某个主题小节里有非条目内容，整份文件无法可靠拆分。',
       'layer.legacyReason.unknown': '文件结构无法可靠拆分。',
-      'layer.layered': '已分层：核心 {core} 字符常驻，{topics} 个主题（{chars} 字符）按需读取。',
       'layer.askModel': '让模型出划分草案',
       'layer.askModelHint': '复制这句话发给模型：它会读出当前 revision 并给出整份草案，你在本页「粘贴草案」里预览差异后保存。',
       'layer.copyPrompt': '按主题帮我整理{which}记忆：先 memory_read 拿当前正文和 revision，再把条目分成「常驻记忆」（少量、每轮都要用的）和若干主题小节（按需查询的），输出整份草案正文和来源 revision，我自己在面板预览。不要直接写文件。主题小节的标题要写清「什么时候该查它」（例如「Git 推送超时 → 走本地代理」），不要只写一个名词——注入时能看到的只有标题。',
@@ -338,7 +336,6 @@ window.__ModuleLoader__.load({
       // state labels
       'state.current': '当前',
       'state.missing': '目录不存在',
-      'state.overLimit': '超限',
       'state.dailyOnly': '仅日期笔记',
       'state.hasMemory': '有记忆',
       'state.currentProject': '当前项目',
@@ -361,26 +358,18 @@ window.__ModuleLoader__.load({
 
       // counts
       'count.entries': '{n} 条',
-      'count.entriesPercent': '{n} 条 · {percent}%',
       'count.matches': '{n} 条匹配',
       'count.days': '{n} 天',
-      'count.chipProjects': '项目 {n}',
-      'count.chipWithMemory': '有记忆 {n}',
-      'count.chipEntries': '条目 {n}',
       'count.chipOverLimit': '超限 {n}',
       'count.chipPending': '待归档 {n}',
       'count.allProjects': '全部项目 {n}',
       'count.truncatedProjects': '只显示前 {n} 个，可在设置里调大「最多展示项目」',
-      'count.memoryLine': 'MEMORY {n} 条 · {bytes}',
-      'count.usedPercent': '已用 {percent}%',
       'count.bytes': '字节',
       'count.latestDaily': '最新日期 {date}',
 
       // attention
-      'attention.overLimit': '已超注入限额，下一轮注入会截断',
       'attention.stale': '{date} 已 {days} 天未归档',
       'attention.missing': '工作区目录不存在',
-      'attention.unreadable': 'MEMORY.md 不可读',
       'attention.none': '没有需要立即处理的项目。',
       'attention.noActivity': '还没有任何项目写过记忆。',
 
@@ -428,8 +417,6 @@ window.__ModuleLoader__.load({
       'editor.viewDiskDiff': '查看磁盘差异',
       'editor.reloadDiscard': '重新加载（丢弃草稿）',
       'editor.keepDraft': '保留草稿继续编辑',
-      'editor.limitWarning': '已用 {chars} 字，超过注入限额 {limit}，下一轮注入会截断。',
-      'editor.overLimitChip': '超注入限额',
 
       // injection state. One ladder for every surface (header chips, project
       // list, "needs attention", project summary, file header): the panel says
@@ -456,11 +443,9 @@ window.__ModuleLoader__.load({
       'inject.more': '查看说明',
       'inject.lengthUnits': '长度',
       'inject.onDisk': '磁盘',
-      'inject.reason.stale': '{date} 已 {days} 天未归档',
-      'inject.reason.missing': '工作区目录不存在',
-      'inject.reason.unmeasurable': 'MEMORY.md 无法按完整内容判断',
       'stats.summaryLine': '{projects} 个项目 · {created} 个已创建记忆文件 · {entries} 条',
       'stats.summaryDetail': '「已创建」只表示 MEMORY.md 存在，包括空白文件；条目按全部项目统计。',
+      'stats.summaryGone': ' 其中 {n} 个的目录已不存在。',
       'count.memoryLineUnits': 'MEMORY {n} 条{units}',
       'count.memoryLineNoFile': 'MEMORY 未创建',
       'count.entriesUnits': '{n} 条 · {units}',
@@ -472,7 +457,6 @@ window.__ModuleLoader__.load({
       'attention.partialNote': '只显示前 {shown} 个，共 {total} 个。',
       'attention.showAll': '查看全部',
       'doc.partialDetail': '只显示或只读到文件的一部分：条目数和长度只描述屏幕上的内容。',
-      'panel.backToAll': '返回全部项目',
       'panel.emptyOverview': '暂无项目',
 
       // source mode
@@ -540,7 +524,6 @@ window.__ModuleLoader__.load({
       'dash.needsAttention': 'Needs attention',
       'dash.recentActivity': 'Recent activity',
       'dash.globalMemory': 'Global memory',
-      'dash.neverArchived': 'not archived for {days} days',
       'dash.noProjects': 'No project recognised yet: send one message in a session of that project, then come back and refresh.',
 
       'target.projectMemory': 'MEMORY.md',
@@ -657,7 +640,6 @@ window.__ModuleLoader__.load({
       'layer.legacyReason.invalid_core': 'The "Core Memory" section holds something other than entries (a heading, prose or a code block).',
       'layer.legacyReason.non_entry_content': 'A topic section holds something other than entries, so the file cannot be split reliably.',
       'layer.legacyReason.unknown': 'The file structure cannot be split reliably.',
-      'layer.layered': 'Split: {core} characters of core stay always-on; {topics} topics ({chars} characters) are read on demand.',
       'layer.askModel': 'Have the model draft a split',
       'layer.askModelHint': 'Copy this and send it to the model: it reads the current revision, hands back a whole-file draft, and you preview the diff in "Paste a draft" on this page.',
       'layer.copyPrompt': 'Tidy up my {which} memory by topic: memory_read first for the current body and revision, then split the entries into "Core Memory" (few, needed every turn) and topic sections (read on demand). Give me the whole draft body and its source revision; I will preview it in the panel. Do not write the file yourself. Name each topic section by when to read it (e.g. "Git push times out -> use the local proxy"), not just the noun: the heading is all that is injected.',
@@ -756,7 +738,6 @@ window.__ModuleLoader__.load({
       'settings.followDefault': "following defaults",
       'state.current': "Current",
       'state.missing': "Directory missing",
-      'state.overLimit': "Over limit",
       'state.dailyOnly': "Daily notes only",
       'state.hasMemory': "Has memory",
       'state.currentProject': "Current project",
@@ -775,24 +756,16 @@ window.__ModuleLoader__.load({
       'time.hoursAgo': "{n} h ago",
       'time.daysAgo': "{n} d ago",
       'count.entries': "{n} entries",
-      'count.entriesPercent': "{n} entries · {percent}%",
       'count.matches': "{n} matches",
       'count.days': "{n} d",
-      'count.chipProjects': "Projects {n}",
-      'count.chipWithMemory': "With memory {n}",
-      'count.chipEntries': "Entries {n}",
       'count.chipOverLimit': "Over limit {n}",
       'count.chipPending': "To archive {n}",
       'count.allProjects': "All projects {n}",
       'count.truncatedProjects': "Showing the first {n}; raise \"Max projects shown\" in settings",
-      'count.memoryLine': "MEMORY {n} entries · {bytes}",
-      'count.usedPercent': "{percent}% used",
       'count.bytes': "Bytes",
       'count.latestDaily': "Latest {date}",
-      'attention.overLimit': "Over the injection limit; the next turn truncates it",
       'attention.stale': "{date} has not been archived for {days} days",
       'attention.missing': "The workspace directory does not exist",
-      'attention.unreadable': "MEMORY.md is unreadable",
       'attention.none': "Nothing needs attention right now.",
       'attention.noActivity': "No project has written memory yet.",
       'editor.edit': "Edit",
@@ -838,8 +811,6 @@ window.__ModuleLoader__.load({
       'editor.viewDiskDiff': "View the on-disk diff",
       'editor.reloadDiscard': "Reload (discard the draft)",
       'editor.keepDraft': "Keep the draft and keep editing",
-      'editor.limitWarning': "Using {chars} characters against a {limit}-character limit; the next turn truncates it.",
-      'editor.overLimitChip': "Over the injection limit",
 
       // injection state (see the Chinese block for the ladder)
       'inject.units': "{n} units",
@@ -864,11 +835,9 @@ window.__ModuleLoader__.load({
       'inject.more': "Explain",
       'inject.lengthUnits': "Length",
       'inject.onDisk': "on disk",
-      'inject.reason.stale': "{date} has not been archived for {days} days",
-      'inject.reason.missing': "The workspace directory does not exist",
-      'inject.reason.unmeasurable': "MEMORY.md cannot be judged as a whole",
       'stats.summaryLine': "{projects} projects · {created} with a memory file · {entries} entries",
       'stats.summaryDetail': "Created means MEMORY.md exists, blank files included; entries are counted over every project.",
+      'stats.summaryGone': " {n} of them no longer exist on disk.",
       'count.memoryLineUnits': "MEMORY {n} entries{units}",
       'count.memoryLineNoFile': "MEMORY not created",
       'count.entriesUnits': "{n} entries · {units}",
@@ -880,7 +849,6 @@ window.__ModuleLoader__.load({
       'attention.partialNote': "Showing the first {shown} of {total}.",
       'attention.showAll': "Show all",
       'doc.partialDetail': "Only part of the file is shown or was read: the count and length describe what is on screen.",
-      'panel.backToAll': "Back to all projects",
       'panel.emptyOverview': "No projects yet",
       'source.title': "Enter source mode?",
       'source.bodyAllowed': "Source mode writes the whole file. Structural checks, backups and undo still apply, but one mistake can hit several sections at once. This browser session will not ask again.",
@@ -1021,7 +989,6 @@ window.__ModuleLoader__.load({
       .wbm-chip.ok { color: var(--wbm-ok); border-color: color-mix(in srgb, var(--wbm-ok) 35%, transparent); }
       .wbm-chip.warn { color: var(--wbm-warn); border-color: color-mix(in srgb, var(--wbm-warn) 35%, transparent); }
       .wbm-chip.bad { color: var(--wbm-danger); border-color: color-mix(in srgb, var(--wbm-danger) 35%, transparent); }
-      .wbm-chip.accent { color: var(--wbm-accent); border-color: color-mix(in srgb, var(--wbm-accent) 35%, transparent); }
       /* An injection state that has numbers behind it. A native disclosure:
          the summary is focusable and toggles from the keyboard with no script,
          and keeps its focus after the toggle. */
@@ -3362,7 +3329,7 @@ window.__ModuleLoader__.load({
                   // and none on an empty machine either — the body says "no
                   // projects yet" once, in words.
                   state && totals.projects > 0
-                    ? h('span', { key: 'n', className: 'wbm-chip wbm-chip-quiet', title: t('stats.summaryDetail') }, t('stats.summaryLine', { projects: totals.projects, created: totals.withMemory, entries: totals.entries }))
+                    ? h('span', { key: 'n', className: 'wbm-chip wbm-chip-quiet', title: summaryDetail() }, t('stats.summaryLine', { projects: totals.projects, created: totals.withMemory, entries: totals.entries }))
                     : null,
                   totals.overLimit > 0 ? h('span', { key: 'o', className: 'wbm-chip warn', title: t('count.chipOverLimitDetail') }, t('count.chipOverLimit', { n: totals.overLimit })) : null,
                   totals.stale > 0 ? h('span', { key: 's', className: 'wbm-chip warn', title: t('count.chipPendingDetail', { days: state?.archiveAfterDays ?? 30 }) }, t('count.chipPending', { n: totals.stale })) : null,
@@ -4118,6 +4085,20 @@ window.__ModuleLoader__.load({
             ? h('div', { className: 'wbm-banner warn' }, injectionBanner(project.injection))
             : null,
         )
+      }
+
+      /**
+       * The tooltip behind the overview's one-line summary.
+       *
+       * "12 projects" counted workspaces whose directory is long gone, and
+       * looked perfectly healthy doing it. They are still known projects — the
+       * count is right — so the count stays and the tooltip says how many of
+       * them no longer exist on disk.
+       */
+      function summaryDetail() {
+        const gone = Number(totals.missing) || 0
+        const base = t('stats.summaryDetail')
+        return gone > 0 ? base + t('stats.summaryGone', { n: gone }) : base
       }
 
       /**
@@ -4937,6 +4918,7 @@ window.__ModuleLoader__.load({
         runtime,
         ZH,
         EN,
+        MESSAGES,
         humanBytes,
         ratio,
         filterEntries,

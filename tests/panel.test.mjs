@@ -8,7 +8,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, { beforeEach } from 'node:test'
@@ -1998,6 +1998,55 @@ test('no surface prints a raw revision, a KB% or a next-turn promise any more', 
       assert.doesNotMatch(body, /KB%|MB%|B%/, `${name}: bytes in a percent slot`)
       assert.doesNotMatch(body, /下一轮注入会截断|已超注入限额|超注入限额/, `${name}: a promise about the next turn`)
     }
+  } finally {
+    restore()
+  }
+})
+
+test('no dictionary entry is left behind with nothing showing it', () => {
+  // Copy that nothing renders is worse than no copy at all: it reads as a
+  // live sentence to the next reader, and two of these still promised "the
+  // next turn truncates it" after the panel stopped saying so anywhere.
+  const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+  const zh = source.slice(source.indexOf('const ZH = {'), source.indexOf('const EN = {'))
+  const keys = [...zh.matchAll(/^\s*'([a-z][a-zA-Z0-9]*\.[a-zA-Z0-9_.-]+)':/gm)].map((match) => match[1])
+  const used = new Set([...source.matchAll(/\bt\(\s*'([a-z][a-zA-Z0-9]*\.[a-zA-Z0-9_.-]+)'/g)].map((match) => match[1]))
+  // Keys reached by a computed name are not literals: `describeCode`'s table,
+  // the `layer.legacyReason.*` / `inject.why.*` families, and keys the code
+  // names inside a ternary. "Mentioned" means mentioned in the *code*, after
+  // the dictionaries — a key's own definition does not count as a use.
+  const code = source.slice(source.indexOf('function bindCopy'))
+  const mentioned = new Set([...code.matchAll(/'([a-z][a-zA-Z0-9]*\.[a-zA-Z0-9_.-]+)'/g)].map((match) => match[1]))
+  const prefixes = ['layer.legacyReason.', 'inject.why.']
+  const dead = [...new Set(keys)].filter((key) => !mentioned.has(key) && !prefixes.some((prefix) => key.startsWith(prefix))).sort()
+  // 21 keys were already orphaned before the panel-tag work (including two
+  // `code.*` keys that `MESSAGES` deliberately routes elsewhere); removing
+  // them is not this change's to make. What must hold is that the set never
+  // grows.
+  const preExisting = [
+    'code.read_only_target', 'code.unknown_project',
+    'common.retry', 'dialog.confirmDelete', 'dialog.confirmDeleteSection', 'dialog.conflictBody', 'dialog.pruneBody',
+    'dialog.sourceBody', 'doc.addEntry', 'doc.searchInDoc', 'doc.sectionBody', 'doc.sectionHeading', 'doc.sourceMode',
+    'file.empty', 'file.noMemory', 'file.noMemoryHint', 'panel.allProjects', 'rail.userMemory', 'settings.home',
+    'settings.panelWriteHint', 'settings.revisionLine',
+  ]
+  assert.deepEqual(dead, preExisting, 'dictionary keys nothing renders (the pre-existing orphans, and no new ones)')
+  void used
+})
+
+test('a project count that includes gone directories says so', async () => {
+  // P2: "项目 12" looked healthy while three of the twelve no longer existed
+  // on disk. The count is still right — they are known projects — but the
+  // tooltip now says how many of them are gone.
+  const state = stateFor()
+  state.totals = { ...state.totals, projects: 12, missing: 3 }
+  const restore = installTimers()
+  try {
+    installFetch({ state })
+    const tree = await runtime.settle(MemoryOverviewPanel, {})
+    const chip = walk(tree).find((node) => String(node.props?.className ?? '').includes('wbm-chip-quiet'))
+    assert.ok(chip, 'the summary chip is on screen')
+    assert.match(String(chip.props.title), /3 个的目录已不存在/, 'the tooltip names the gone directories')
   } finally {
     restore()
   }
