@@ -3919,8 +3919,9 @@ window.__ModuleLoader__.load({
             h('span', null, docTitle()),
             target === 'profile' ? h('span', { className: 'wbm-chip' }, t('file.readOnly')) : null,
             target === 'project-daily' ? h('span', { className: 'wbm-chip' }, t('editor.append')) : null,
-            doc ? h('span', { className: 'wbm-chip' }, t('count.entriesPercent', { n: doc.entries ?? 0, percent: humanBytes(doc.bytes) })) : null,
-            doc?.revision ? h('span', { className: 'wbm-chip' }, `rev ${doc.revision}`) : null,
+            doc ? h('span', { className: 'wbm-chip', title: doc.partial ? t('doc.partialDetail') : undefined }, fileCount(doc)) : null,
+            // The revision stays in the conflict dialog, where it is the token
+            // being compared; in a header it was sixteen unexplained hex digits.
           ),
           doc?.path ? h('div', { className: 'wbm-doc-path' }, doc.path) : null,
           h(
@@ -3957,6 +3958,26 @@ window.__ModuleLoader__.load({
         )
       }
 
+      /**
+       * The count and length a file header shows.
+       *
+       * One number for "how long is this file", in the unit the injection
+       * limit is stated in — never bytes in the percent slot, which is where
+       * `18.2 KB%` came from. `chars` is `null` when only a prefix was read,
+       * and then no length is claimed. `partial` says the rows on screen are
+       * part of the file, and the count says so instead of passing for the
+       * whole.
+       *
+       * @param {object} doc - the `/content` body.
+       */
+      function fileCount(doc) {
+        const units = humanUnits(doc.chars)
+        const shown = Boolean(doc.partial)
+        if (shown && units) return t('count.entriesShownUnits', { n: doc.entries ?? 0, units })
+        if (shown) return t('count.entriesShown', { n: doc.entries ?? 0 })
+        return units ? t('count.entriesUnits', { n: doc.entries ?? 0, units }) : t('count.entries', { n: doc.entries ?? 0 })
+      }
+
       function projectSummary() {
         if (!project) {
           const rows = state?.projects ?? []
@@ -3987,8 +4008,10 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { className: 'wbm-stats' },
-            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('stats.entries')), h('div', { className: 'v' }, project.entries)),
-            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('count.bytes')), h('div', { className: 'v' }, humanBytes(project.bytes))),
+            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('stats.entries')), h('div', { className: 'v' }, project.hasMemory ? project.entries ?? '—' : '—')),
+            // Length in the limit's unit; the size on disk stays, labelled as such.
+            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('inject.lengthUnits')), h('div', { className: 'v' }, humanUnits(project.chars) || '—')),
+            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, `${t('count.bytes')} · ${t('inject.onDisk')}`), h('div', { className: 'v' }, project.hasMemory ? humanBytes(project.bytes) : '—')),
             h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('stats.dailyFiles')), h('div', { className: 'v' }, project.daily)),
             h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('dash.recentActivity')), h('div', { className: 'v', style: { fontSize: '13px' } }, relativeTime(project.lastActiveAt))),
           ),
@@ -4005,9 +4028,25 @@ window.__ModuleLoader__.load({
               : null,
           ),
           project.overLimit
-            ? h('div', { className: 'wbm-banner warn' }, t('editor.limitWarning', { chars: project.chars, limit: limits.project }))
+            ? h('div', { className: 'wbm-banner warn' }, injectionBanner(project.injection))
             : null,
         )
+      }
+
+      /**
+       * The alert sentence for the project summary.
+       *
+       * It used to say "using N characters against a limit of L; the next turn
+       * truncates it" whatever the mode. For a split file neither half was
+       * true: the limit it named is not the one in force, and nothing is cut
+       * by length — whole entries are left out of the core. The sentence now
+       * is the one state every surface shares, plus the numbers behind it.
+       * It never promises what the *next* turn does: a session on
+       * `first-turn` keeps the assembly it already has.
+       */
+      function injectionBanner(injection) {
+        const view = injectionState(injection)
+        return [view.label, view.detail].filter(Boolean).join(' ')
       }
 
       function detail() {
