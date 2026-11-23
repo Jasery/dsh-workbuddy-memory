@@ -9,6 +9,7 @@ import test from 'node:test'
 import { normalizeConfig } from '../src/config.js'
 import { readTextSafe } from '../src/fsx.js'
 import { createProjectCatalog } from '../src/host/catalog.js'
+import { ARCHIVE_AFTER_DAYS } from '../src/write/archive.js'
 
 const LAYERED = { inject: { mode: 'layered' } }
 const OVER_SHARE = `# M\n\n## 常驻记忆\n${Array.from({ length: 6 }, (_, index) => `- 核心条目 ${index} ${'重要'.repeat(140)}`).join('\n')}\n`
@@ -281,4 +282,20 @@ test('a project whose directory is gone is attention, and is counted on its own'
   assert.equal(page.totals.missing, 1)
   assert.deepEqual(page.attention[0].reasons, ['missing'])
   assert.equal(page.attention[0].exists, false)
+})
+test('the archive warning and the default archive preview share one day boundary', () => {
+  // Acceptance 8: a note exactly 30 days old is already in the default archive
+  // preview, so it is already "to archive" — the warning used to wait for 31.
+  const ws = workspace()
+  ws.add('d29', '# M\n\n## 常驻记忆\n- one\n', [daysAgo(29)])
+  ws.add('d30', '# M\n\n## 常驻记忆\n- one\n', [daysAgo(30)])
+  ws.add('d31', '# M\n\n## 常驻记忆\n- one\n', [daysAgo(31)])
+  const page = ws.open().list()
+  const stale = (name) => page.rows.find((row) => row.name === name).stale
+
+  assert.equal(stale('d29'), false)
+  assert.equal(stale('d30'), true, 'exactly 30 days is a candidate, so it is flagged')
+  assert.equal(stale('d31'), true)
+  assert.equal(page.totals.stale, 2)
+  assert.equal(ARCHIVE_AFTER_DAYS, 30)
 })

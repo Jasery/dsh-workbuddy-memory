@@ -26,7 +26,7 @@ import { isWritable, readTextSafe } from '../fsx.js'
 import { appendToSection, editEntry, editEntryAt, removeSection, replaceSectionBody, validateDocument } from '../markdown.js'
 import { analyzeMemory } from '../layers.js'
 import { resolveLanguage } from '../locale.js'
-import { PLAN_LIMITS, createPlanStore, newPlanId, nextArchivePath, readMoveSource, scanCandidates } from './archive.js'
+import { ARCHIVE_AFTER_DAYS, PLAN_LIMITS, createPlanStore, newPlanId, nextArchivePath, readMoveSource, scanCandidates } from './archive.js'
 import {
   appendFileDurable,
   contentRevision,
@@ -819,7 +819,7 @@ export function createStore({ cfg, stateDir, onCommit }) {
     const dir = probe.project.dir
     if (!dir || !existsSync(dir)) return fail('no_store', { dir })
 
-    const beforeDays = Math.min(Math.max(Number(input.beforeDays ?? 30) || 0, 1), 3650)
+    const beforeDays = Math.min(Math.max(Number(input.beforeDays ?? ARCHIVE_AFTER_DAYS) || 0, 1), 3650)
     const dates = normalizeDates(input.dates)
     if (!dates.ok) return fail('bad_date', { dates: input.dates })
 

@@ -22,6 +22,7 @@ import { summarizeMemory } from '../layers.js'
 import { readTextSafe } from '../fsx.js'
 import { contentRevision } from '../write/fslock.js'
 import { ACTIONS, resolveTarget, TARGETS } from '../write/store.js'
+import { ARCHIVE_AFTER_DAYS } from '../write/archive.js'
 import { overviewOf } from './catalog.js'
 
 const PREFIX = '/workbuddy-memory'
@@ -407,6 +408,9 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
       writeEnabled: cfg.write.enabled,
       allowWriteActions: cfg.ui.allowWriteActions,
       limits: cfg.inject.limits,
+      // The archive threshold the overview counts with, so the panel opens its
+      // archive dialog on the same day boundary the warning is about.
+      archiveAfterDays: ARCHIVE_AFTER_DAYS,
       // What the panel needs to know before it says anything about injection:
       // whether there is any, in which mode, and for which sources.
       inject: { enabled: Boolean(cfg.inject.enabled), mode: cfg.inject.mode, project: Boolean(cfg.inject.project), coreBudget: cfg.inject.coreBudget },
@@ -591,7 +595,7 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
         case 'prune':
           return await store.prune(
             {
-              beforeDays: Number(input.beforeDays ?? 30),
+              beforeDays: Number(input.beforeDays ?? ARCHIVE_AFTER_DAYS),
               dates: Array.isArray(input.dates) ? input.dates : undefined,
               dryRun: input.dryRun !== false,
               // The plan is what makes an apply safe: it binds the archive to

@@ -40,6 +40,7 @@ import { measureSource } from '../render.js'
 import { analyzeMemory } from '../layers.js'
 import { createTranslator, resolveLanguage } from '../locale.js'
 import { contentRevision } from '../write/fslock.js'
+import { isArchivable } from '../write/archive.js'
 import { ageInDays } from '../env.js'
 
 /** Parse results held for re-judging, bounded so a long session cannot grow them without end. */
@@ -316,7 +317,9 @@ export function createProjectCatalog({ cfg, recent, registry, t = createTranslat
     // `overLimit` and `status` remain as projections of `injection` for callers
     // written against the first panel; the panel itself reads `injection`.
     const overLimit = injection.overLimit
-    const stale = daily.oldestAgeDays !== null && daily.oldestAgeDays > 30
+    // The same boundary the default archive preview uses, so "to archive"
+    // here and the dialog's first list are the same files.
+    const stale = isArchivable(daily.oldestAgeDays)
     const status = missing
       ? 'missing'
       : injection.status === 'unmeasurable'

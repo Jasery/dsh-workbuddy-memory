@@ -514,3 +514,33 @@ test('the attention preview is bounded by default and complete on request', asyn
   const bogus = JSON.parse((await call('/workbuddy-memory/state?attention=not-a-number')).body)
   assert.equal(bogus.attention.length, 8)
 })
+test('the archive default comes from one place, and the action falls back to it', async () => {
+  // Acceptance 8, through the route: with `beforeDays` omitted, a preview must
+  // cover exactly the files the overview flagged — 30 and 31 days, not 29.
+  const cwd = mkdtempSync(join(tmpdir(), 'wbm-routes-age-'))
+  const memDir = join(cwd, '.workbuddy', 'memory')
+  mkdirSync(memDir, { recursive: true })
+  const date = (days) => {
+    const day = new Date()
+    day.setDate(day.getDate() - days)
+    return [day.getFullYear(), String(day.getMonth() + 1).padStart(2, '0'), String(day.getDate()).padStart(2, '0')].join('-')
+  }
+  for (const days of [29, 30, 31]) writeFileSync(join(memDir, `${date(days)}.md`), '- 一天\n', 'utf8')
+
+  const { call } = await harness({ recent: { cwd }, config: { ui: { allowWriteActions: true } }, catalog: true })
+  const state = JSON.parse((await call('/workbuddy-memory/state')).body)
+  assert.equal(state.archiveAfterDays, 30, 'the panel reads the default from /state')
+  assert.equal(state.totals.stale, 1)
+  assert.equal(state.projects[0].stale, true)
+
+  const preview = JSON.parse(
+    (await call('/workbuddy-memory/action', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'prune', dryRun: true }),
+    })).body,
+  )
+  assert.equal(preview.ok, true)
+  assert.equal(preview.beforeDays, 30)
+  assert.deepEqual(preview.candidates.map((row) => row.date).sort(), [date(30), date(31)].sort(), 'the same two files the warning is about')
+})
