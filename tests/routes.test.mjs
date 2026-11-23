@@ -544,3 +544,44 @@ test('the archive default comes from one place, and the action falls back to it'
   assert.equal(preview.beforeDays, 30)
   assert.deepEqual(preview.candidates.map((row) => row.date).sort(), [date(30), date(31)].sort(), 'the same two files the warning is about')
 })
+
+test('content gives the whole file length in code units, or none when it only read a prefix', async () => {
+  // Acceptance 6: the header shows one number for "how long is this file", in
+  // the unit the injection limit is stated in. When only a prefix was read
+  // there is no such number, and inventing the prefix's length is a lie.
+  const cwd = mkdtempSync(join(tmpdir(), 'wbm-routes-length-'))
+  const memDir = join(cwd, '.workbuddy', 'memory')
+  mkdirSync(memDir, { recursive: true })
+  const memory = join(memDir, 'MEMORY.md')
+  const { call } = await harness({ recent: { cwd }, catalog: true })
+  const read = async () => JSON.parse((await call('/workbuddy-memory/content?target=project-memory')).body)
+
+  const small = '# T\n\n- 顶部\n\n## 小节\n- 中文😀\n'
+  writeFileSync(memory, small, 'utf8')
+  const whole = await read()
+  assert.equal(whole.chars, small.length, 'UTF-16 units: the emoji counts as two')
+  assert.equal(whole.truncated, false)
+  assert.equal(whole.entries, 2, 'the bullet above the first heading is an entry')
+
+  // Display-truncated: the whole file was read, so its length is known, but
+  // only the first slice is sent.
+  writeFileSync(memory, `# T\n\n${'- 条目\n'.repeat(70000)}`, 'utf8')
+  const cut = await read()
+  assert.equal(cut.truncated, true, 'what is shown is part of the file')
+  assert.equal(cut.text.length, 262144)
+  assert.equal(cut.chars, '# T\n\n'.length + 5 * 70000, 'the whole file length is still known')
+  assert.equal(cut.revision, null)
+
+  // Prefix only: the file is past the read cap, so no length is known at all.
+  writeFileSync(memory, 'x'.repeat(2 * 1024 * 1024 + 10), 'utf8')
+  const prefix = await read()
+  assert.equal(prefix.truncated, true)
+  assert.equal(prefix.chars, null, 'not the prefix length')
+  assert.equal(prefix.bytes, 2 * 1024 * 1024 + 10, 'the size on disk is still reported')
+  assert.equal(prefix.revision, null)
+
+  const state = JSON.parse((await call('/workbuddy-memory/state')).body)
+  assert.equal(state.projects[0].chars, null, 'the row does not invent a length either')
+  assert.equal(state.projects[0].injection.status, 'unmeasurable')
+  assert.equal(state.stores.project.chars, null)
+})

@@ -141,13 +141,26 @@ function statSafe(path) {
  * must never be written back. The section editor splices the body it shows into
  * the full file, so sending a truncated body would silently delete the tail —
  * the panel disables L2/L3 when this flag is set, and `/action` refuses too.
+ *
+ * `chars` is the whole file's length in UTF-16 code units — the unit the
+ * injection limit is stated in — or `null` when only a prefix was read. It is
+ * never the length of what is shown: the header says "how long is this file",
+ * and the prefix's length is not that number. A file past the read cap arrives
+ * here as a prefix with `truncated: true`, and then nothing about its length
+ * or its entries is claimed. When the display alone was cut, the whole file
+ * was still read, so `chars` is known and `partial` says the *rows* are a
+ * prefix of it.
  */
 function describe(path, limit = MAX_TEXT_CHARS) {
   if (!path || !existsSync(path)) return null
   const file = readTextSafe(path, { maxBytes: MAX_BODY_BYTES })
-  if (!file.ok) return { path, exists: true, readable: false, error: file.error, bytes: 0, entries: 0, sections: [] }
+  if (!file.ok) return { path, exists: true, readable: false, error: file.error, bytes: 0, chars: null, entries: 0, sections: [] }
 
-  const truncated = file.text.length > limit
+  // Only a prefix reached memory: the file is past the read cap. `file.text`
+  // ends wherever the cap fell, possibly in the middle of a line.
+  const prefixOnly = file.truncated
+  const fullChars = prefixOnly ? null : file.text.length
+  const truncated = prefixOnly || file.text.length > limit
   const text = truncated ? file.text.slice(0, limit) : file.text
   const lines = text.split(/\r?\n/)
   // Entries are collected from each section's own line range rather than by
@@ -182,13 +195,17 @@ function describe(path, limit = MAX_TEXT_CHARS) {
     exists: true,
     readable: true,
     bytes: file.bytes,
-    chars: file.text.length,
+    chars: fullChars,
     // A revision must identify the bytes the store will hash. When either the
     // read or the display was capped, the full text is unavailable, so no
     // revision is reported rather than a hash of a prefix the store could never
     // match — that mismatch is what left the panel permanently on `conflict`.
-    revision: truncated || file.truncated ? null : contentRevision(file.text),
+    revision: truncated ? null : contentRevision(file.text),
     truncated,
+    // The rows and the entry count describe what is shown, which is part of
+    // the file. `true` whenever `truncated` is: nothing below is a whole-file
+    // fact.
+    partial: truncated,
     text,
     entries: sections.reduce((sum, section) => sum + section.entries.length, 0),
     sections,
@@ -431,7 +448,8 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
           bytes: probe.project.memoryBytes,
           writable: probe.project.writable,
           entries: project?.entries ?? 0,
-          chars: project?.chars ?? 0,
+          // `null` when only a prefix was read: an unmeasured length is not 0.
+          chars: project?.chars ?? null,
           revision: project?.revision ?? null,
           mtime: project?.mtime ?? null,
           // `layering.mode === 'legacy'` is the state the panel has to surface:
@@ -450,7 +468,7 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
           bytes: probe.user.memoryBytes,
           writable: probe.user.writable,
           entries: user?.entries ?? 0,
-          chars: user?.chars ?? 0,
+          chars: user?.chars ?? null,
           revision: user?.revision ?? null,
           mtime: user?.mtime ?? null,
           layering: layeringOf(probe.user.memoryPath),
@@ -497,6 +515,10 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
       date,
       path: resolved.path,
       bytes: described.bytes,
+      // The whole file's length in UTF-16 code units, or `null` when only a
+      // prefix could be read. `partial` says the rows are part of the file.
+      chars: described.chars,
+      partial: described.partial,
       revision: described.revision,
       truncated: described.truncated,
       entries: described.entries,
