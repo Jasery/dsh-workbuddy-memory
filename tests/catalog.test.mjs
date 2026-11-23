@@ -299,3 +299,27 @@ test('the archive warning and the default archive preview share one day boundary
   assert.equal(page.totals.stale, 2)
   assert.equal(ARCHIVE_AFTER_DAYS, 30)
 })
+
+test('the master injection switch reaches the catalog, and a file that is over budget is not flagged while it is off', () => {
+  // Acceptance 4, through the real catalog: with `inject.enabled` off nothing
+  // is injected, so nothing is over budget — whatever the file looks like.
+  const ws = workspace()
+  ws.add('over', OVER_SHARE)
+  const { list } = ws.open()
+  const flagged = list().rows[0]
+  assert.equal(flagged.injection.status, 'core-over-budget')
+  assert.equal(flagged.overLimit, true)
+  assert.equal(list().totals.overLimit, 1)
+
+  ws.cfg.inject.enabled = false
+  const off = list()
+  assert.equal(off.rows[0].injection.status, 'disabled')
+  assert.equal(off.rows[0].overLimit, false)
+  assert.equal(off.totals.overLimit, 0, 'the overview count follows the switch')
+  assert.equal(off.attentionTotal, 0)
+
+  ws.cfg.inject.enabled = true
+  const back = list()
+  assert.equal(back.rows[0].injection.status, 'core-over-budget', 'back on, judged from the current config')
+  assert.equal(back.totals.overLimit, 1)
+})
