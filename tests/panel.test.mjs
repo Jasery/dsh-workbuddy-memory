@@ -2051,3 +2051,59 @@ test('a project count that includes gone directories says so', async () => {
     restore()
   }
 })
+
+test('after "show all", a poll does not shrink the attention list back to the preview', async () => {
+  // The panel polls /state every few seconds, without `attention=all`. A
+  // list expanded by hand was cut back to the preview on the next poll —
+  // three seconds after the click — with nothing to say it had happened.
+  const N = 12
+  const state = stateFor()
+  state.attentionTotal = N
+  state.attentionMore = { 'over-limit': N - 8, stale: 0, missing: 0, unmeasurable: 0 }
+  const row = (i) => ({ key: `k${i}`, name: `p${i}`, title: `p${i}`, hasMemory: true, latestDaily: null, injection: judged('core-over-budget', { dropped: 1 }), reasons: ['over-limit'] })
+  const calls = installFetch({
+    state,
+    content: () => projectContent,
+  })
+  // Override the state answer: the host sends the preview unless asked for all.
+  const base = globalThis.fetch
+  globalThis.fetch = async (url, init = {}) => {
+    if (init.method === 'POST') return base(url, init)
+    const href = String(url)
+    calls.gets.push(href)
+    // Exactly what the host does: the preview unless the request asks for all.
+    const body = href.includes('/content') ? projectContent : { ...state, attention: Array.from({ length: href.includes('attention=all') ? N : 8 }, (_, i) => row(i)) }
+    return { ok: true, status: 200, json: async () => body }
+  }
+  const restore = installTimers()
+  try {
+    let tree = await runtime.settle(MemoryOverviewPanel, OVERVIEW)
+    // Only the attention rows: "view" also appears once, for the user profile.
+    const count = () => {
+      let inAttention = false
+      let seen = 0
+      for (const node of walk(tree)) {
+        if (node.type === 'div' && String(node.props?.className ?? '').includes('wbm-h2') && text(node) === '需要关注') inAttention = true
+        else if (node.type === 'div' && String(node.props?.className ?? '').includes('wbm-h2')) inAttention = false
+        else if (inAttention && node.type === 'button' && text(node) === '查看') seen += 1
+      }
+      return seen
+    }
+    assert.equal(count(), 8, 'the preview is bounded')
+    const showAll = walk(tree).find((node) => node.type === 'button' && text(node) === '查看全部')
+    assert.ok(showAll, 'and offers the rest')
+    tree = await runtime.fire(showAll, 'onClick', MemoryWorkspace, OVERVIEW)
+    assert.equal(count(), N, 'the expanded list arrived')
+    assert.ok(calls.gets.some((url) => url.includes('attention=all')), 'fetched by the explicit request')
+
+    // The next poll: the same component, polled again.
+    const poll = walk(tree).find((node) => node.type === 'button' && node.props?.title === '刷新')
+    assert.ok(poll, 'the refresh control is on screen')
+    tree = await runtime.fire(poll, 'onClick', MemoryWorkspace, OVERVIEW)
+    assert.equal(count(), N, 'a poll does not shrink the expanded list')
+    assert.doesNotMatch(text(expand(tree)), /只显示前 8 个/, 'and does not claim only 8 are shown')
+  } finally {
+    globalThis.fetch = base
+    restore()
+  }
+})

@@ -42,6 +42,15 @@ window.__ModuleLoader__.load({
     const CORE_BUDGET_MAX = 20000
 
     /**
+     * The most flagged projects the host sends, even for `attention=all`.
+     *
+     * Mirrors `ATTENTION_LIMIT` in `src/host/catalog.js`; the browser bundle
+     * cannot import it. The two must agree, or the panel offers a "show all"
+     * that fetches nothing more.
+     */
+    const ATTENTION_LIMIT = 200
+
+    /**
      * The `inject.coreBudget` value the plugin will actually run with.
      *
      * Mirrors `num(inject.coreBudget, 4000, 4000, 20000)` in `config.js` — the
@@ -2280,6 +2289,10 @@ window.__ModuleLoader__.load({
       const [undo, setUndo] = React.useState(null)
       const [stale, setStale] = React.useState(false)
       const [railOpen, setRailOpen] = React.useState(false)
+      // Set once the capped "all" list has been asked for: every poll after it
+      // fetches the same list, and the note stops offering a further page.
+      // A ref on purpose — see `refresh`.
+      const wantAllAttention = React.useRef(false)
       // Both management surfaces keep their own frozen target: a list or a diff
       // is about one file, and it must not be reused for another one that
       // happens to be open when the response arrives.
@@ -2315,22 +2328,35 @@ window.__ModuleLoader__.load({
         if (match) setActiveKey(match.key)
       }, [mode, effectiveKey, state])
 
-      const refresh = React.useCallback(async () => {
-        const suffix = effectiveKey ? `?project=${encodeURIComponent(effectiveKey)}` : ''
-        try {
-          const next = await getJson(`${API}/state${suffix}`)
-          setState(next)
-          setError('')
-          if (effectiveKey && next.stores?.project) {
-            setDetails((current) => ({ ...current, [effectiveKey]: next.stores.project }))
+      const refresh = React.useCallback(
+        async (options = {}) => {
+          // A person who asked for the whole attention list keeps getting it on
+          // every poll. Fetching the preview again cut the list back to eight
+          // a few seconds after the click, with nothing to say it had happened.
+          // This is a ref, not state: the flag only picks a URL, and keeping
+          // it out of the render keeps `refresh` stable, so flipping it does
+          // not re-run the polling effect and fetch twice.
+          const everything = options.attention === 'all' || wantAllAttention.current
+          const params = []
+          if (effectiveKey) params.push(`project=${encodeURIComponent(effectiveKey)}`)
+          if (everything) params.push('attention=all')
+          const suffix = params.length ? `?${params.join('&')}` : ''
+          try {
+            const next = await getJson(`${API}/state${suffix}`)
+            setState(next)
+            setError('')
+            if (effectiveKey && next.stores?.project) {
+              setDetails((current) => ({ ...current, [effectiveKey]: next.stores.project }))
+            }
+            return next
+          } catch (cause) {
+            const code = String(cause?.message ?? cause)
+            setError(describeCode(code))
+            return null
           }
-          return next
-        } catch (cause) {
-          const code = String(cause?.message ?? cause)
-          setError(describeCode(code))
-          return null
-        }
-      }, [effectiveKey])
+        },
+        [effectiveKey],
+      )
 
       React.useEffect(() => {
         refresh()
@@ -2818,14 +2844,10 @@ window.__ModuleLoader__.load({
 
       /** Ask the host for the whole attention list, past the preview bound. */
       async function loadAllAttention() {
-        const suffix = effectiveKey ? `?project=${encodeURIComponent(effectiveKey)}&attention=all` : '?attention=all'
-        try {
-          const next = await getJson(`${API}/state${suffix}`)
-          setState(next)
-          setError('')
-        } catch (cause) {
-          setError(describeCode(String(cause?.message ?? cause)))
-        }
+        // Flip the flag first so a poll that lands mid-request also asks for
+        // the whole list, then fetch it now rather than waiting for an effect.
+        wantAllAttention.current = true
+        return refresh({ attention: 'all' })
       }
 
       // ── version history ────────────────────────────────────────────────────
@@ -3476,9 +3498,12 @@ window.__ModuleLoader__.load({
                       'div',
                       { className: 'wbm-note', style: { padding: '6px 8px' } },
                       t('attention.partialNote', { shown: attention.length, total: attentionTotal }),
-                      ' ',
-                      h('button', { type: 'button', className: 'wbm-btn', onClick: loadAllAttention }, t('attention.showAll')),
-                    )
+                      // The host caps the list even for "all"; once that cap
+                      // has been fetched there is no further page to ask for,
+                      // and a "show all" that cannot would be a false promise.
+                      wantAllAttention.current && flagged.length >= ATTENTION_LIMIT
+                        ? null
+                        : h('button', { type: 'button', className: 'wbm-btn', onClick: loadAllAttention }, t('attention.showAll')),                    )
                   : null,
               )
             : h('div', { className: 'wbm-note', style: { padding: '12px 0' } }, t('attention.none')),

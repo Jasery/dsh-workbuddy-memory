@@ -56,6 +56,34 @@ const NO_FILE = Object.freeze({ exists: false, read: 'missing' })
 export const ATTENTION_PREVIEW = 8
 
 /**
+ * The most flagged projects `/state` ever carries, for any value of the
+ * `attention` parameter. "All" is one click rather than a timer, but on a
+ * machine with hundreds of flagged projects it was 208 KiB per request
+ * (measured at 500), growing without bound. A person scans a page and asks
+ * again; `attentionMore` still says what is past the cap.
+ */
+export const ATTENTION_LIMIT = 200
+
+/**
+ * How many flagged projects a request carries, from its `attention` value.
+ *
+ * `'all'` and any number are clamped to `ATTENTION_LIMIT`; anything that is
+ * not a usable positive number — missing, empty, `0`, negative, `Infinity`,
+ * `NaN`, text — is the preview bound. A preview of nothing is not a useful
+ * reading of "0", and `Infinity` is not a number of projects.
+ *
+ * @param {string|number|undefined} attention
+ * @returns {number}
+ */
+export function attentionBound(attention) {
+  if (attention === undefined || attention === null || attention === '') return ATTENTION_PREVIEW
+  if (attention === 'all') return ATTENTION_LIMIT
+  const value = Number(attention)
+  if (!Number.isFinite(value) || value <= 0) return ATTENTION_PREVIEW
+  return Math.min(Math.floor(value), ATTENTION_LIMIT)
+}
+
+/**
  * Why a project needs attention, in a stable order. Several at once is the
  * normal case — a long-neglected project is over budget *and* behind on
  * archiving — and listing each reason once keeps the summary counts and the
@@ -95,7 +123,7 @@ export function totalsOf(rows) {
  */
 export function overviewOf(rows, attention) {
   const flagged = rows.filter((row) => reasonsOf(row).length > 0)
-  const shown = attention === 'all' ? flagged.length : Math.max(0, Math.min(Number(attention) || ATTENTION_PREVIEW, flagged.length))
+  const shown = Math.min(attentionBound(attention), flagged.length)
   const preview = flagged.slice(0, shown).map((row) => ({
     key: row.key,
     name: row.name,

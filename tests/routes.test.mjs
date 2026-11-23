@@ -9,7 +9,7 @@ import { Readable } from 'node:stream'
 import test from 'node:test'
 
 import { normalizeConfig } from '../src/config.js'
-import { createProjectCatalog } from '../src/host/catalog.js'
+import { ATTENTION_LIMIT, createProjectCatalog } from '../src/host/catalog.js'
 import { createTranslator } from '../src/locale.js'
 import { registerRoutes } from '../src/host/routes.js'
 import { createStore } from '../src/write/store.js'
@@ -584,4 +584,35 @@ test('content gives the whole file length in code units, or none when it only re
   assert.equal(state.projects[0].chars, null, 'the row does not invent a length either')
   assert.equal(state.projects[0].injection.status, 'unmeasurable')
   assert.equal(state.stores.project.chars, null)
+})
+
+test('the full attention list is capped too, so /state cannot grow without bound', async () => {
+  // `?attention=all` is one click, not a timer — but "all" on a machine with
+  // hundreds of flagged projects was 208 KiB per request (measured, 500
+  // projects), growing linearly. A person scans a page and asks again; the
+  // cap is high enough that nobody paging through it notices, and low enough
+  // that the wire stays small.
+  const root = mkdtempSync(join(tmpdir(), 'wbm-routes-cap-'))
+  // More flagged projects than the cap, so the cap is what stops the list.
+  const total = ATTENTION_LIMIT + 40
+  const seen = manyProjects(root, total, Array.from({ length: total }, (_, index) => index))
+  const { call } = await harness({ recent: { cwd: null, seen }, catalog: true })
+
+  const all = JSON.parse((await call('/workbuddy-memory/state?attention=all')).body)
+  assert.equal(all.attentionTotal, total)
+  assert.ok(all.attention.length < total, `the full list is capped: ${all.attention.length}`)
+  assert.equal(all.attention.length, ATTENTION_LIMIT, 'at the documented limit')
+  assert.equal(all.attentionMore['over-limit'], total - ATTENTION_LIMIT, 'and it still says how many are past it')
+
+  // An explicit number above the limit is clamped to it, not honoured.
+  const big = JSON.parse((await call('/workbuddy-memory/state?attention=100000')).body)
+  assert.equal(big.attention.length, ATTENTION_LIMIT)
+
+  // Nonsense values fall back to the preview bound; 0 and negatives mean the
+  // preview bound too (a preview of nothing is not a useful reading of "0").
+  for (const value of ['not-a-number', '0', '-5', 'Infinity', 'NaN', '']) {
+    const page = JSON.parse((await call(`/workbuddy-memory/state?attention=${encodeURIComponent(value)}`)).body)
+    assert.equal(page.attention.length, Math.min(8, total), `attention=${JSON.stringify(value)}`)
+    assert.equal(page.attentionTotal, total, 'the total is never affected by the bound')
+  }
 })
