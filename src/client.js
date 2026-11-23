@@ -1649,14 +1649,6 @@ window.__ModuleLoader__.load({
       return `${(n / 1024 / 1024).toFixed(1)} MB`
     }
 
-    function ratio(bytes, limit) {
-      const b = Number(bytes) || 0
-      const l = Number(limit) || 0
-      if (l <= 0) return { value: 0, percent: 0, level: 'none' }
-      const raw = b / l
-      return { value: Math.min(raw, 1), percent: Math.round(raw * 100), level: raw >= 1 ? 'over' : raw >= 0.8 ? 'warn' : 'ok' }
-    }
-
     /**
      * A file length in the unit the injection limit is stated in.
      *
@@ -2439,7 +2431,6 @@ window.__ModuleLoader__.load({
         : null
       const user = state?.stores?.user ?? null
       const profile = state?.stores?.profile ?? null
-      const limits = state?.limits ?? {}
       const totals = state?.totals ?? { projects: 0, withMemory: 0, entries: 0, dailyFiles: 0, overLimit: 0, stale: 0 }
 
       const panelWriteOn = Boolean(flags.allowWriteActions && state?.allowWriteActions !== false)
@@ -5015,7 +5006,10 @@ window.__ModuleLoader__.load({
         EN,
         MESSAGES,
         humanBytes,
-        ratio,
+        humanUnits,
+        entryCount,
+        fillOf,
+        injectionState,
         filterEntries,
         highlightParts,
         lineDiff,

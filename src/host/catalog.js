@@ -24,9 +24,11 @@
  * leaves this module: a row carries the numbers, never the text.
  *
  * A stat-based identity has one blind spot, inherent to the filesystem: two
- * same-size writes inside one clock tick carry the same timestamps. The
- * plugin's own writes never rely on it (`invalidate` runs after each commit);
- * an external edit seconds apart is always seen.
+ * same-size writes inside one timestamp tick carry the same `mtime`/`ctime`.
+ * How wide that tick is depends on the filesystem — sub-millisecond on NTFS,
+ * ext4 and APFS, a full two seconds on FAT and exFAT. The plugin's own writes
+ * never rely on it (`invalidate` runs after each commit); an external edit far
+ * enough apart for the filesystem to stamp differently is seen.
  */
 
 import { readdirSync, statSync } from 'node:fs'
@@ -65,10 +67,11 @@ export const ATTENTION_PREVIEW = 8
 
 /**
  * The most flagged projects `/state` ever carries, for any value of the
- * `attention` parameter. "All" is one click rather than a timer, but on a
- * machine with hundreds of flagged projects it was 208 KiB per request
- * (measured at 500), growing without bound. A person scans a page and asks
- * again; `attentionMore` still says what is past the cap.
+ * `attention` parameter. "All" starts as one click, but the panel then keeps
+ * asking for it on every poll (so the list does not shrink back three seconds
+ * later), and on a machine with hundreds of flagged projects it was 208 KiB
+ * per request (measured at 500), growing without bound. A person scans a page
+ * and asks again; `attentionMore` still says what is past the cap.
  */
 export const ATTENTION_LIMIT = 200
 

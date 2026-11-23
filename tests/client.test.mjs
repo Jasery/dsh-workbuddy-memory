@@ -253,15 +253,30 @@ test('loading and unavailable snapshots say so instead of rendering an empty for
   assert.match(text(unavailable), /无法写入宿主配置/)
 })
 
-const { ratio, filterEntries, highlightParts, lineDiff, describeCode, shortPath } = module.__internals
+const { fillOf, filterEntries, highlightParts, lineDiff, describeCode, shortPath } = module.__internals
 
-test('ratio reports how full a limit is, and says when it overflows', () => {
-  assert.deepEqual(ratio(0, 100), { value: 0, percent: 0, level: 'ok' })
-  assert.deepEqual(ratio(50, 100), { value: 0.5, percent: 50, level: 'ok' })
-  assert.equal(ratio(85, 100).level, 'warn')
-  assert.deepEqual(ratio(120, 100), { value: 1, percent: 120, level: 'over' })
-  // A zero limit means "no cap", not "always full".
-  assert.deepEqual(ratio(10, 0), { value: 0, percent: 0, level: 'none' })
+test('fill comes from the prompt numbers, and the level from what was actually lost', () => {
+  // This replaces `ratio(chars, limit)`, which divided a file's length by the
+  // limit whatever the mode and so described nothing under layered injection.
+  // The fill is what the prompt would need over what it allows itself.
+  assert.deepEqual(fillOf(undefined), { percent: null, level: 'none', near: false })
+  assert.deepEqual(fillOf({ budget: 0, need: 900 }), { percent: null, level: 'none', near: false }, 'no budget: nothing to fill')
+
+  const half = fillOf({ budget: 1400, need: 700, overLimit: false })
+  assert.deepEqual(half, { percent: 50, level: 'ok', near: false })
+
+  // Close to the budget is worth a quiet word, and is not an alert.
+  const near = fillOf({ budget: 1400, need: 1300, overLimit: false })
+  assert.equal(near.near, true)
+  assert.equal(near.level, 'warn')
+
+  // The level is "over" only when something was lost — never from the ratio
+  // alone, so a block that just fits is not "over".
+  assert.equal(fillOf({ budget: 1400, need: 1400, overLimit: false }).level, 'warn', 'exactly full, nothing lost')
+  assert.equal(fillOf({ budget: 1400, need: 2100, overLimit: true }).level, 'over')
+  // And "over" from the judgment even when the numbers alone would not say so
+  // (a single entry dropped to the notice reservation can leave need <= budget).
+  assert.equal(fillOf({ budget: 1400, need: 1400, overLimit: true }).level, 'over')
 })
 
 test('filterEntries matches case-insensitively and ignores a blank query', () => {
