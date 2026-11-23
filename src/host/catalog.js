@@ -46,6 +46,14 @@ import { ageInDays } from '../env.js'
 /** Parse results held for re-judging, bounded so a long session cannot grow them without end. */
 const MAX_CACHED_BYTES = 8 * 1024 * 1024
 const MAX_CACHED_FILES = 512
+/**
+ * The most the cache ever holds, whatever the working set. Past the soft
+ * bounds above it evicts; past these it evicts entries it would rather keep.
+ * Twice the soft bound: room for a working set that only just overshoots to
+ * stay resident instead of being evicted whole on every poll.
+ */
+const HARD_CACHED_BYTES = 2 * MAX_CACHED_BYTES
+const HARD_CACHED_FILES = 2 * MAX_CACHED_FILES
 
 const NO_FILE = Object.freeze({ exists: false, read: 'missing' })
 
@@ -228,9 +236,11 @@ function listDaily(dir) {
  *   reader; `readTextSafe` unless a test wants to count the reads.
  */
 export function createProjectCatalog({ cfg, recent, registry, t = createTranslator(resolveLanguage(cfg.locale)), read = readTextSafe }) {
-  /** path → { stamp, held, meta }, least recently used first. */
+  /** path → { stamp, held, meta, pass }, least recently used first. */
   const stats = new Map()
   let heldBytes = 0
+  /** Bumped at the start of every `list()`: tells an entry read in this pass from an older one. */
+  let pass = 0
 
   function registryRows() {
     try {
@@ -277,19 +287,49 @@ export function createProjectCatalog({ cfg, recent, registry, t = createTranslat
     return rows
   }
 
-  /** Keep one parse, evicting the least recently used when the bounds are reached. */
+  /**
+   * Keep one parse.
+   *
+   * Two bounds, because one bound thrashes. The soft bound is where the
+   * least recently used entries start going; the hard bound is where they
+   * must. With a single bound, a working set just over it (six files of
+   * 1.5 MiB against 8 MiB) evicted the oldest entry for every insert and so
+   * re-read, re-hashed and re-parsed every file on every poll — a regression
+   * against the unbounded cache this replaced, and exactly the cost the
+   * cache exists to avoid. Between the bounds the cache is allowed to be
+   * over its soft size; what a person gets is a slower poll on a machine
+   * that genuinely carries that much memory, instead of a fast poll that
+   * So eviction only ever removes an entry from an *earlier* pass than the
+   * one inserting. A pass is one `list()` — it visits every project — so an
+   * entry read in this pass is one the next poll will want, and evicting it
+   * buys nothing. Past the hard bound the cache takes that loss anyway,
+   * because it is a promise about memory.
+   */
   function remember(path, entry) {
     const old = stats.get(path)
     if (old) {
       heldBytes -= old.held
       stats.delete(path)
     }
-    stats.set(path, entry)
+    stats.set(path, { ...entry, pass })
     heldBytes += entry.held
+    // One eviction. With `oldestOnly`, only an entry from an earlier pass
+    // is eligible; the entries are stored oldest first, so the first one
+    // found is the least recently used.
+    const evict = (oldestOnly) => {
+      for (const [key, candidate] of stats) {
+        if (oldestOnly && candidate.pass >= pass) continue
+        heldBytes -= candidate.held
+        stats.delete(key)
+        return true
+      }
+      return false
+    }
     while (heldBytes > MAX_CACHED_BYTES || stats.size > MAX_CACHED_FILES) {
-      const [key, evicted] = stats.entries().next().value
-      heldBytes -= evicted.held
-      stats.delete(key)
+      if (!evict(true)) break
+    }
+    while (heldBytes > HARD_CACHED_BYTES || stats.size > HARD_CACHED_FILES) {
+      if (!evict(false)) break
     }
   }
 
@@ -312,10 +352,12 @@ export function createProjectCatalog({ cfg, recent, registry, t = createTranslat
     const stamp = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`
     const cached = stats.get(path)
     if (cached && cached.stamp === stamp) {
-      // Re-inserted so it is the most recently used.
+      // Re-inserted so it is the most recently used, and stamped with this
+      // pass so eviction will not take an entry the current list() just read.
       stats.delete(path)
-      stats.set(path, cached)
-      return cached.meta
+      const touched = { ...cached, pass }
+      stats.set(path, touched)
+      return touched.meta
     }
 
     // A file the stat already puts past the cap is not read at all.
@@ -419,6 +461,9 @@ export function createProjectCatalog({ cfg, recent, registry, t = createTranslat
    * @returns {{ rows: object[], truncated: boolean, total: number, totals: object, attention: object[], attentionTotal: number, attentionMore: Record<string, number> }}
    */
   function list({ home, dataFolderName, current = recent?.cwd ?? null, limit = cfg.ui.maxProjects, attention }) {
+    // A new pass: nothing read from here on is eligible for eviction until
+    // the next one (see `remember`).
+    pass += 1
     const rows = [...seeds().values()].map((seed) => describe(seed, { home, dataFolderName, current }))
     rows.sort((a, b) => {
       if (a.current !== b.current) return a.current ? -1 : 1

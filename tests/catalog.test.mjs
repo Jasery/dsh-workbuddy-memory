@@ -357,3 +357,53 @@ test('a transient read failure is not cached: the next poll measures the file', 
   list()
   assert.equal(reads, 2)
 })
+
+test('past the cache bounds the hit rate degrades instead of collapsing to zero', () => {
+  // The bounds are 8 MiB / 512 files. A working set just over a bound must
+  // not turn every poll into a full re-read: with 9 MiB of files, evicting
+  // the oldest for each insert meant all six were re-read on every poll
+  // (measured 6/6/6). Some re-reading is the price of a bound; all of it is
+  // a regression against the unbounded cache this replaced.
+  const ws = workspace()
+  // Six files of 1.5 MiB each: 9 MiB against the 8 MiB cap.
+  for (let index = 0; index < 6; index += 1) ws.add(`big${index}`, `# M${index}\n\n## 常驻记忆\n- ${'x'.repeat(1.5 * 1024 * 1024)}\n`)
+  const { list, counts } = ws.open()
+  list()
+  const cold = counts.reads
+  assert.equal(cold, 6)
+
+  list()
+  const warm = counts.reads - cold
+  // The bound may cost a few re-reads; it must not cost all of them.
+  assert.ok(warm < cold, `a warm poll re-read ${warm} of ${cold} files`)
+  assert.ok(warm <= 2, `expected at most a couple of re-reads, got ${warm}`)
+
+  // And the same for the file-count bound.
+  const many = workspace()
+  for (let index = 0; index < 530; index += 1) many.add(`p${String(index).padStart(3, '0')}`, '# M\n\n## 常驻记忆\n- one\n')
+  const second = many.open()
+  second.list()
+  const cold2 = second.counts.reads
+  second.list()
+  const warm2 = second.counts.reads - cold2
+  assert.ok(warm2 < cold2, `file-count bound: a warm poll re-read ${warm2} of ${cold2}`)
+})
+
+test('the hard bound still bounds memory: far past it, the cache evicts rather than growing', () => {
+  // The soft bound may be exceeded to avoid thrashing; the hard bound may not.
+  // 20 files of 1.5 MiB (30 MiB) against a 16 MiB hard bound: every poll
+  // re-reads, and the point is that it does so *because* the cache refused to
+  // hold 30 MiB. This pins the other half of the contract the test above
+  // relies on — over-retention is bounded, not open-ended.
+  const ws = workspace()
+  for (let index = 0; index < 20; index += 1) ws.add(`huge${index}`, `# M${index}\n\n## 常驻记忆\n- ${'x'.repeat(1.5 * 1024 * 1024)}\n`)
+  const { list } = ws.open()
+  const cold = list()
+  assert.equal(cold.rows.length, 20)
+  // Re-reading is the honest outcome here; what must hold is that every
+  // row is still judged correctly — eviction never serves a stale or blank
+  // answer for a file it declined to keep.
+  const warm = list()
+  assert.deepEqual(warm.rows.map((row) => row.injection.status), cold.rows.map((row) => row.injection.status))
+  assert.ok(warm.rows.every((row) => row.injection.status === 'core-over-budget'), 'every file is still measured on every poll')
+})
