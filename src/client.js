@@ -449,7 +449,6 @@ window.__ModuleLoader__.load({
       'inject.detail.whole': '完整块需要 {need} 码元，限额 {budget} 码元，本次注入 {used} 码元。',
       'inject.detailNotice': '标题和提示也占预算，所以刚好装满的核心仍可能有条目放不下。',
       'inject.usedPercent': '已用 {percent}%',
-      'inject.more': '查看说明',
       'inject.lengthUnits': '长度',
       'inject.onDisk': '磁盘',
       'stats.summaryLine': '{projects} 个项目 · {created} 个已创建记忆文件 · {entries} 条',
@@ -842,7 +841,6 @@ window.__ModuleLoader__.load({
       'inject.detail.whole': "The complete block needs {need} units against a limit of {budget}; {used} units are injected.",
       'inject.detailNotice': "The heading and the notices spend budget too, so a core that just fits can still lose an entry.",
       'inject.usedPercent': "{percent}% used",
-      'inject.more': "Explain",
       'inject.lengthUnits': "Length",
       'inject.onDisk': "on disk",
       'stats.summaryLine': "{projects} projects · {created} with a memory file · {entries} entries",
@@ -984,6 +982,7 @@ window.__ModuleLoader__.load({
       }
       .wbm-root *, .wbm-root *::before, .wbm-root *::after { box-sizing: border-box; }
       .wbm-header {
+        position: relative;
         display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
         padding: 10px 16px; border-bottom: 1px solid var(--wbm-border-soft);
         background: var(--wbm-bg); min-height: 48px;
@@ -1000,29 +999,34 @@ window.__ModuleLoader__.load({
       .wbm-chip.ok { color: var(--wbm-ok); border-color: color-mix(in srgb, var(--wbm-ok) 35%, transparent); }
       .wbm-chip.warn { color: var(--wbm-warn); border-color: color-mix(in srgb, var(--wbm-warn) 35%, transparent); }
       .wbm-chip.bad { color: var(--wbm-danger); border-color: color-mix(in srgb, var(--wbm-danger) 35%, transparent); }
-      /* An injection state that has numbers behind it. A native disclosure:
-         the summary is focusable and toggles from the keyboard with no script,
-         and keeps its focus after the toggle. */
-      .wbm-explain { padding: 0; }
-      .wbm-explain > summary {
-        list-style: none; cursor: pointer; padding: 1px 7px; border-radius: 999px;
-        display: inline-flex; align-items: center; gap: 4px;
-      }
-      .wbm-explain > summary::-webkit-details-marker { display: none; }
-      .wbm-explain > summary::after {
-        content: ''; width: 0; height: 0; opacity: .7;
-        border-left: 4px solid transparent; border-right: 4px solid transparent;
-        border-top: 5px solid currentColor; margin-top: 2px;
-      }
-      .wbm-explain[open] > summary::after { border-top: none; border-bottom: 5px solid currentColor; margin-top: -2px; }
-      .wbm-explain > summary:focus-visible {
+      /* An injection state that has numbers behind it: hover the chip (or tab
+         to it) and the numbers appear. The hint is out of flow, so reading it
+         covers the list instead of pushing it down, and it hangs off the header
+         rather than the chip because the chips row clips its own overflow when
+         the sidebar is narrow — a clipped hint is no hint. */
+      .wbm-chip-tip { cursor: help; text-decoration: underline dotted; text-underline-offset: 2px; }
+      .wbm-chip-tip:focus-visible {
         outline: 2px solid var(--dsw-focus-ring-color, var(--wbm-accent)); outline-offset: 1px;
       }
-      .wbm-explain-body {
-        flex-basis: 100%; margin-top: 4px; padding: 7px 10px; border-radius: 7px;
+      .wbm-tip {
+        position: absolute; z-index: 40; top: calc(100% - 3px); right: 16px;
+        max-width: min(360px, calc(100% - 32px));
+        padding: 7px 10px; border-radius: 8px;
         border: 1px solid var(--wbm-border); background: var(--wbm-panel);
         color: var(--wbm-text-2); font-size: 12px; line-height: 1.55; white-space: normal;
+        box-shadow: 0 8px 24px rgba(0,0,0,.16);
+        /* Hidden by opacity, not visibility or display: the text stays in the
+           document, so aria-describedby has something to read even for a
+           reader that never hovers. */
+        opacity: 0; transform: translateY(-3px); pointer-events: none;
+        transition: opacity .12s ease, transform .12s ease;
       }
+      .wbm-tip-why { margin-top: 4px; color: var(--wbm-text-2); }
+      /* Hover for the mouse; focus for the keyboard and for touch, where a tap
+         focuses the chip and there is no hover at all. */
+      .wbm-header:has(.wbm-chip-tip:hover) .wbm-tip,
+      .wbm-header:has(.wbm-chip-tip:focus) .wbm-tip { opacity: 1; transform: none; }
+      @media (prefers-reduced-motion: reduce) { .wbm-tip { transition: none; } }
       .wbm-meta-bad { color: var(--wbm-danger); }
       /* The panel is its own sizing context: the right-sidebar tab can be
          dragged narrow inside a wide window, and a viewport media query would
@@ -1034,7 +1038,6 @@ window.__ModuleLoader__.load({
         .wbm-chips { flex: 1 1 100%; flex-wrap: nowrap; min-width: 0; overflow: hidden; }
         .wbm-chip { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
         .wbm-crumb-scope { max-width: 60vw; }
-        .wbm-explain-body { max-height: 30vh; overflow: auto; }
       }
       .wbm-btn {
         display: inline-flex; align-items: center; gap: 5px;
@@ -1225,6 +1228,8 @@ window.__ModuleLoader__.load({
       .wbm-tab .wbm-rail { width: 208px; flex-basis: 208px; }
       .wbm-tab .wbm-picker { display: none; }
       .wbm-tab .wbm-header { padding: 8px 12px; min-height: 44px; }
+      /* The tab's header pads 12px, not 16: keep the hint on the same edge. */
+      .wbm-tab .wbm-tip { right: 12px; max-width: min(360px, calc(100% - 24px)); }
       .wbm-tab .wbm-doc-head { padding: 10px 14px 8px; }
       .wbm-tab .wbm-doc-body { padding: 10px 14px 30px; }
       @media (max-width: 820px) {
@@ -1712,9 +1717,8 @@ window.__ModuleLoader__.load({
      * it into copy, a tone and the numbers behind it.
      *
      * `detail` is the sentence a person needs to understand an alert, and
-     * `why` the reason a state is what it is. Both are reached through the
-     * keyboard (a details disclosure), because the chip itself has to stay
-     * short in a narrow sidebar.
+     * `why` the reason a state is what it is. Both go in the chip's hover hint,
+     * because the chip itself has to stay short in a narrow sidebar.
      *
      * @param {object|null|undefined} injection
      * @returns {{ status: string, tone: ''|'warn'|'bad', label: string, short: string, detail: string, why: string, alert: boolean }}
@@ -1749,6 +1753,37 @@ window.__ModuleLoader__.load({
       // quiet word — the next entry written may not fit — but it is not an
       // alert, and it is never shown in the alert colour.
       return { status, tone: fill.near ? 'warn' : '', label: t('inject.complete'), short: t('inject.complete'), detail, why, alert: false }
+    }
+
+    /**
+     * The paragraphs of an injection hint: the numbers, then the reason.
+     *
+     * Both come out of `injectionState`, so the hint and the chip cannot
+     * disagree. Empty when the state adds nothing to its own label.
+     *
+     * @param {{ detail?: string, why?: string }|null|undefined} view - an
+     *   `injectionState` result.
+     * @returns {string[]} one string per paragraph.
+     */
+    function injectionTipLines(view) {
+      return [view?.detail, view?.why].filter(Boolean)
+    }
+
+    /**
+     * A document-unique id for a project's injection hint.
+     *
+     * The overview panel and the session tab can be on screen together, each
+     * with its own header, so the id says which surface it belongs to: one
+     * panel's hint never describes the other panel's chip. What is left of the
+     * key after folding into `[A-Za-z0-9_-]` keeps the id usable for
+     * `aria-describedby`, which splits on spaces.
+     *
+     * @param {{ key?: string, name?: string }|null|undefined} row
+     * @param {string} [surface] - which surface renders it (`panel` or `tab`).
+     * @returns {string}
+     */
+    function tipIdOf(row, surface = 'panel') {
+      return `wbm-tip-${surface}-${String(row?.key || row?.name || 'project').replace(/[^A-Za-z0-9_-]+/g, '-')}`
     }
 
     function filterEntries(entries, query) {
@@ -3303,31 +3338,42 @@ window.__ModuleLoader__.load({
       // ── header ────────────────────────────────────────────────────────────
 
       /**
-       * The injection state of the open project, as a chip with its explanation.
+       * The injection state of the open project, as a chip with a hover hint.
        *
        * The chip carries the state in visible text — colour is never the only
-       * signal — and the numbers behind it sit in a native disclosure: a
-       * `<details>` is focusable and toggleable from the keyboard with no
-       * script, and the summary keeps its focus after the toggle, so nothing
-       * has to be managed by hand.
+       * signal — and the numbers behind it live in the header's `.wbm-tip`,
+       * which appears on hover and on keyboard focus. It is out of flow, so
+       * reading it never moves the header or the list under it; the `<details>`
+       * it replaces pushed the whole page down to show the same two sentences.
+       * The chip stays focusable so the hint is not mouse-only, which is the
+       * tooltip pattern: nothing happens on activation.
        *
        * @param {object} input
        * @param {object|null|undefined} input.injection - the row's judgment.
        * @param {boolean} [input.short] - the compact wording, for a narrow sidebar.
+       * @param {string} [input.tipId] - id of the element describing this chip.
        * @param {string} [input.className] - wrapper class, e.g. `wbm-chip`.
        */
-      function injectionChip({ injection: state, short = false, className = 'wbm-chip' }) {
+      function injectionChip({ injection: state, short = false, tipId = '', className = 'wbm-chip' }) {
         const view = injectionState(state)
         if (!view.label) return null
         const label = short ? view.short : view.label
-        if (!view.detail && !view.why) {
+        if (!injectionTipLines(view).length) {
           return h('span', { className: `${className} ${view.tone}`.trim(), title: view.label }, label)
         }
         return h(
-          'details',
-          { className: `${className} wbm-explain ${view.tone}`.trim() },
-          h('summary', { title: t('inject.more'), 'aria-label': `${label} — ${t('inject.more')}` }, label),
-          h('div', { className: 'wbm-explain-body' }, view.detail ? h('div', null, view.detail) : null, view.why ? h('div', null, view.why) : null),
+          'span',
+          {
+            className: `${className} wbm-chip-tip ${view.tone}`.trim(),
+            tabIndex: 0,
+            'aria-describedby': tipId || undefined,
+            // Escape is the standard way out of a hint that opened on focus,
+            // without moving focus by hand.
+            onKeyDown: (event) => {
+              if (event.key === 'Escape') event.currentTarget.blur()
+            },
+          },
+          label,
         )
       }
 
@@ -3345,6 +3391,11 @@ window.__ModuleLoader__.load({
         const view = project ? injectionState(project.injection) : null
         const fill = project && view?.status === 'complete' ? fillOf(project.injection) : null
         const units = project ? humanUnits(project.chars) : ''
+        // The hint the state chip points at. It belongs to the header, not to
+        // the chip: the chips row clips what does not fit when the sidebar is
+        // narrow, and a hint clipped to the chip would be unreadable.
+        const tipId = project ? tipIdOf(project, props?.tab ? 'tab' : 'panel') : ''
+        const tipLines = view ? injectionTipLines(view) : []
         return h(
           'div',
           { className: 'wbm-header' },
@@ -3369,7 +3420,7 @@ window.__ModuleLoader__.load({
                     : entryCount(project) || units
                       ? h('span', { key: 'e', className: 'wbm-chip' }, [project.entries === null || project.entries === undefined ? '' : t('count.entries', { n: project.entries }), units].filter(Boolean).join(' · '))
                       : null,
-                  injectionChip({ injection: project.injection, short: Boolean(props?.tab) }),
+                  injectionChip({ injection: project.injection, short: Boolean(props?.tab), tipId }),
                   fill && fill.percent !== null ? h('span', { key: 'u', className: `wbm-chip ${fill.level === 'warn' ? 'warn' : ''}` }, t('inject.usedPercent', { percent: fill.percent })) : null,
                 ]
               : [
@@ -3393,6 +3444,16 @@ window.__ModuleLoader__.load({
                   totals.stale > 0 ? h('span', { key: 's', className: 'wbm-chip warn', title: t('count.chipPendingDetail', { days: state?.archiveAfterDays ?? 30 }) }, t('count.chipPending', { n: totals.stale })) : null,
                 ],
           ),
+          // Shown by CSS on `.wbm-chip-tip:hover` and `:focus`, kept in the
+          // document so `aria-describedby` always has something to point at:
+          // a reader that never hovers still gets the numbers.
+          tipLines.length
+            ? h(
+                'div',
+                { className: 'wbm-tip', id: tipId, role: 'tooltip' },
+                tipLines.map((line, at) => h('div', { key: `t${at}`, className: at ? 'wbm-tip-why' : 'wbm-tip-detail' }, line)),
+              )
+            : null,
           h('span', { className: 'wbm-spacer' }),
           mode === 'overview' && activeKey
             ? h(
@@ -5020,6 +5081,8 @@ window.__ModuleLoader__.load({
         entryCount,
         fillOf,
         injectionState,
+        injectionTipLines,
+        tipIdOf,
         filterEntries,
         highlightParts,
         lineDiff,

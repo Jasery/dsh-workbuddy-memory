@@ -279,6 +279,27 @@ test('fill comes from the prompt numbers, and the level from what was actually l
   assert.equal(fillOf({ budget: 1400, need: 1400, overLimit: true }).level, 'over')
 })
 
+test('the injection hint is the numbers, then the reason, and never empty', () => {
+  // The chip has to stay short in a narrow sidebar; the hover hint carries the
+  // rest. Both parts come from `injectionState`, so the hint cannot contradict
+  // the chip it hangs off.
+  const { injectionTipLines, tipIdOf } = module.__internals
+  assert.deepEqual(injectionTipLines({ detail: '需要 2100 码元', why: '' }), ['需要 2100 码元'])
+  assert.deepEqual(injectionTipLines({ detail: '', why: '文件超过 2 MiB 的读取上限' }), ['文件超过 2 MiB 的读取上限'])
+  assert.deepEqual(injectionTipLines({ detail: 'a', why: 'b' }), ['a', 'b'], 'the reason is its own paragraph')
+  assert.deepEqual(injectionTipLines({}), [], 'nothing to add: the chip is a plain chip')
+  assert.deepEqual(injectionTipLines(null), [])
+
+  // `aria-describedby` splits on spaces, so an id may not carry one. The host
+  // keys projects by an 8-character hash today, so this is defensive.
+  const odd = tipIdOf({ key: 'project:C:\\Users\\me\\my repo' })
+  assert.match(odd, /^[A-Za-z0-9_-]+$/, 'only id-safe characters')
+  assert.equal(tipIdOf({ key: 'proj-a' }), 'wbm-tip-panel-proj-a')
+  assert.equal(tipIdOf({ key: 'proj-a' }, 'tab'), 'wbm-tip-tab-proj-a', 'the surface is part of the id, so two panels never share one')
+  assert.equal(tipIdOf({ name: 'repo' }), 'wbm-tip-panel-repo', 'a row without a key still gets one')
+  assert.equal(tipIdOf(null), 'wbm-tip-panel-project')
+})
+
 test('filterEntries matches case-insensitively and ignores a blank query', () => {
   const rows = [{ text: 'Node 22' }, { text: 'docker' }]
   assert.equal(filterEntries(rows, '').length, 2)

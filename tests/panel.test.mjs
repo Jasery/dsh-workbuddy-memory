@@ -1982,7 +1982,7 @@ test('the overview breadcrumb follows the open project and offers one way back',
   }
 })
 
-test('the narrow tab shortens the alert and the explanation is a keyboard-reachable disclosure', async () => {
+test('the narrow tab shortens the alert and the numbers live in a hover hint', async () => {
   const state = stateFor()
   withProject(state, { overLimit: true, status: 'over-limit', injection: judged('core-over-budget', { dropped: 3, need: 2100, used: 1375 }) })
   const restore = installTimers()
@@ -1991,29 +1991,58 @@ test('the narrow tab shortens the alert and the explanation is a keyboard-reacha
     // The right-sidebar tab: compact wording.
     // The tab follows its own session; give it one.
     const tab = { tab: true, sessionId: 's', useSessions: (selector) => selector({ byId: { s: { id: 's', cwd: 'C:\\repo', retainedBy: { mainView: 1 } } } }), useWorkspaces: (selector) => selector({ items: [] }) }
-    let tree = await runtime.settle(MemoryWorkspace, { mode: 'project', layout: 'wide', ...tab })
+    const tabProps = { mode: 'project', layout: 'wide', ...tab }
+    let tree = await runtime.settle(MemoryWorkspace, tabProps)
     let body = text(expand(tree))
     assert.match(body, /核心 3 条未注入/, 'short form in the tab')
     assert.doesNotMatch(body, /核心超预算 · 3 条未注入/, 'not the long form')
 
-    // The explanation is a native <details>: focusable, toggleable without script.
-    const details = walk(tree).find((node) => node.type === 'details')
-    assert.ok(details, 'the state is a disclosure')
-    assert.ok(String(details.props.className).includes('wbm-explain'))
-    const summary = details.children.find((node) => node.type === 'summary')
-    assert.ok(summary, 'with a summary to focus')
-    assert.ok(summary.props['aria-label'], 'the summary names what it explains')
-    assert.match(text(expand(details)), /完整核心块需要 2100 码元，预算 1400 码元，本次注入 1375 码元/, 'the numbers are inside')
+    // The explanation is a hover hint, not a disclosure: reading it must not
+    // move the header or the list under it.
+    const chip = walk(tree).find((node) => String(node.props?.className ?? '').includes('wbm-chip-tip'))
+    assert.ok(chip, 'the state chip is the hint trigger')
+    assert.equal(chip.type, 'span', 'a hint, not a disclosure')
+    assert.equal(chip.props.tabIndex, 0, 'reachable from the keyboard')
+    const isTip = (node) => node.type === 'div' && String(node.props?.className ?? '') === 'wbm-tip'
+    const tip = walk(tree).find(isTip)
+    assert.ok(tip, 'the header renders the hint')
+    assert.equal(tip.props.id, chip.props['aria-describedby'], 'the chip points at it')
+    assert.equal(tip.props.id, 'wbm-tip-tab-proj-a', 'the id says which surface renders it, so two panels cannot collide')
+    assert.equal(tip.props.role, 'tooltip')
+    assert.match(text(expand(tip)), /完整核心块需要 2100 码元，预算 1400 码元，本次注入 1375 码元/, 'the numbers are inside')
+    assert.equal(walk(tree).filter((node) => node.type === 'details' || node.type === 'summary').length, 0, 'no disclosure is left')
 
-    // The wide panel uses the long form.
+    // Escape puts the hint away without moving focus by hand.
+    let blurred = 0
+    await runtime.fire(chip, 'onKeyDown', MemoryWorkspace, tabProps, { key: 'Escape', currentTarget: { blur: () => { blurred += 1 } } })
+    assert.equal(blurred, 1, 'Escape blurs the chip')
+
+    // The wide panel uses the long form, and the header owns exactly one hint.
     runtime.reset()
     installFetch({ state })
     tree = await runtime.settle(MemoryOverviewPanel, {})
     tree = await openProject()
     assert.match(text(expand(tree)), /核心超预算 · 3 条未注入/, 'long form where there is room')
+    assert.equal(walk(tree).filter(isTip).length, 1, 'one hint per header')
+    assert.equal(walk(tree).find(isTip).props.id, 'wbm-tip-panel-proj-a', 'the main panel and the tab never share an id')
   } finally {
     restore()
   }
+})
+
+test('the hint is revealed by hover or focus, and covers the list instead of moving it', () => {
+  // CSS cannot run under node, so this pins the two things the interaction is
+  // made of: the selectors that reveal the hint, and the fact that the box is
+  // out of flow (an in-flow hint would push the list down, which is exactly
+  // what the disclosure it replaced did).
+  const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+  assert.match(source, /\.wbm-header:has\(\.wbm-chip-tip:hover\) \.wbm-tip/, 'hover reveals it')
+  assert.match(source, /\.wbm-header:has\(\.wbm-chip-tip:focus\) \.wbm-tip/, 'focus reveals it (keyboard and touch)')
+  assert.match(source, /\.wbm-header \{[^}]*position: relative/, 'the hint is positioned against the header')
+  assert.match(source, /\.wbm-tip \{[^}]*position: absolute/, 'out of flow')
+  assert.match(source, /\.wbm-tip \{[^}]*opacity: 0/, 'hidden until it is asked for')
+  assert.match(source, /\.wbm-tip \{[^}]*pointer-events: none/, 'a hidden hint does not swallow clicks meant for the list')
+  assert.doesNotMatch(source, /wbm-explain/, 'the disclosure it replaced is gone')
 })
 
 test('no surface prints a raw revision, a KB% or a next-turn promise any more', async () => {
