@@ -9,6 +9,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 
 import { Config, normalizeConfig } from '../src/config.js'
@@ -127,7 +128,10 @@ test('the overview names the aggregate scope before anything is selected', () =>
   const tree = expand(MemoryOverviewPanel({}))
   const body = text(tree)
   assert.match(body, /全部项目/)
-  assert.match(body, /还没有任何项目写过记忆/)
+  // No state yet: the overview shows a loading state, never a row of zeros or
+  // an empty-machine message it has no evidence for.
+  assert.match(body, /读取中/)
+  assert.doesNotMatch(body, /项目 0|条目 0|还没有任何项目/)
 })
 
 test('the overview icon is a standalone svg', () => {
@@ -249,15 +253,51 @@ test('loading and unavailable snapshots say so instead of rendering an empty for
   assert.match(text(unavailable), /无法写入宿主配置/)
 })
 
-const { ratio, filterEntries, highlightParts, lineDiff, describeCode, shortPath } = module.__internals
+const { fillOf, filterEntries, highlightParts, lineDiff, describeCode, shortPath } = module.__internals
 
-test('ratio reports how full a limit is, and says when it overflows', () => {
-  assert.deepEqual(ratio(0, 100), { value: 0, percent: 0, level: 'ok' })
-  assert.deepEqual(ratio(50, 100), { value: 0.5, percent: 50, level: 'ok' })
-  assert.equal(ratio(85, 100).level, 'warn')
-  assert.deepEqual(ratio(120, 100), { value: 1, percent: 120, level: 'over' })
-  // A zero limit means "no cap", not "always full".
-  assert.deepEqual(ratio(10, 0), { value: 0, percent: 0, level: 'none' })
+test('fill comes from the prompt numbers, and the level from what was actually lost', () => {
+  // This replaces `ratio(chars, limit)`, which divided a file's length by the
+  // limit whatever the mode and so described nothing under layered injection.
+  // The fill is what the prompt would need over what it allows itself.
+  assert.deepEqual(fillOf(undefined), { percent: null, level: 'none', near: false })
+  assert.deepEqual(fillOf({ budget: 0, need: 900 }), { percent: null, level: 'none', near: false }, 'no budget: nothing to fill')
+
+  const half = fillOf({ budget: 1400, need: 700, overLimit: false })
+  assert.deepEqual(half, { percent: 50, level: 'ok', near: false })
+
+  // Close to the budget is worth a quiet word, and is not an alert.
+  const near = fillOf({ budget: 1400, need: 1300, overLimit: false })
+  assert.equal(near.near, true)
+  assert.equal(near.level, 'warn')
+
+  // The level is "over" only when something was lost — never from the ratio
+  // alone, so a block that just fits is not "over".
+  assert.equal(fillOf({ budget: 1400, need: 1400, overLimit: false }).level, 'warn', 'exactly full, nothing lost')
+  assert.equal(fillOf({ budget: 1400, need: 2100, overLimit: true }).level, 'over')
+  // And "over" from the judgment even when the numbers alone would not say so
+  // (a single entry dropped to the notice reservation can leave need <= budget).
+  assert.equal(fillOf({ budget: 1400, need: 1400, overLimit: true }).level, 'over')
+})
+
+test('the injection hint is the numbers, then the reason, and never empty', () => {
+  // The chip has to stay short in a narrow sidebar; the hover hint carries the
+  // rest. Both parts come from `injectionState`, so the hint cannot contradict
+  // the chip it hangs off.
+  const { injectionTipLines, tipIdOf } = module.__internals
+  assert.deepEqual(injectionTipLines({ detail: '需要 2100 码元', why: '' }), ['需要 2100 码元'])
+  assert.deepEqual(injectionTipLines({ detail: '', why: '文件超过 2 MiB 的读取上限' }), ['文件超过 2 MiB 的读取上限'])
+  assert.deepEqual(injectionTipLines({ detail: 'a', why: 'b' }), ['a', 'b'], 'the reason is its own paragraph')
+  assert.deepEqual(injectionTipLines({}), [], 'nothing to add: the chip is a plain chip')
+  assert.deepEqual(injectionTipLines(null), [])
+
+  // `aria-describedby` splits on spaces, so an id may not carry one. The host
+  // keys projects by an 8-character hash today, so this is defensive.
+  const odd = tipIdOf({ key: 'project:C:\\Users\\me\\my repo' })
+  assert.match(odd, /^[A-Za-z0-9_-]+$/, 'only id-safe characters')
+  assert.equal(tipIdOf({ key: 'proj-a' }), 'wbm-tip-panel-proj-a')
+  assert.equal(tipIdOf({ key: 'proj-a' }, 'tab'), 'wbm-tip-tab-proj-a', 'the surface is part of the id, so two panels never share one')
+  assert.equal(tipIdOf({ name: 'repo' }), 'wbm-tip-panel-repo', 'a row without a key still gets one')
+  assert.equal(tipIdOf(null), 'wbm-tip-panel-project')
 })
 
 test('filterEntries matches case-insensitively and ignores a blank query', () => {
@@ -688,4 +728,22 @@ test('a stored 0 for the threshold is displayed as twice the limit', () => {
     .filter((node) => node.type === 'input')
     .map((node) => String(node.props.value ?? ''))
   assert.ok(shown.includes('20000'), 'an explicit threshold is not overridden by the derivation')
+})
+
+test('every literal the panel translates exists in both dictionaries', () => {
+  // A key added to one language and not the other shows up in the other
+  // language as the raw key — `panel.emptyOverview` did exactly that on its
+  // first run. This reads the source, so a new `t('…')` with no copy fails
+  // here before it fails in someone's panel.
+
+  const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+  const block = (name, next) => source.slice(source.indexOf(`const ${name} = {`), source.indexOf(`const ${next} = {`))
+  const zh = block('ZH', 'EN')
+  const en = source.slice(source.indexOf('const EN = {'), source.indexOf('function bindCopy'))
+  // Only keys that are really passed to the translator: `t('key'` or
+  // `t("key"`, not object property names or other functions' string arguments.
+  const keys = [...new Set([...source.matchAll(/\bt\(\s*'([a-z][a-zA-Z0-9]*\.[a-zA-Z0-9_.-]+)'/g)].map((match) => match[1]))]
+  const missing = keys.filter((key) => !zh.includes(`'${key}':`) || !en.includes(`'${key}':`)).sort()
+  assert.deepEqual(missing, [], 'keys with no copy in both languages')
+  assert.ok(keys.length > 100, `the scan found the dictionaries (${keys.length} keys)`)
 })

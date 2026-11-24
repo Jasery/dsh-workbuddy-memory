@@ -2,26 +2,30 @@
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'node:test'
 
 import { normalizeConfig } from '../src/config.js'
+import { ATTENTION_LIMIT, createProjectCatalog } from '../src/host/catalog.js'
+import { createTranslator } from '../src/locale.js'
 import { registerRoutes } from '../src/host/routes.js'
 import { createStore } from '../src/write/store.js'
 
 /** Capture the registered route and answer one request against it. */
-async function harness({ readOnly = false, allowWriteActions = false, recent = { cwd: null }, connection } = {}) {
+async function harness({ readOnly = false, allowWriteActions = false, recent = { cwd: null }, connection, config = {}, catalog: withCatalog = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'wbm-routes-'))
   const home = join(root, 'home')
   mkdirSync(join(home, 'memory'), { recursive: true })
   writeFileSync(join(home, 'MEMORY.md'), '## 偏好\n- 用简体中文\n', 'utf8')
 
   const stateDir = join(root, 'state')
-  const cfg = normalizeConfig({ workbuddyHome: home, stateDir, readOnly, ui: { allowWriteActions } })
+  const cfg = normalizeConfig({ workbuddyHome: home, stateDir, readOnly, ui: { allowWriteActions }, ...config })
   const store = createStore({ cfg, stateDir })
+  // Wired the way pply wires it when asked: the same recent list, the same translator.
+  const catalog = withCatalog ? createProjectCatalog({ cfg, recent, registry: () => [], t: createTranslator('zh') }) : undefined
   const routes = []
   const ctx = {
     webServer: {
@@ -39,7 +43,7 @@ async function harness({ readOnly = false, allowWriteActions = false, recent = {
     },
   }
 
-  const registered = registerRoutes(ctx, { cfg, recent, stateDir, version: 'test', store })
+  const registered = registerRoutes(ctx, { cfg, recent, stateDir, version: 'test', store, catalog })
   assert.equal(registered, true)
   assert.equal(routes.length, 1)
   assert.equal(routes[0].kind, 'prefix')
@@ -434,3 +438,181 @@ test('an actually empty daily note still reports zero entries', async () => {
   assert.equal(parsed.sections.length, 0)
 })
 
+
+/** The core of an over-budget split file: six entries, far past a 1400 share. */
+const OVER_CORE = `# M\n\n## 常驻记忆\n${Array.from({ length: 6 }, (_, index) => `- 核心条目 ${index} ${'重要'.repeat(140)}`).join('\n')}\n`
+const FITS = '# M\n\n## 常驻记忆\n- one\n'
+
+/** `count` projects under one root; `over` names the indexes that are over budget. */
+function manyProjects(root, count, over = []) {
+  const seen = new Map()
+  let clock = Date.now() - 3_600_000
+  const old = new Date(clock - 3_600_000)
+  for (let index = 0; index < count; index += 1) {
+    const cwd = join(root, `p${String(index).padStart(2, '0')}`)
+    const dir = join(cwd, '.workbuddy', 'memory')
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'MEMORY.md')
+    writeFileSync(file, over.includes(index) ? OVER_CORE : FITS, 'utf8')
+    // The seen stamps own the activity order; a file written "now" would not.
+    utimesSync(file, old, old)
+    clock += 1000
+    seen.set(cwd, clock)
+  }
+  return seen
+}
+
+test('state totals cover every project, and one past the display bound can still be opened', async () => {
+  // Acceptance 7: 60 projects, a display bound of 50, and the only over-budget
+  // project is the 51st by activity. The totals used to be summed over the 50
+  // rows returned, and the attention list could not hold that one at all.
+  const root = mkdtempSync(join(tmpdir(), 'wbm-routes-many-'))
+  const seen = manyProjects(root, 60, [9])
+  const { call } = await harness({ recent: { cwd: null, seen }, config: { ui: { maxProjects: 50 } }, catalog: true })
+
+  const state = JSON.parse((await call('/workbuddy-memory/state')).body)
+  assert.equal(state.projects.length, 50, 'the display bound still holds')
+  assert.equal(state.projectsTotal, 60)
+  assert.equal(state.projects.some((row) => row.name === 'p09'), false)
+  assert.equal(state.totals.projects, 60)
+  assert.equal(state.totals.withMemory, 60)
+  assert.equal(state.totals.overLimit, 1, 'one project lost core entries')
+  assert.equal(state.attentionTotal, 1)
+  assert.equal(state.attention[0].name, 'p09', 'the preview is not limited to the listed rows')
+  assert.equal(state.attention[0].injection.status, 'core-over-budget')
+  assert.equal(state.project, null, 'nothing is selected')
+
+  const key = state.attention[0].key
+  const opened = JSON.parse((await call(`/workbuddy-memory/state?project=${key}`)).body)
+  assert.equal(opened.project.name, 'p09', 'the selected project resolves on its own')
+  assert.equal(opened.project.overLimit, true)
+  assert.equal(opened.projects.some((row) => row.key === key), false, 'and the list is unchanged by selecting it')
+  assert.equal(opened.stores.project.injection.status, 'core-over-budget', 'the store view and the row agree')
+  assert.equal(opened.stores.project.layering.mode, 'layered')
+
+  const content = JSON.parse((await call(`/workbuddy-memory/content?target=project-memory&project=${key}`)).body)
+  assert.equal(content.ok, true)
+  assert.match(content.text, /核心条目 0/)
+})
+
+test('the attention preview is bounded by default and complete on request', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wbm-routes-attention-'))
+  const seen = manyProjects(root, 12, Array.from({ length: 12 }, (_, index) => index))
+  const { call } = await harness({ recent: { cwd: null, seen }, catalog: true })
+
+  const page = JSON.parse((await call('/workbuddy-memory/state')).body)
+  assert.equal(page.attentionTotal, 12)
+  assert.equal(page.attention.length, 8, 'the preview carries the first few')
+  assert.equal(page.attentionMore['over-limit'], 4, 'and says how many more there are')
+  assert.equal(page.totals.overLimit, 12, 'the total was never limited to the preview')
+
+  const all = JSON.parse((await call('/workbuddy-memory/state?attention=all')).body)
+  assert.equal(all.attention.length, 12)
+  assert.equal(all.attentionMore['over-limit'], 0)
+
+  // An unusable value falls back to the default bound rather than to nothing.
+  const bogus = JSON.parse((await call('/workbuddy-memory/state?attention=not-a-number')).body)
+  assert.equal(bogus.attention.length, 8)
+})
+test('the archive default comes from one place, and the action falls back to it', async () => {
+  // Acceptance 8, through the route: with `beforeDays` omitted, a preview must
+  // cover exactly the files the overview flagged — 30 and 31 days, not 29.
+  const cwd = mkdtempSync(join(tmpdir(), 'wbm-routes-age-'))
+  const memDir = join(cwd, '.workbuddy', 'memory')
+  mkdirSync(memDir, { recursive: true })
+  const date = (days) => {
+    const day = new Date()
+    day.setDate(day.getDate() - days)
+    return [day.getFullYear(), String(day.getMonth() + 1).padStart(2, '0'), String(day.getDate()).padStart(2, '0')].join('-')
+  }
+  for (const days of [29, 30, 31]) writeFileSync(join(memDir, `${date(days)}.md`), '- 一天\n', 'utf8')
+
+  const { call } = await harness({ recent: { cwd }, config: { ui: { allowWriteActions: true } }, catalog: true })
+  const state = JSON.parse((await call('/workbuddy-memory/state')).body)
+  assert.equal(state.archiveAfterDays, 30, 'the panel reads the default from /state')
+  assert.equal(state.totals.stale, 1)
+  assert.equal(state.projects[0].stale, true)
+
+  const preview = JSON.parse(
+    (await call('/workbuddy-memory/action', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'prune', dryRun: true }),
+    })).body,
+  )
+  assert.equal(preview.ok, true)
+  assert.equal(preview.beforeDays, 30)
+  assert.deepEqual(preview.candidates.map((row) => row.date).sort(), [date(30), date(31)].sort(), 'the same two files the warning is about')
+})
+
+test('content gives the whole file length in code units, or none when it only read a prefix', async () => {
+  // Acceptance 6: the header shows one number for "how long is this file", in
+  // the unit the injection limit is stated in. When only a prefix was read
+  // there is no such number, and inventing the prefix's length is a lie.
+  const cwd = mkdtempSync(join(tmpdir(), 'wbm-routes-length-'))
+  const memDir = join(cwd, '.workbuddy', 'memory')
+  mkdirSync(memDir, { recursive: true })
+  const memory = join(memDir, 'MEMORY.md')
+  const { call } = await harness({ recent: { cwd }, catalog: true })
+  const read = async () => JSON.parse((await call('/workbuddy-memory/content?target=project-memory')).body)
+
+  const small = '# T\n\n- 顶部\n\n## 小节\n- 中文😀\n'
+  writeFileSync(memory, small, 'utf8')
+  const whole = await read()
+  assert.equal(whole.chars, small.length, 'UTF-16 units: the emoji counts as two')
+  assert.equal(whole.truncated, false)
+  assert.equal(whole.entries, 2, 'the bullet above the first heading is an entry')
+
+  // Display-truncated: the whole file was read, so its length is known, but
+  // only the first slice is sent.
+  writeFileSync(memory, `# T\n\n${'- 条目\n'.repeat(70000)}`, 'utf8')
+  const cut = await read()
+  assert.equal(cut.truncated, true, 'what is shown is part of the file')
+  assert.equal(cut.text.length, 262144)
+  assert.equal(cut.chars, '# T\n\n'.length + 5 * 70000, 'the whole file length is still known')
+  assert.equal(cut.revision, null)
+
+  // Prefix only: the file is past the read cap, so no length is known at all.
+  writeFileSync(memory, 'x'.repeat(2 * 1024 * 1024 + 10), 'utf8')
+  const prefix = await read()
+  assert.equal(prefix.truncated, true)
+  assert.equal(prefix.chars, null, 'not the prefix length')
+  assert.equal(prefix.bytes, 2 * 1024 * 1024 + 10, 'the size on disk is still reported')
+  assert.equal(prefix.revision, null)
+
+  const state = JSON.parse((await call('/workbuddy-memory/state')).body)
+  assert.equal(state.projects[0].chars, null, 'the row does not invent a length either')
+  assert.equal(state.projects[0].injection.status, 'unmeasurable')
+  assert.equal(state.stores.project.chars, null)
+})
+
+test('the full attention list is capped too, so /state cannot grow without bound', async () => {
+  // `?attention=all` is one click, not a timer — but "all" on a machine with
+  // hundreds of flagged projects was 208 KiB per request (measured, 500
+  // projects), growing linearly. A person scans a page and asks again; the
+  // cap is high enough that nobody paging through it notices, and low enough
+  // that the wire stays small.
+  const root = mkdtempSync(join(tmpdir(), 'wbm-routes-cap-'))
+  // More flagged projects than the cap, so the cap is what stops the list.
+  const total = ATTENTION_LIMIT + 40
+  const seen = manyProjects(root, total, Array.from({ length: total }, (_, index) => index))
+  const { call } = await harness({ recent: { cwd: null, seen }, catalog: true })
+
+  const all = JSON.parse((await call('/workbuddy-memory/state?attention=all')).body)
+  assert.equal(all.attentionTotal, total)
+  assert.ok(all.attention.length < total, `the full list is capped: ${all.attention.length}`)
+  assert.equal(all.attention.length, ATTENTION_LIMIT, 'at the documented limit')
+  assert.equal(all.attentionMore['over-limit'], total - ATTENTION_LIMIT, 'and it still says how many are past it')
+
+  // An explicit number above the limit is clamped to it, not honoured.
+  const big = JSON.parse((await call('/workbuddy-memory/state?attention=100000')).body)
+  assert.equal(big.attention.length, ATTENTION_LIMIT)
+
+  // Nonsense values fall back to the preview bound; 0 and negatives mean the
+  // preview bound too (a preview of nothing is not a useful reading of "0").
+  for (const value of ['not-a-number', '0', '-5', 'Infinity', 'NaN', '']) {
+    const page = JSON.parse((await call(`/workbuddy-memory/state?attention=${encodeURIComponent(value)}`)).body)
+    assert.equal(page.attention.length, Math.min(8, total), `attention=${JSON.stringify(value)}`)
+    assert.equal(page.attentionTotal, total, 'the total is never affected by the bound')
+  }
+})

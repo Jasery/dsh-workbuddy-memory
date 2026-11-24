@@ -1,14 +1,15 @@
 /** Section registration, the refresh modes, and the caches behind them. */
 
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
 import { normalizeConfig } from '../src/config.js'
-import { createAssemblyCache, createFileCache, createFrozenStore } from '../src/cache.js'
+import { completeSnapshot, createAssemblyCache, createFileCache, createFrozenStore, MAX_FILE_BYTES } from '../src/cache.js'
 import { registerSections, resolveCwd } from '../src/inject.js'
+import { readTextSafe } from '../src/fsx.js'
 import { createTranslator } from '../src/locale.js'
 
 const t = createTranslator('zh')
@@ -47,6 +48,19 @@ function fixture(config = {}) {
   return { root, home, cwd, dir, cfg }
 }
 
+/**
+ * Write a new version whose stat identity cannot collide with the previous one.
+ *
+ * Windows stamps a file with the clock tick of the write, so two same-size
+ * writes inside one tick get the very same mtime *and* ctime: no stat-based
+ * cache can tell them apart. That is a property of the filesystem, not of the
+ * cache, so a test that only wants "the file changed" moves the clock on.
+ */
+function rewrite(path, text) {
+  writeFileSync(path, text, 'utf8')
+  const stat = statSync(path)
+  utimesSync(path, stat.atime, new Date(stat.mtimeMs + 60_000))
+}
 const contextFor = (cwd) => ({ agent: { session: { header: { cwd } } }, scope: {} })
 const textOf = (definition, context) => definition.text(context)
 
@@ -110,7 +124,7 @@ test('one assembly reads the disk once, the next one sees the change', () => {
   assert.match(textOf(project, first), /第一版/)
 
   // Same assembly object: the cached render is reused even though the file moved.
-  writeFileSync(join(dir, 'MEMORY.md'), '## 偏好\n- 第二版\n', 'utf8')
+  rewrite(join(dir, 'MEMORY.md'), '## 偏好\n- 第二版\n')
   assert.match(textOf(project, first), /第一版/)
 
   // A new assembly re-probes, which is what `on-change` promises.
@@ -126,7 +140,7 @@ test('first-turn freezes the text for the same workspace', () => {
   const session = { header: { cwd } }
   const context = { agent: { session }, scope: {} }
   assert.match(textOf(project, context), /第一版/)
-  writeFileSync(join(dir, 'MEMORY.md'), '## 偏好\n- 第二版\n', 'utf8')
+  rewrite(join(dir, 'MEMORY.md'), '## 偏好\n- 第二版\n')
   assert.match(textOf(project, context), /第一版/, 'a frozen block must not change mid-session')
 
   injected.invalidate()
@@ -353,4 +367,26 @@ test('read-only rules do not instruct writes, and carry no trigger', () => {
 
   assert.match(text, /只读/)
   assert.doesNotMatch(text, /什么时候该写/)
+})
+
+test('a complete snapshot says why a file has none', () => {
+  // The injection path and the panel must refuse a file on the same terms:
+  // the same byte cap, and the same reading of what a failed read means.
+  const { dir } = fixture()
+  const read = (path) => readTextSafe(path, { maxBytes: MAX_FILE_BYTES })
+
+  const ok = completeSnapshot(read(join(dir, 'MEMORY.md')))
+  assert.equal(ok.ok, true)
+  assert.match(ok.text, /第一版/)
+
+  assert.equal(completeSnapshot(read(join(dir, 'nope.md'))).reason, 'missing')
+  mkdirSync(join(dir, 'sub'))
+  assert.equal(completeSnapshot(read(join(dir, 'sub'))).reason, 'not_a_file')
+  writeFileSync(join(dir, 'big.md'), 'x'.repeat(MAX_FILE_BYTES + 1))
+  assert.equal(completeSnapshot(read(join(dir, 'big.md'))).reason, 'too_large')
+  assert.equal(MAX_FILE_BYTES, 2 * 1024 * 1024)
+
+  assert.equal(completeSnapshot({ ok: false, text: '', bytes: 0, truncated: false, error: 'changed' }).reason, 'changed')
+  assert.equal(completeSnapshot({ ok: false, text: '', bytes: 0, truncated: false, error: 'EACCES' }).reason, 'unreadable')
+  assert.equal(completeSnapshot({ ok: true, text: 'abc', bytes: 3, truncated: false }).ok, true)
 })

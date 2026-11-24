@@ -23,6 +23,34 @@ export const PLAN_LIMITS = Object.freeze({
   maxFiles: 1000,
 })
 
+/**
+ * How old, in whole days, a daily note must be before the *default* archive
+ * preview picks it up.
+ *
+ * One number for every place that used to hard-code its own 30: the archive
+ * scan (a note is a candidate from this age on), the overview's "to archive"
+ * count, the route's fallback and the panel's opening value. They disagreed by
+ * a day — the scan took a note at exactly 30 days, the overview flagged it only
+ * at 31 — so a file could be archived by the default preview while the panel
+ * said there was nothing to archive.
+ *
+ * It is a constant, not a setting, on purpose: nothing has asked to tune it.
+ */
+export const ARCHIVE_AFTER_DAYS = 30
+
+/**
+ * Whether a note of `ageDays` falls inside a preview of `beforeDays`.
+ *
+ * The one boundary both halves of the plugin share: a preview lists a note
+ * exactly when this says so, and the overview flags a project exactly when its
+ * oldest note does. `null` (an unparseable date) is never a candidate.
+ *
+ * @param {number|null} ageDays
+ * @param {number} [beforeDays]
+ */
+export const isArchivable = (ageDays, beforeDays = ARCHIVE_AFTER_DAYS) =>
+  ageDays !== null && Number.isFinite(beforeDays) && ageDays >= beforeDays
+
 const MAX_SOURCE_BYTES = 2 * 1024 * 1024
 const DATE_FILE = /^(\d{4}-\d{2}-\d{2})\.md$/
 
@@ -81,7 +109,7 @@ export function scanCandidates(dir, { beforeDays, dates } = {}) {
   const candidates = []
   for (const name of names.sort()) {
     const date = name.slice(0, 10)
-    if (wanted ? !wanted.has(date) : ageInDays(date) < beforeDays) continue
+    if (wanted ? !wanted.has(date) : !isArchivable(ageInDays(date), beforeDays)) continue
     const file = readTextSafe(join(dir, name), { maxBytes: MAX_SOURCE_BYTES })
     const readable = file.ok && !file.truncated
     candidates.push({

@@ -42,6 +42,15 @@ window.__ModuleLoader__.load({
     const CORE_BUDGET_MAX = 20000
 
     /**
+     * The most flagged projects the host sends, even for `attention=all`.
+     *
+     * Mirrors `ATTENTION_LIMIT` in `src/host/catalog.js`; the browser bundle
+     * cannot import it. The two must agree, or the panel offers a "show all"
+     * that fetches nothing more.
+     */
+    const ATTENTION_LIMIT = 200
+
+    /**
      * The `inject.coreBudget` value the plugin will actually run with.
      *
      * Mirrors `num(inject.coreBudget, 4000, 4000, 20000)` in `config.js` — the
@@ -103,7 +112,6 @@ window.__ModuleLoader__.load({
       'dash.needsAttention': '需要关注',
       'dash.recentActivity': '最近活跃',
       'dash.globalMemory': '全局记忆',
-      'dash.neverArchived': '{days} 天未归档',
       'dash.noProjects': '还没有认到项目：先在这个项目的会话里发一句话，再回来刷新。',
 
       // targets
@@ -235,7 +243,6 @@ window.__ModuleLoader__.load({
       // of a raw key.
       'layer.legacyReason.non_entry_content': '某个主题小节里有非条目内容，整份文件无法可靠拆分。',
       'layer.legacyReason.unknown': '文件结构无法可靠拆分。',
-      'layer.layered': '已分层：核心 {core} 字符常驻，{topics} 个主题（{chars} 字符）按需读取。',
       'layer.askModel': '让模型出划分草案',
       'layer.askModelHint': '复制这句话发给模型：它会读出当前 revision 并给出整份草案，你在本页「粘贴草案」里预览差异后保存。',
       'layer.copyPrompt': '按主题帮我整理{which}记忆：先 memory_read 拿当前正文和 revision，再把条目分成「常驻记忆」（少量、每轮都要用的）和若干主题小节（按需查询的），输出整份草案正文和来源 revision，我自己在面板预览。不要直接写文件。主题小节的标题要写清「什么时候该查它」（例如「Git 推送超时 → 走本地代理」），不要只写一个名词——注入时能看到的只有标题。',
@@ -338,7 +345,6 @@ window.__ModuleLoader__.load({
       // state labels
       'state.current': '当前',
       'state.missing': '目录不存在',
-      'state.overLimit': '超限',
       'state.dailyOnly': '仅日期笔记',
       'state.hasMemory': '有记忆',
       'state.currentProject': '当前项目',
@@ -361,26 +367,18 @@ window.__ModuleLoader__.load({
 
       // counts
       'count.entries': '{n} 条',
-      'count.entriesPercent': '{n} 条 · {percent}%',
       'count.matches': '{n} 条匹配',
       'count.days': '{n} 天',
-      'count.chipProjects': '项目 {n}',
-      'count.chipWithMemory': '有记忆 {n}',
-      'count.chipEntries': '条目 {n}',
       'count.chipOverLimit': '超限 {n}',
       'count.chipPending': '待归档 {n}',
       'count.allProjects': '全部项目 {n}',
       'count.truncatedProjects': '只显示前 {n} 个，可在设置里调大「最多展示项目」',
-      'count.memoryLine': 'MEMORY {n} 条 · {bytes}',
-      'count.usedPercent': '已用 {percent}%',
       'count.bytes': '字节',
       'count.latestDaily': '最新日期 {date}',
 
       // attention
-      'attention.overLimit': '已超注入限额，下一轮注入会截断',
       'attention.stale': '{date} 已 {days} 天未归档',
       'attention.missing': '工作区目录不存在',
-      'attention.unreadable': 'MEMORY.md 不可读',
       'attention.none': '没有需要立即处理的项目。',
       'attention.noActivity': '还没有任何项目写过记忆。',
 
@@ -428,8 +426,47 @@ window.__ModuleLoader__.load({
       'editor.viewDiskDiff': '查看磁盘差异',
       'editor.reloadDiscard': '重新加载（丢弃草稿）',
       'editor.keepDraft': '保留草稿继续编辑',
-      'editor.limitWarning': '已用 {chars} 字，超过注入限额 {limit}，下一轮注入会截断。',
-      'editor.overLimitChip': '超注入限额',
+
+      // injection state. One ladder for every surface (header chips, project
+      // list, "needs attention", project summary, file header): the panel says
+      // what the prompt does with the file, not what its length is.
+      'inject.units': '{n} 码元',
+      'inject.complete': '核心可完整注入',
+      'inject.coreOver': '核心超预算 · {n} 条未注入',
+      'inject.coreOverShort': '核心 {n} 条未注入',
+      'inject.truncated': '整份截断',
+      'inject.omitted': '限额过小 · 未注入',
+      'inject.disabled': '注入已关闭',
+      'inject.empty': '文件为空',
+      'inject.unmeasurable': '无法测量',
+      'inject.missing': '未创建',
+      'inject.why.unreadable': 'MEMORY.md 读不出来。',
+      'inject.why.changed': '读取时文件正在变化。',
+      'inject.why.too_large': '文件超过 2 MiB 的读取上限，无法按完整内容判断。',
+      'inject.why.not_a_file': '这个路径不是普通文件。',
+      'inject.why.whole': '这个文件没有分成「常驻记忆」和主题小节，按整份注入。',
+      'inject.detail.core': '完整核心块需要 {need} 码元，预算 {budget} 码元，本次注入 {used} 码元。',
+      'inject.detail.whole': '完整块需要 {need} 码元，限额 {budget} 码元，本次注入 {used} 码元。',
+      'inject.detailNotice': '标题和提示也占预算，所以刚好装满的核心仍可能有条目放不下。',
+      'inject.usedPercent': '已用 {percent}%',
+      'inject.lengthUnits': '长度',
+      'inject.onDisk': '磁盘',
+      'stats.summaryLine': '{projects} 个项目 · {created} 个已创建记忆文件 · {entries} 条',
+      'stats.summaryDetail': '「已创建」只表示 MEMORY.md 存在，包括空白文件；条目按全部项目统计。',
+      'stats.summaryGone': ' 其中 {n} 个的目录已不存在。',
+      'stats.summaryUncounted': '（{n} 个文件未计入）',
+      'stats.uncounted': '{n} 个文件未计入',
+      'count.memoryLineNoFile': 'MEMORY 未创建',
+      'count.entriesUnits': '{n} 条 · {units}',
+      'count.entriesShownUnits': '已显示 {n} 条 · {units}',
+      'count.entriesShown': '已显示 {n} 条',
+      'count.chipOverLimitDetail': '有项目记忆未完整注入：核心有条目未注入、整份被截断，或限额过小。点开「需要关注」查看是哪些项目。',
+      'count.chipPendingDetail': '按项目统计：有日期笔记达到默认归档天数（{days} 天）的项目数。',
+      'attention.unmeasurable': 'MEMORY.md 无法按完整内容判断',
+      'attention.partialNote': '只显示前 {shown} 个，共 {total} 个。',
+      'attention.showAll': '查看全部',
+      'doc.partialDetail': '只显示或只读到文件的一部分：条目数和长度只描述屏幕上的内容。',
+      'panel.emptyOverview': '暂无项目',
 
       // source mode
       'source.title': '进入源码模式？',
@@ -496,7 +533,6 @@ window.__ModuleLoader__.load({
       'dash.needsAttention': 'Needs attention',
       'dash.recentActivity': 'Recent activity',
       'dash.globalMemory': 'Global memory',
-      'dash.neverArchived': 'not archived for {days} days',
       'dash.noProjects': 'No project recognised yet: send one message in a session of that project, then come back and refresh.',
 
       'target.projectMemory': 'MEMORY.md',
@@ -613,7 +649,6 @@ window.__ModuleLoader__.load({
       'layer.legacyReason.invalid_core': 'The "Core Memory" section holds something other than entries (a heading, prose or a code block).',
       'layer.legacyReason.non_entry_content': 'A topic section holds something other than entries, so the file cannot be split reliably.',
       'layer.legacyReason.unknown': 'The file structure cannot be split reliably.',
-      'layer.layered': 'Split: {core} characters of core stay always-on; {topics} topics ({chars} characters) are read on demand.',
       'layer.askModel': 'Have the model draft a split',
       'layer.askModelHint': 'Copy this and send it to the model: it reads the current revision, hands back a whole-file draft, and you preview the diff in "Paste a draft" on this page.',
       'layer.copyPrompt': 'Tidy up my {which} memory by topic: memory_read first for the current body and revision, then split the entries into "Core Memory" (few, needed every turn) and topic sections (read on demand). Give me the whole draft body and its source revision; I will preview it in the panel. Do not write the file yourself. Name each topic section by when to read it (e.g. "Git push times out -> use the local proxy"), not just the noun: the heading is all that is injected.',
@@ -712,7 +747,6 @@ window.__ModuleLoader__.load({
       'settings.followDefault': "following defaults",
       'state.current': "Current",
       'state.missing': "Directory missing",
-      'state.overLimit': "Over limit",
       'state.dailyOnly': "Daily notes only",
       'state.hasMemory': "Has memory",
       'state.currentProject': "Current project",
@@ -731,24 +765,16 @@ window.__ModuleLoader__.load({
       'time.hoursAgo': "{n} h ago",
       'time.daysAgo': "{n} d ago",
       'count.entries': "{n} entries",
-      'count.entriesPercent': "{n} entries · {percent}%",
       'count.matches': "{n} matches",
       'count.days': "{n} d",
-      'count.chipProjects': "Projects {n}",
-      'count.chipWithMemory': "With memory {n}",
-      'count.chipEntries': "Entries {n}",
       'count.chipOverLimit': "Over limit {n}",
       'count.chipPending': "To archive {n}",
       'count.allProjects': "All projects {n}",
       'count.truncatedProjects': "Showing the first {n}; raise \"Max projects shown\" in settings",
-      'count.memoryLine': "MEMORY {n} entries · {bytes}",
-      'count.usedPercent': "{percent}% used",
       'count.bytes': "Bytes",
       'count.latestDaily': "Latest {date}",
-      'attention.overLimit': "Over the injection limit; the next turn truncates it",
       'attention.stale': "{date} has not been archived for {days} days",
       'attention.missing': "The workspace directory does not exist",
-      'attention.unreadable': "MEMORY.md is unreadable",
       'attention.none': "Nothing needs attention right now.",
       'attention.noActivity': "No project has written memory yet.",
       'editor.edit': "Edit",
@@ -794,8 +820,45 @@ window.__ModuleLoader__.load({
       'editor.viewDiskDiff': "View the on-disk diff",
       'editor.reloadDiscard': "Reload (discard the draft)",
       'editor.keepDraft': "Keep the draft and keep editing",
-      'editor.limitWarning': "Using {chars} characters against a {limit}-character limit; the next turn truncates it.",
-      'editor.overLimitChip': "Over the injection limit",
+
+      // injection state (see the Chinese block for the ladder)
+      'inject.units': "{n} units",
+      'inject.complete': "Core fits in full",
+      'inject.coreOver': "Core over budget · {n} entries not injected",
+      'inject.coreOverShort': "Core: {n} not injected",
+      'inject.truncated': "Whole file, truncated",
+      'inject.omitted': "Limit too small · not injected",
+      'inject.disabled': "Injection off",
+      'inject.empty': "File is empty",
+      'inject.unmeasurable': "Cannot measure",
+      'inject.missing': "Not created",
+      'inject.why.unreadable': "MEMORY.md cannot be read.",
+      'inject.why.changed': "The file was changing while it was read.",
+      'inject.why.too_large': "The file is past the 2 MiB read cap, so it cannot be judged as a whole.",
+      'inject.why.not_a_file': "This path is not a regular file.",
+      'inject.why.whole': "This file has no \"Core Memory\" split, so it is injected whole.",
+      'inject.detail.core': "The complete core block needs {need} units against a budget of {budget}; {used} units are injected.",
+      'inject.detail.whole': "The complete block needs {need} units against a limit of {budget}; {used} units are injected.",
+      'inject.detailNotice': "The heading and the notices spend budget too, so a core that just fits can still lose an entry.",
+      'inject.usedPercent': "{percent}% used",
+      'inject.lengthUnits': "Length",
+      'inject.onDisk': "on disk",
+      'stats.summaryLine': "{projects} projects · {created} with a memory file · {entries} entries",
+      'stats.summaryDetail': "Created means MEMORY.md exists, blank files included; entries are counted over every project.",
+      'stats.summaryGone': " {n} of them no longer exist on disk.",
+      'stats.summaryUncounted': " ({n} files not counted)",
+      'stats.uncounted': "{n} files not counted",
+      'count.memoryLineNoFile': "MEMORY not created",
+      'count.entriesUnits': "{n} entries · {units}",
+      'count.entriesShownUnits': "{n} entries shown · {units}",
+      'count.entriesShown': "{n} entries shown",
+      'count.chipOverLimitDetail': "Some project memory is not injected in full: core entries left out, the whole file cut, or a limit too small. Open \"Needs attention\" to see which.",
+      'count.chipPendingDetail': "Counted per project: projects with a daily note past the default archive age ({days} days).",
+      'attention.unmeasurable': "MEMORY.md cannot be judged as a whole",
+      'attention.partialNote': "Showing the first {shown} of {total}.",
+      'attention.showAll': "Show all",
+      'doc.partialDetail': "Only part of the file is shown or was read: the count and length describe what is on screen.",
+      'panel.emptyOverview': "No projects yet",
       'source.title': "Enter source mode?",
       'source.bodyAllowed': "Source mode writes the whole file. Structural checks, backups and undo still apply, but one mistake can hit several sections at once. This browser session will not ask again.",
       'source.confirmAllowed': "I understand — open source mode",
@@ -919,6 +982,7 @@ window.__ModuleLoader__.load({
       }
       .wbm-root *, .wbm-root *::before, .wbm-root *::after { box-sizing: border-box; }
       .wbm-header {
+        position: relative;
         display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
         padding: 10px 16px; border-bottom: 1px solid var(--wbm-border-soft);
         background: var(--wbm-bg); min-height: 48px;
@@ -935,7 +999,46 @@ window.__ModuleLoader__.load({
       .wbm-chip.ok { color: var(--wbm-ok); border-color: color-mix(in srgb, var(--wbm-ok) 35%, transparent); }
       .wbm-chip.warn { color: var(--wbm-warn); border-color: color-mix(in srgb, var(--wbm-warn) 35%, transparent); }
       .wbm-chip.bad { color: var(--wbm-danger); border-color: color-mix(in srgb, var(--wbm-danger) 35%, transparent); }
-      .wbm-chip.accent { color: var(--wbm-accent); border-color: color-mix(in srgb, var(--wbm-accent) 35%, transparent); }
+      /* An injection state that has numbers behind it: hover the chip (or tab
+         to it) and the numbers appear. The hint is out of flow, so reading it
+         covers the list instead of pushing it down, and it hangs off the header
+         rather than the chip because the chips row clips its own overflow when
+         the sidebar is narrow — a clipped hint is no hint. */
+      .wbm-chip-tip { cursor: help; text-decoration: underline dotted; text-underline-offset: 2px; }
+      .wbm-chip-tip:focus-visible {
+        outline: 2px solid var(--dsw-focus-ring-color, var(--wbm-accent)); outline-offset: 1px;
+      }
+      .wbm-tip {
+        position: absolute; z-index: 40; top: calc(100% - 3px); right: 16px;
+        max-width: min(360px, calc(100% - 32px));
+        padding: 7px 10px; border-radius: 8px;
+        border: 1px solid var(--wbm-border); background: var(--wbm-panel);
+        color: var(--wbm-text-2); font-size: 12px; line-height: 1.55; white-space: normal;
+        box-shadow: 0 8px 24px rgba(0,0,0,.16);
+        /* Hidden by opacity, not visibility or display: the text stays in the
+           document, so aria-describedby has something to read even for a
+           reader that never hovers. */
+        opacity: 0; transform: translateY(-3px); pointer-events: none;
+        transition: opacity .12s ease, transform .12s ease;
+      }
+      .wbm-tip-why { margin-top: 4px; color: var(--wbm-text-2); }
+      /* Hover for the mouse; focus for the keyboard and for touch, where a tap
+         focuses the chip and there is no hover at all. */
+      .wbm-header:has(.wbm-chip-tip:hover) .wbm-tip,
+      .wbm-header:has(.wbm-chip-tip:focus) .wbm-tip { opacity: 1; transform: none; }
+      @media (prefers-reduced-motion: reduce) { .wbm-tip { transition: none; } }
+      .wbm-meta-bad { color: var(--wbm-danger); }
+      /* The panel is its own sizing context: the right-sidebar tab can be
+         dragged narrow inside a wide window, and a viewport media query would
+         never notice. */
+      .wbm-root { container: wbm / inline-size; }
+      .wbm-crumb-scope { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+      @container wbm (max-width: 420px) {
+        .wbm-header { gap: 6px; }
+        .wbm-chips { flex: 1 1 100%; flex-wrap: nowrap; min-width: 0; overflow: hidden; }
+        .wbm-chip { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+        .wbm-crumb-scope { max-width: 60vw; }
+      }
       .wbm-btn {
         display: inline-flex; align-items: center; gap: 5px;
         border: 1px solid var(--wbm-border); background: transparent; color: var(--wbm-text-2);
@@ -1125,6 +1228,8 @@ window.__ModuleLoader__.load({
       .wbm-tab .wbm-rail { width: 208px; flex-basis: 208px; }
       .wbm-tab .wbm-picker { display: none; }
       .wbm-tab .wbm-header { padding: 8px 12px; min-height: 44px; }
+      /* The tab's header pads 12px, not 16: keep the hint on the same edge. */
+      .wbm-tab .wbm-tip { right: 12px; max-width: min(360px, calc(100% - 24px)); }
       .wbm-tab .wbm-doc-head { padding: 10px 14px 8px; }
       .wbm-tab .wbm-doc-body { padding: 10px 14px 30px; }
       @media (max-width: 820px) {
@@ -1549,12 +1654,136 @@ window.__ModuleLoader__.load({
       return `${(n / 1024 / 1024).toFixed(1)} MB`
     }
 
-    function ratio(bytes, limit) {
-      const b = Number(bytes) || 0
-      const l = Number(limit) || 0
-      if (l <= 0) return { value: 0, percent: 0, level: 'none' }
-      const raw = b / l
-      return { value: Math.min(raw, 1), percent: Math.round(raw * 100), level: raw >= 1 ? 'over' : raw >= 0.8 ? 'warn' : 'ok' }
+    /**
+     * A file length in the unit the injection limit is stated in.
+     *
+     * `null` is "not measured" (only a prefix was read). `Number(null)` is 0,
+     * so it is checked first: a file nobody measured must not read as "0 units".
+     *
+     * @param {number|null|undefined} units - UTF-16 code units.
+     * @returns {string} the formatted length, or '' when none is known.
+     */
+    function humanUnits(units) {
+      if (units === null || units === undefined || units === '') return ''
+      const n = Number(units)
+      if (!Number.isFinite(n) || n < 0) return ''
+      return t('inject.units', { n: n >= 10000 ? `${Math.round(n / 100) / 10}k` : n })
+    }
+
+    /**
+     * An entry count a file header or row may show.
+     *
+     * `null` means nobody counted: the file exists but could not be read
+     * whole. Rendering that as `0` put "MEMORY 0 条" beside "cannot measure"
+     * — a count of zero is a claim, and an unmeasured file supports none. The
+     * state chip beside it says why; this returns nothing to print.
+     *
+     * @param {object|null|undefined} row - anything with `entries`.
+     * @returns {string} "N 条", or '' when the count is not known.
+     */
+    function entryCount(row) {
+      const n = row?.entries
+      if (n === null || n === undefined) return ''
+      return t('count.entries', { n: Number(n) || 0 })
+    }
+
+    /**
+     * How full a source is, from the prompt's own numbers.
+     *
+     * The old `ratio(chars, limit)` compared the file's length with the limit
+     * whatever the mode. Under layered injection the prompt never makes that
+     * comparison, so the percentage described nothing. The fill is now the
+     * block the prompt would need divided by what it allows itself — the core
+     * against its share, a whole file against its limit — and the level comes
+     * from what was actually lost, never from the ratio alone.
+     *
+     * @param {object|undefined} injection - a row's `injection`.
+     * @returns {{ percent: number|null, level: 'none'|'ok'|'warn'|'over', near: boolean }}
+     */
+    function fillOf(injection) {
+      if (!injection || !(injection.budget > 0) || !(injection.need >= 0)) return { percent: null, level: 'none', near: false }
+      const raw = injection.need / injection.budget
+      const near = raw >= 0.9
+      return { percent: Math.round(raw * 100), level: injection.overLimit ? 'over' : near ? 'warn' : 'ok', near }
+    }
+
+    /**
+     * The injection state of one project as every surface shows it.
+     *
+     * One function for the header chips, the project list, "needs attention",
+     * the project summary and the file header, so the same file cannot be
+     * "over the limit" in one place and "fine" in another. The judgment itself
+     * is the host's (`row.injection`, from `measureSource`): this only turns
+     * it into copy, a tone and the numbers behind it.
+     *
+     * `detail` is the sentence a person needs to understand an alert, and
+     * `why` the reason a state is what it is. Both go in the chip's hover hint,
+     * because the chip itself has to stay short in a narrow sidebar.
+     *
+     * @param {object|null|undefined} injection
+     * @returns {{ status: string, tone: ''|'warn'|'bad', label: string, short: string, detail: string, why: string, alert: boolean }}
+     */
+    function injectionState(injection) {
+      const status = injection?.status ?? 'missing'
+      const none = { status, tone: '', label: '', short: '', detail: '', why: '', alert: false }
+      if (status === 'missing') return { ...none, label: t('inject.missing'), short: t('inject.missing') }
+      if (status === 'disabled') return { ...none, label: t('inject.disabled'), short: t('inject.disabled') }
+      if (status === 'empty') return { ...none, label: t('inject.empty'), short: t('inject.empty') }
+      if (status === 'unmeasurable') {
+        return { ...none, label: t('inject.unmeasurable'), short: t('inject.unmeasurable'), why: t(`inject.why.${injection.reason ?? 'unreadable'}`) }
+      }
+      const fill = fillOf(injection)
+      const numbers = { need: injection.need, budget: injection.budget, used: injection.used }
+      const detail = t(injection.mode === 'layered' ? 'inject.detail.core' : 'inject.detail.whole', numbers)
+      const why = injection.fallback === 'legacy' ? t('inject.why.whole') : ''
+      if (status === 'omitted') return { status, tone: 'bad', label: t('inject.omitted'), short: t('inject.omitted'), detail, why, alert: true }
+      if (status === 'truncated') return { status, tone: 'bad', label: t('inject.truncated'), short: t('inject.truncated'), detail, why, alert: true }
+      if (status === 'core-over-budget') {
+        return {
+          status,
+          tone: 'bad',
+          label: t('inject.coreOver', { n: injection.dropped }),
+          short: t('inject.coreOverShort', { n: injection.dropped }),
+          detail: `${detail}${t('inject.detailNotice')}`,
+          why,
+          alert: true,
+        }
+      }
+      // `complete`: nothing is lost. A block close to its budget is worth a
+      // quiet word — the next entry written may not fit — but it is not an
+      // alert, and it is never shown in the alert colour.
+      return { status, tone: fill.near ? 'warn' : '', label: t('inject.complete'), short: t('inject.complete'), detail, why, alert: false }
+    }
+
+    /**
+     * The paragraphs of an injection hint: the numbers, then the reason.
+     *
+     * Both come out of `injectionState`, so the hint and the chip cannot
+     * disagree. Empty when the state adds nothing to its own label.
+     *
+     * @param {{ detail?: string, why?: string }|null|undefined} view - an
+     *   `injectionState` result.
+     * @returns {string[]} one string per paragraph.
+     */
+    function injectionTipLines(view) {
+      return [view?.detail, view?.why].filter(Boolean)
+    }
+
+    /**
+     * A document-unique id for a project's injection hint.
+     *
+     * The overview panel and the session tab can be on screen together, each
+     * with its own header, so the id says which surface it belongs to: one
+     * panel's hint never describes the other panel's chip. What is left of the
+     * key after folding into `[A-Za-z0-9_-]` keeps the id usable for
+     * `aria-describedby`, which splits on spaces.
+     *
+     * @param {{ key?: string, name?: string }|null|undefined} row
+     * @param {string} [surface] - which surface renders it (`panel` or `tab`).
+     * @returns {string}
+     */
+    function tipIdOf(row, surface = 'panel') {
+      return `wbm-tip-${surface}-${String(row?.key || row?.name || 'project').replace(/[^A-Za-z0-9_-]+/g, '-')}`
     }
 
     function filterEntries(entries, query) {
@@ -1798,12 +2027,14 @@ window.__ModuleLoader__.load({
     function projectState(row) {
       if (row.current) return { tone: 'accent', label: t('state.current') }
       if (row.status === 'missing') return { tone: 'bad', label: t('state.missing') }
-      if (row.status === 'unreadable') return { tone: 'bad', label: t('file.unreadable') }
-      if (row.status === 'over-limit') return { tone: 'warn', label: t('state.overLimit') }
+      if (row.injection?.status === 'unmeasurable') return { tone: 'bad', label: t('file.unreadable') }
+      if (row.overLimit) return { tone: 'bad', label: injectionState(row.injection).short }
       if (row.status === 'stale') return { tone: 'warn', label: t('stats.pendingArchive') }
       if (row.status === 'daily-only') return { tone: 'warn', label: t('state.dailyOnly') }
       if (row.status === 'empty') return { tone: 'empty', label: t('rail.noMemory') }
-      return { tone: 'ok', label: t('state.hasMemory') }
+      // A memory file that exists is a fact, not a health grade: "has memory"
+      // used to be green, which read as "all good" for a file nobody measured.
+      return { tone: '', label: t('state.hasMemory') }
     }
 
     // ── config and navigation ───────────────────────────────────────────────
@@ -2104,6 +2335,12 @@ window.__ModuleLoader__.load({
       const [undo, setUndo] = React.useState(null)
       const [stale, setStale] = React.useState(false)
       const [railOpen, setRailOpen] = React.useState(false)
+      // Set once the capped "all" list has been asked for: every poll after it
+      // fetches the same list, and the note stops offering a further page.
+      // A ref on purpose — see `refresh`.
+      const wantAllAttention = React.useRef(false)
+      /** Request sequence for `/state`: a stale answer is dropped, not applied. */
+      const stateSeq = React.useRef(0)
       // Both management surfaces keep their own frozen target: a list or a diff
       // is about one file, and it must not be reused for another one that
       // happens to be open when the response arrives.
@@ -2139,22 +2376,43 @@ window.__ModuleLoader__.load({
         if (match) setActiveKey(match.key)
       }, [mode, effectiveKey, state])
 
-      const refresh = React.useCallback(async () => {
-        const suffix = effectiveKey ? `?project=${encodeURIComponent(effectiveKey)}` : ''
-        try {
-          const next = await getJson(`${API}/state${suffix}`)
-          setState(next)
-          setError('')
-          if (effectiveKey && next.stores?.project) {
-            setDetails((current) => ({ ...current, [effectiveKey]: next.stores.project }))
+      const refresh = React.useCallback(
+        async (options = {}) => {
+          // A person who asked for the whole attention list keeps getting it on
+          // every poll. Fetching the preview again cut the list back to eight
+          // a few seconds after the click, with nothing to say it had happened.
+          // This is a ref, not state: the flag only picks a URL, and keeping
+          // it out of the render keeps `refresh` stable, so flipping it does
+          // not re-run the polling effect and fetch twice.
+          const everything = options.attention === 'all' || wantAllAttention.current
+          const params = []
+          if (effectiveKey) params.push(`project=${encodeURIComponent(effectiveKey)}`)
+          if (everything) params.push('attention=all')
+          const suffix = params.length ? `?${params.join('&')}` : ''
+          // Only the newest request's answer is applied. A poll that left
+          // before "show all" was clicked can land after it, and applying its
+          // preview answer cut the expanded list back to eight until the next
+          // poll — the same shrink through a narrower window. (The same guard
+          // `contentSeq` uses for file reads.)
+          const seq = (stateSeq.current += 1)
+          try {
+            const next = await getJson(`${API}/state${suffix}`)
+            if (seq !== stateSeq.current) return next
+            setState(next)
+            setError('')
+            if (effectiveKey && next.stores?.project) {
+              setDetails((current) => ({ ...current, [effectiveKey]: next.stores.project }))
+            }
+            return next
+          } catch (cause) {
+            if (seq !== stateSeq.current) return null
+            const code = String(cause?.message ?? cause)
+            setError(describeCode(code))
+            return null
           }
-          return next
-        } catch (cause) {
-          const code = String(cause?.message ?? cause)
-          setError(describeCode(code))
-          return null
-        }
-      }, [effectiveKey])
+        },
+        [effectiveKey],
+      )
 
       React.useEffect(() => {
         refresh()
@@ -2184,7 +2442,13 @@ window.__ModuleLoader__.load({
         return () => clearTimeout(timer)
       }, [undo])
 
-      const project = effectiveKey ? (state?.projects ?? []).find((row) => row.key === effectiveKey) ?? null : null
+      // The selected project's row, in full, wherever it sits. `/state` sends
+      // it as `project`, resolved by key against every known project, so one
+      // past the display bound is as addressable as the first. Older hosts
+      // did not send it; the list is the fallback for them.
+      const project = effectiveKey
+        ? (state?.project?.key === effectiveKey ? state.project : null) ?? (state?.projects ?? []).find((row) => row.key === effectiveKey) ?? null
+        : null
 
       // The project surface is a single project: when the session resolves (or a
       // fallback picker changes it), start from the file a person most likely
@@ -2212,7 +2476,6 @@ window.__ModuleLoader__.load({
         : null
       const user = state?.stores?.user ?? null
       const profile = state?.stores?.profile ?? null
-      const limits = state?.limits ?? {}
       const totals = state?.totals ?? { projects: 0, withMemory: 0, entries: 0, dailyFiles: 0, overLimit: 0, stale: 0 }
 
       const panelWriteOn = Boolean(flags.allowWriteActions && state?.allowWriteActions !== false)
@@ -2612,6 +2875,36 @@ window.__ModuleLoader__.load({
         return details[key] ?? (key === effectiveKey ? state?.stores?.project ?? null : null)
       }
 
+      /**
+       * Open a flagged project from "needs attention".
+       *
+       * The flagged project is often *not* in `state.projects`: the list stops
+       * at the display bound, and the attention preview does not. So it is
+       * addressed by key alone, and every read resolves it server-side.
+       *
+       * @param {object} row - an attention item: `key`, `name`, `hasMemory`,
+       *   `latestDaily`, and its `injection`.
+       */
+      function openAttention(row) {
+        setActiveKey(row.key)
+        dropManagement()
+        if (row.hasMemory) openFile('project-memory', undefined, row.key)
+        else if (row.latestDaily) openFile('project-daily', row.latestDaily, row.key)
+        else {
+          setSelected(null)
+          setDoc(null)
+          setSourceEdit(null)
+        }
+      }
+
+      /** Ask the host for the whole attention list, past the preview bound. */
+      async function loadAllAttention() {
+        // Flip the flag first so a poll that lands mid-request also asks for
+        // the whole list, then fetch it now rather than waiting for an effect.
+        wantAllAttention.current = true
+        return refresh({ attention: 'all' })
+      }
+
       // ── version history ────────────────────────────────────────────────────
 
       /** The frozen identity of the file a management surface is about. */
@@ -2871,19 +3164,23 @@ window.__ModuleLoader__.load({
       function dailyRows(key, detail) {
         const rows = detail?.daily ?? []
         if (!rows.length) return null
+        // The same boundary the overview counts with, so a note marked here
+        // is one the default archive preview lists.
+        const after = Number(state?.archiveAfterDays) || 30
         return rows.map((file) =>
           fileRow(
             key,
             'project-daily',
             file.date,
             file.date,
-            `${humanBytes(file.bytes)}${file.ageDays > 30 ? ` · ${t('time.daysAgo', { n: file.ageDays })}` : ''}`,
+            `${humanBytes(file.bytes)}${file.ageDays >= after ? ` · ${t('time.daysAgo', { n: file.ageDays })}` : ''}`,
             selected?.target === 'project-daily' && selected?.date === file.date && selected?.key === key,
           ),
         )
       }
 
       function projectTree() {
+        if (!state) return h('div', { className: 'wbm-note' }, t('common.loading'))
         if (!filteredProjects.length) {
           return h('div', { className: 'wbm-note' }, railQuery ? t('state.noMatchingProject') : t('state.noWorkspaces'))
         }
@@ -2901,11 +3198,17 @@ window.__ModuleLoader__.load({
                 className: `wbm-project${row.key === effectiveKey ? ' active' : ''}`,
                 onClick: () => selectProject(row),
                 title: `${row.title || row.name}\n${row.path}`,
+                'aria-label': `${row.title || row.name}${row.overLimit ? ` — ${injectionState(row.injection).label}` : ''}`,
               },
               h(ChevronIcon, { size: 11, open: isOpen }),
               h('span', { className: `wbm-dot ${tone.tone === 'empty' ? 'empty' : tone.tone}` }),
               h('span', { className: 'wbm-name' }, row.title || row.name),
-              h('span', { className: 'wbm-meta' }, row.hasMemory ? t('count.entries', { n: row.entries ?? 0 }) : row.daily ? t('count.days', { n: row.daily }) : tone.label),
+              h(
+                'span',
+                { className: `wbm-meta${row.overLimit ? ' wbm-meta-bad' : ''}` },
+                // An unmeasured file falls through to its state, never to "0 条".
+                row.hasMemory && entryCount(row) ? entryCount(row) : row.daily ? t('count.days', { n: row.daily }) : row.hasMemory ? injectionState(row.injection).short : tone.label,
+              ),
             ),
             isOpen
               ? h(
@@ -2916,7 +3219,7 @@ window.__ModuleLoader__.load({
                     'project-memory',
                     undefined,
                     t('target.projectMemory'),
-                    row.hasMemory ? t('count.entries', { n: row.entries ?? 0 }) : t('file.notCreated'),
+                    row.hasMemory ? entryCount(row) || injectionState(row.injection).short : t('file.notCreated'),
                     selected?.target === 'project-memory' && selected?.key === row.key,
                   ),
                   dailyRows(row.key, detail),
@@ -2930,7 +3233,6 @@ window.__ModuleLoader__.load({
         if (!project) {
           return h('div', { className: 'wbm-note' }, t('editor.pickProjectHint'))
         }
-        const projectRatio = ratio(project.chars, limits.project)
         return h(
           'div',
           null,
@@ -2939,7 +3241,7 @@ window.__ModuleLoader__.load({
             'project-memory',
             undefined,
             t('target.projectMemory'),
-            project.hasMemory ? t('count.entriesPercent', { n: project.entries ?? 0, percent: projectRatio.percent }) : t('file.notCreated'),
+            project.hasMemory ? entryCount(project) || injectionState(project.injection).short : t('file.notCreated'),
             selected?.target === 'project-memory',
           ),
           dailyRows(project.key, projectDetail),
@@ -2947,12 +3249,21 @@ window.__ModuleLoader__.load({
       }
 
       function globalRows() {
-        const userRatio = ratio(user?.chars, limits.user)
         return h(
           'div',
           null,
+          // User memory is judged on its own in a later review; here it keeps
+          // its entry count and its length in the shared unit, and no
+          // percentage until there is a judgment to base one on.
           user?.memoryExists
-            ? fileRow(null, 'user-memory', undefined, t('target.userMemory'), t('count.entriesPercent', { n: user.entries ?? 0, percent: userRatio.percent }), selected?.target === 'user-memory')
+            ? fileRow(
+                null,
+                'user-memory',
+                undefined,
+                t('target.userMemory'),
+                [entryCount(user), humanUnits(user.chars)].filter(Boolean).join(' · '),
+                selected?.target === 'user-memory',
+              )
             : h('div', { className: 'wbm-note' }, t('state.noUserMemory')),
           profile?.exists
             ? fileRow(null, 'profile', undefined, t('target.profile'), profile.ambiguous ? t('state.multipleCandidates') : t('file.readOnly'), selected?.target === 'profile')
@@ -2982,7 +3293,13 @@ window.__ModuleLoader__.load({
                 t('rail.onlyWithMemory'),
               ),
             ),
-            h('div', { className: 'wbm-rail-group' }, t('count.allProjects', { n: state?.projectsTotal ?? state?.projects?.length ?? 0 })),
+            // Nothing until the first state: "all projects 0" is a count nobody
+            // has made yet, and it flashed on every open.
+            state && (state.projectsTotal ?? state.projects?.length ?? 0) > 0
+              ? h('div', { className: 'wbm-rail-group' }, t('count.allProjects', { n: state.projectsTotal ?? state.projects?.length ?? 0 }))
+              : state
+                ? null
+                : h('div', { className: 'wbm-rail-group' }, t('common.loading')),
             state?.projectsTruncated
               ? h('div', { className: 'wbm-note' }, t('count.truncatedProjects', { n: state.projects?.length ?? 0 }))
               : null,
@@ -3007,9 +3324,10 @@ window.__ModuleLoader__.load({
                   h(
                     'button',
                     { key: row.key, type: 'button', className: 'wbm-project', onClick: () => selectProject(row) },
-                    h('span', { className: `wbm-dot ${row.hasMemory ? 'ok' : 'empty'}` }),
+                    // Not green: a file that exists is a fact, not a grade.
+                    h('span', { className: `wbm-dot ${row.hasMemory ? (row.overLimit ? 'bad' : '') : 'empty'}` }),
                     h('span', { className: 'wbm-name' }, row.title || row.name),
-                    h('span', { className: 'wbm-meta' }, row.hasMemory ? t('count.entries', { n: row.entries ?? 0 }) : t('rail.noMemory')),
+                    h('span', { className: 'wbm-meta' }, row.hasMemory ? entryCount(row) || injectionState(row.injection).short : t('rail.noMemory')),
                   ),
                 ),
               )
@@ -3019,40 +3337,123 @@ window.__ModuleLoader__.load({
 
       // ── header ────────────────────────────────────────────────────────────
 
+      /**
+       * The injection state of the open project, as a chip with a hover hint.
+       *
+       * The chip carries the state in visible text — colour is never the only
+       * signal — and the numbers behind it live in the header's `.wbm-tip`,
+       * which appears on hover and on keyboard focus. It is out of flow, so
+       * reading it never moves the header or the list under it; the `<details>`
+       * it replaces pushed the whole page down to show the same two sentences.
+       * The chip stays focusable so the hint is not mouse-only, which is the
+       * tooltip pattern: nothing happens on activation.
+       *
+       * @param {object} input
+       * @param {object|null|undefined} input.injection - the row's judgment.
+       * @param {boolean} [input.short] - the compact wording, for a narrow sidebar.
+       * @param {string} [input.tipId] - id of the element describing this chip.
+       * @param {string} [input.className] - wrapper class, e.g. `wbm-chip`.
+       */
+      function injectionChip({ injection: state, short = false, tipId = '', className = 'wbm-chip' }) {
+        const view = injectionState(state)
+        if (!view.label) return null
+        const label = short ? view.short : view.label
+        if (!injectionTipLines(view).length) {
+          return h('span', { className: `${className} ${view.tone}`.trim(), title: view.label }, label)
+        }
+        return h(
+          'span',
+          {
+            className: `${className} wbm-chip-tip ${view.tone}`.trim(),
+            tabIndex: 0,
+            'aria-describedby': tipId || undefined,
+            // Escape is the standard way out of a hint that opened on focus,
+            // without moving focus by hand.
+            onKeyDown: (event) => {
+              if (event.key === 'Escape') event.currentTarget.blur()
+            },
+          },
+          label,
+        )
+      }
+
       function header() {
         const title = mode === 'overview' ? t('panel.memory') : t('panel.projectMemory')
-        const scope = mode === 'overview' ? t('rail.allProjects') : project ? project.title || project.name : t('state.undetermined')
-        const projectRatio = project ? ratio(project.chars, limits.project) : null
+        // Selecting a project in the overview moves the breadcrumb with it;
+        // it used to keep saying "all projects" beside a button of that name.
+        const scope = mode === 'overview'
+          ? activeKey && project
+            ? `${t('rail.allProjects')} › ${project.title || project.name}`
+            : t('rail.allProjects')
+          : project
+            ? project.title || project.name
+            : t('state.undetermined')
+        const view = project ? injectionState(project.injection) : null
+        const fill = project && view?.status === 'complete' ? fillOf(project.injection) : null
+        const units = project ? humanUnits(project.chars) : ''
+        // The hint the state chip points at. It belongs to the header, not to
+        // the chip: the chips row clips what does not fit when the sidebar is
+        // narrow, and a hint clipped to the chip would be unreadable.
+        const tipId = project ? tipIdOf(project, props?.tab ? 'tab' : 'panel') : ''
+        const tipLines = view ? injectionTipLines(view) : []
         return h(
           'div',
           { className: 'wbm-header' },
           h('span', { className: 'wbm-title' }, title),
           h('span', { className: 'wbm-crumb' }, '·'),
-          h('span', { className: 'wbm-crumb' }, scope),
+          h('span', { className: 'wbm-crumb wbm-crumb-scope' }, scope),
           h(
             'div',
             { className: 'wbm-chips' },
-            mode === 'overview'
+            // Which chips a header shows follows what is *open*, not which
+            // surface it is: the overview with a project selected is looking
+            // at one project, and that project's state belongs in its header
+            // exactly as in the project tab.
+            project
               ? [
-                  h('span', { key: 'p', className: 'wbm-chip' }, t('count.chipProjects', { n: totals.projects })),
-                  h('span', { key: 'm', className: 'wbm-chip ok' }, t('count.chipWithMemory', { n: totals.withMemory })),
-                  h('span', { key: 'e', className: 'wbm-chip' }, t('count.chipEntries', { n: totals.entries })),
-                  totals.overLimit > 0 ? h('span', { key: 'o', className: 'wbm-chip warn' }, t('count.chipOverLimit', { n: totals.overLimit })) : null,
-                  totals.stale > 0 ? h('span', { key: 's', className: 'wbm-chip warn' }, t('count.chipPending', { n: totals.stale })) : null,
+                  // Only what is known. A file nobody read whole has neither a
+                  // count nor a length, and "MEMORY 0 条" beside "cannot
+                  // measure" was a claim the file did not support; then the
+                  // state chip below is the whole story.
+                  !project.hasMemory
+                    ? h('span', { key: 'e', className: 'wbm-chip' }, t('count.memoryLineNoFile'))
+                    : entryCount(project) || units
+                      ? h('span', { key: 'e', className: 'wbm-chip' }, [project.entries === null || project.entries === undefined ? '' : t('count.entries', { n: project.entries }), units].filter(Boolean).join(' · '))
+                      : null,
+                  injectionChip({ injection: project.injection, short: Boolean(props?.tab), tipId }),
+                  fill && fill.percent !== null ? h('span', { key: 'u', className: `wbm-chip ${fill.level === 'warn' ? 'warn' : ''}` }, t('inject.usedPercent', { percent: fill.percent })) : null,
                 ]
               : [
-                  project ? h('span', { key: 'e', className: 'wbm-chip' }, t('count.memoryLine', { n: project.entries ?? 0, bytes: humanBytes(project.bytes) })) : null,
-                  projectRatio
+                  // The neutral counts are one line: three chips for "how many"
+                  // read as three facts, and they are one. No line at all until
+                  // the first state arrives, so nothing flashes "0 projects";
+                  // and none on an empty machine either — the body says "no
+                  // projects yet" once, in words.
+                  state && totals.projects > 0
                     ? h(
                         'span',
-                        { key: 'u', className: `wbm-chip ${projectRatio.level === 'over' ? 'bad' : projectRatio.level === 'warn' ? 'warn' : ''}` },
-                        t('count.usedPercent', { percent: projectRatio.percent }),
+                        { key: 'n', className: 'wbm-chip wbm-chip-quiet', title: summaryDetail() },
+                        // The entry total leaves out any file nobody read
+                        // whole; when it does, it says so instead of passing
+                        // for the whole machine.
+                        t('stats.summaryLine', { projects: totals.projects, created: totals.withMemory, entries: totals.entries }) +
+                          (totals.entriesUncounted > 0 ? t('stats.summaryUncounted', { n: totals.entriesUncounted }) : ''),
                       )
                     : null,
-                  project?.overLimit ? h('span', { key: 'o', className: 'wbm-chip bad' }, t('editor.overLimitChip')) : null,
-                  project?.revision ? h('span', { key: 'r', className: 'wbm-chip' }, `rev ${project.revision}`) : null,
+                  totals.overLimit > 0 ? h('span', { key: 'o', className: 'wbm-chip warn', title: t('count.chipOverLimitDetail') }, t('count.chipOverLimit', { n: totals.overLimit })) : null,
+                  totals.stale > 0 ? h('span', { key: 's', className: 'wbm-chip warn', title: t('count.chipPendingDetail', { days: state?.archiveAfterDays ?? 30 }) }, t('count.chipPending', { n: totals.stale })) : null,
                 ],
           ),
+          // Shown by CSS on `.wbm-chip-tip:hover` and `:focus`, kept in the
+          // document so `aria-describedby` always has something to point at:
+          // a reader that never hovers still gets the numbers.
+          tipLines.length
+            ? h(
+                'div',
+                { className: 'wbm-tip', id: tipId, role: 'tooltip' },
+                tipLines.map((line, at) => h('div', { key: `t${at}`, className: at ? 'wbm-tip-why' : 'wbm-tip-detail' }, line)),
+              )
+            : null,
           h('span', { className: 'wbm-spacer' }),
           mode === 'overview' && activeKey
             ? h(
@@ -3100,15 +3501,63 @@ window.__ModuleLoader__.load({
       // ── dashboard ─────────────────────────────────────────────────────────
 
       function dashboard() {
-        const rows = state?.projects ?? []
-        const attention = []
-        for (const row of rows) {
-          if (row.status === 'over-limit') attention.push({ row, text: t('attention.overLimit') })
-          else if (row.status === 'stale') attention.push({ row, text: t('attention.stale', { date: row.oldestDaily ?? t('target.projectDaily'), days: row.oldestDailyAgeDays }) })
-          else if (row.status === 'missing') attention.push({ row, text: t('attention.missing') })
-          else if (row.status === 'unreadable') attention.push({ row, text: t('attention.unreadable') })
+        // Until the first /state arrives there are no numbers to show. The
+        // page used to render its stat cards as four zeros and then replace
+        // them, which read as "everything was lost" for the length of a poll.
+        if (!state) {
+          return h(
+            'div',
+            { className: 'wbm-content', role: 'status', 'aria-live': 'polite' },
+            h('div', { className: 'wbm-note', style: { padding: '12px 0' } }, t('common.loading')),
+            h('div', { className: 'wbm-skeleton', style: { width: '40%' } }),
+            h('div', { className: 'wbm-skeleton' }),
+            h('div', { className: 'wbm-skeleton', style: { width: '70%' } }),
+          )
         }
+        // Loaded, and this machine knows no projects at all: say that, rather
+        // than a page of zeros. The user memory stays reachable.
+        if (totals.projects === 0 && state.projects?.length === 0) {
+          return h(
+            'div',
+            { className: 'wbm-content' },
+            h(
+              'div',
+              { className: 'wbm-empty' },
+              h(OverviewIcon, { size: 30 }),
+              h('div', { className: 't' }, t('panel.emptyOverview')),
+              h('div', { className: 'd' }, t('dash.noProjects')),
+            ),
+            h('div', { className: 'wbm-h2' }, t('dash.globalMemory')),
+            h(
+              'div',
+              { className: 'wbm-list' },
+              h(
+                'div',
+                { className: 'wbm-list-row' },
+                h('span', { className: 'wbm-name' }, t('target.userMemory')),
+                h('span', { className: 'wbm-meta' }, user ? entryCount(user) || injectionState({ status: 'unmeasurable' }).short : t('state.noUserMemory')),
+                user?.memoryExists ? h('button', { type: 'button', className: 'wbm-btn', onClick: () => openFile('user-memory', undefined, null) }, t('common.open')) : null,
+              ),
+            ),
+          )
+        }
+        const rows = state?.projects ?? []
+        // The flagged projects come from the host, over every known project,
+        // and each keeps all of its reasons. Reading them off `rows` limited
+        // them to the display bound: "over limit 1" could sit beside a list
+        // with nothing in it, and one reason hid another.
+        const flagged = Array.isArray(state?.attention) ? state.attention : []
+        const attentionTotal = Number(state?.attentionTotal)
+        const beyond = Number.isFinite(attentionTotal) ? attentionTotal - flagged.length : 0
+        const describeReason = (item, reason) => {
+          if (reason === 'over-limit') return injectionState(item.injection).label
+          if (reason === 'stale') return t('attention.stale', { date: item.oldestDaily ?? t('target.projectDaily'), days: item.oldestDailyAgeDays })
+          if (reason === 'missing') return t('attention.missing')
+          return t('attention.unmeasurable')
+        }
+        const attention = flagged.map((item) => ({ row: item, lines: (item.reasons ?? []).map((reason) => describeReason(item, reason)) }))
         const recent = rows.filter((row) => row.hasMemory).slice(0, 6)
+        const archiveDays = Number(state?.archiveAfterDays) || 30
         return h(
           'div',
           { className: 'wbm-content' },
@@ -3116,9 +3565,9 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'wbm-stats' },
             h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('stats.projects')), h('div', { className: 'v' }, totals.projects)),
-            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('stats.entries')), h('div', { className: 'v' }, totals.entries)),
+            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, totals.entriesUncounted > 0 ? `${t('stats.entries')} · ${t('stats.uncounted', { n: totals.entriesUncounted })}` : t('stats.entries')), h('div', { className: 'v' }, totals.entries)),
             h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('stats.dailyFiles')), h('div', { className: 'v' }, totals.dailyFiles)),
-            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('stats.pendingArchive')), h('div', { className: 'v' }, totals.stale)),
+            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, `${t('stats.pendingArchive')} · ${t('count.days', { n: archiveDays })}`), h('div', { className: 'v' }, totals.stale)),
           ),
           attention.length
             ? h(
@@ -3128,17 +3577,31 @@ window.__ModuleLoader__.load({
                 h(
                   'div',
                   { className: 'wbm-list' },
-                  attention.slice(0, 6).map((item) =>
+                  attention.map(({ row, lines }) =>
                     h(
                       'div',
-                      { className: 'wbm-list-row', key: item.row.key },
+                      { className: 'wbm-list-row', key: row.key },
                       h('span', { className: 'wbm-dot warn' }),
-                      h('span', { className: 'wbm-name' }, item.row.title || item.row.name),
-                      h('span', { className: 'wbm-meta' }, item.text),
-                      h('button', { type: 'button', className: 'wbm-btn', onClick: () => selectProject(item.row) }, t('common.view')),
+                      h('span', { className: 'wbm-name' }, row.title || row.name),
+                      h('span', { className: 'wbm-meta' }, lines.join(' · ')),
+                      // The row may sit outside the displayed list; it is
+                      // opened by key, and `/state?project=` resolves it.
+                      h('button', { type: 'button', className: 'wbm-btn', onClick: () => openAttention(row) }, t('common.view')),
                     ),
                   ),
                 ),
+                beyond > 0
+                  ? h(
+                      'div',
+                      { className: 'wbm-note', style: { padding: '6px 8px' } },
+                      t('attention.partialNote', { shown: attention.length, total: attentionTotal }),
+                      // The host caps the list even for "all"; once that cap
+                      // has been fetched there is no further page to ask for,
+                      // and a "show all" that cannot would be a false promise.
+                      wantAllAttention.current && flagged.length >= ATTENTION_LIMIT
+                        ? null
+                        : h('button', { type: 'button', className: 'wbm-btn', onClick: loadAllAttention }, t('attention.showAll')),                    )
+                  : null,
               )
             : h('div', { className: 'wbm-note', style: { padding: '12px 0' } }, t('attention.none')),
           h('div', { className: 'wbm-h2' }, t('dash.recentActivity')),
@@ -3152,7 +3615,7 @@ window.__ModuleLoader__.load({
                     { className: 'wbm-list-row', key: row.key },
                     h('span', { className: `wbm-dot ${row.status === 'ok' ? 'ok' : 'empty'}` }),
                     h('span', { className: 'wbm-name' }, row.title || row.name),
-                    h('span', { className: 'wbm-meta' }, `${t('count.entries', { n: row.entries ?? 0 })} · ${humanBytes(row.bytes)} · ${relativeTime(row.lastActiveAt)}`),
+                    h('span', { className: 'wbm-meta' }, [entryCount(row), humanUnits(row.chars) || humanBytes(row.bytes), relativeTime(row.lastActiveAt)].filter(Boolean).join(' · ')),
                     h('button', { type: 'button', className: 'wbm-btn', onClick: () => selectProject(row) }, t('common.open')),
                   ),
                 ),
@@ -3170,7 +3633,7 @@ window.__ModuleLoader__.load({
               'div',
               { className: 'wbm-list-row' },
               h('span', { className: 'wbm-name' }, t('target.userMemory')),
-              h('span', { className: 'wbm-meta' }, user ? t('count.entriesPercent', { n: user.entries ?? 0, percent: ratio(user.chars, limits.user).percent }) : t('file.unreadable')),
+              h('span', { className: 'wbm-meta' }, user ? entryCount(user) || injectionState({ status: 'unmeasurable' }).short : t('file.unreadable')),
               h('button', { type: 'button', className: 'wbm-btn', onClick: () => openFile('user-memory', undefined, null) }, t('common.open')),
             ),
             profile?.exists
@@ -3494,23 +3957,58 @@ window.__ModuleLoader__.load({
        * long file for the one line the plugin refused, and a banner nobody can
        * act on is a banner that gets dismissed.
        */
-      function layeringBanner() {
+      /**
+       * Whether the open file is injected whole *because its structure forced
+       * a fallback* — the one case the "injected whole" banner is about.
+       *
+       * The banner used to fire for any file that parsed as unsplit, whatever
+       * the configuration, and to quote the file's whole length as what reaches
+       * the prompt. Both halves were then false in three situations a person
+       * can be in: with the source switched off (nothing is injected, and the
+       * banner contradicted the "injection off" chip right above it), in full
+       * mode (every file is injected whole by design, the length quoted was the
+       * file's and not the injected block's, and the banner's one action —
+       * "split it" — changes nothing there), and for a split file in full mode
+       * (still whole, so the advice was irrelevant).
+       *
+       * The answer comes from the host's judgment, which knows the mode and
+       * whether this file actually fell back: `fallback === 'legacy'`.
+       *
+       * @returns {{ info: object, injected: number|null }|null}
+       */
+      function wholeFileFallback() {
         const info = layeringOfSelected()
-        if (!info) return null
-        if (info.mode === 'layered') {
-          // A split file needs no banner; the counts are already in the header.
-          return null
+        if (!info || info.mode !== 'legacy') return null
+        if (selected?.target === 'user-memory') {
+          // User memory has no row-level judgment yet (a separate review); its
+          // fallback is real exactly when the prompt is in layered mode and
+          // the source is on.
+          const on = state?.inject?.enabled !== false && state?.inject?.user !== false
+          return on && state?.inject?.mode === 'layered' ? { info, injected: null } : null
         }
+        const judgment = selected?.target === 'project-memory' ? projectDetail?.injection ?? project?.injection : null
+        if (!judgment) return null
+        return judgment.fallback === 'legacy' ? { info, injected: judgment.used } : null
+      }
+
+      function layeringBanner() {
+        const fallback = wholeFileFallback()
+        if (!fallback) return null
+        const { info, injected } = fallback
         const reason = t(`layer.legacyReason.${info.reason ?? 'unknown'}`)
         const where = layeringPosition(info.problem)
         const which = selected?.target === 'user-memory' ? t('layer.whichUser') : t('layer.whichProject')
         const prompt = t('layer.copyPrompt', { which })
+        // What reaches the prompt is what the renderer kept, not the file's
+        // length: a whole-file block past its limit is cut, and the banner
+        // used to report the uncut number.
+        const size = injected === null ? info.coreChars : injected
         return h(
           'div',
           { className: 'wbm-banner warn', style: { flexDirection: 'column', alignItems: 'stretch', gap: '8px' } },
           h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, h('strong', null, t('layer.title')), h('span', { className: 'wbm-meta' }, reason)),
           where ? h('div', { className: 'wbm-meta' }, where) : null,
-          h('div', null, t('layer.legacy', { chars: info.coreChars })),
+          h('div', null, t('layer.legacy', { chars: size })),
           h('div', { className: 'wbm-meta' }, t('layer.askModelHint')),
           h(
             'div',
@@ -3632,8 +4130,9 @@ window.__ModuleLoader__.load({
             h('span', null, docTitle()),
             target === 'profile' ? h('span', { className: 'wbm-chip' }, t('file.readOnly')) : null,
             target === 'project-daily' ? h('span', { className: 'wbm-chip' }, t('editor.append')) : null,
-            doc ? h('span', { className: 'wbm-chip' }, t('count.entriesPercent', { n: doc.entries ?? 0, percent: humanBytes(doc.bytes) })) : null,
-            doc?.revision ? h('span', { className: 'wbm-chip' }, `rev ${doc.revision}`) : null,
+            doc ? h('span', { className: 'wbm-chip', title: doc.partial ? t('doc.partialDetail') : undefined }, fileCount(doc)) : null,
+            // The revision stays in the conflict dialog, where it is the token
+            // being compared; in a header it was sixteen unexplained hex digits.
           ),
           doc?.path ? h('div', { className: 'wbm-doc-path' }, doc.path) : null,
           h(
@@ -3670,6 +4169,26 @@ window.__ModuleLoader__.load({
         )
       }
 
+      /**
+       * The count and length a file header shows.
+       *
+       * One number for "how long is this file", in the unit the injection
+       * limit is stated in — never bytes in the percent slot, which is where
+       * `18.2 KB%` came from. `chars` is `null` when only a prefix was read,
+       * and then no length is claimed. `partial` says the rows on screen are
+       * part of the file, and the count says so instead of passing for the
+       * whole.
+       *
+       * @param {object} doc - the `/content` body.
+       */
+      function fileCount(doc) {
+        const units = humanUnits(doc.chars)
+        const shown = Boolean(doc.partial)
+        if (shown && units) return t('count.entriesShownUnits', { n: doc.entries ?? 0, units })
+        if (shown) return t('count.entriesShown', { n: doc.entries ?? 0 })
+        return units ? t('count.entriesUnits', { n: doc.entries ?? 0, units }) : t('count.entries', { n: doc.entries ?? 0 })
+      }
+
       function projectSummary() {
         if (!project) {
           const rows = state?.projects ?? []
@@ -3700,8 +4219,10 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { className: 'wbm-stats' },
-            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('stats.entries')), h('div', { className: 'v' }, project.entries)),
-            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('count.bytes')), h('div', { className: 'v' }, humanBytes(project.bytes))),
+            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('stats.entries')), h('div', { className: 'v' }, project.hasMemory ? project.entries ?? '—' : '—')),
+            // Length in the limit's unit; the size on disk stays, labelled as such.
+            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('inject.lengthUnits')), h('div', { className: 'v' }, humanUnits(project.chars) || '—')),
+            h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, `${t('count.bytes')} · ${t('inject.onDisk')}`), h('div', { className: 'v' }, project.hasMemory ? humanBytes(project.bytes) : '—')),
             h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('stats.dailyFiles')), h('div', { className: 'v' }, project.daily)),
             h('div', { className: 'wbm-stat' }, h('div', { className: 'k' }, t('dash.recentActivity')), h('div', { className: 'v', style: { fontSize: '13px' } }, relativeTime(project.lastActiveAt))),
           ),
@@ -3718,9 +4239,39 @@ window.__ModuleLoader__.load({
               : null,
           ),
           project.overLimit
-            ? h('div', { className: 'wbm-banner warn' }, t('editor.limitWarning', { chars: project.chars, limit: limits.project }))
+            ? h('div', { className: 'wbm-banner warn' }, injectionBanner(project.injection))
             : null,
         )
+      }
+
+      /**
+       * The tooltip behind the overview's one-line summary.
+       *
+       * "12 projects" counted workspaces whose directory is long gone, and
+       * looked perfectly healthy doing it. They are still known projects — the
+       * count is right — so the count stays and the tooltip says how many of
+       * them no longer exist on disk.
+       */
+      function summaryDetail() {
+        const gone = Number(totals.missing) || 0
+        const base = t('stats.summaryDetail')
+        return gone > 0 ? base + t('stats.summaryGone', { n: gone }) : base
+      }
+
+      /**
+       * The alert sentence for the project summary.
+       *
+       * It used to say "using N characters against a limit of L; the next turn
+       * truncates it" whatever the mode. For a split file neither half was
+       * true: the limit it named is not the one in force, and nothing is cut
+       * by length — whole entries are left out of the core. The sentence now
+       * is the one state every surface shares, plus the numbers behind it.
+       * It never promises what the *next* turn does: a session on
+       * `first-turn` keeps the assembly it already has.
+       */
+      function injectionBanner(injection) {
+        const view = injectionState(injection)
+        return [view.label, view.detail].filter(Boolean).join(' ')
       }
 
       function detail() {
@@ -4014,7 +4565,12 @@ window.__ModuleLoader__.load({
     function PruneDialog({ projectKey, act, onClose, flash, reload }) {
       const [plan, setPlan] = React.useState(null)
       const [picked, setPicked] = React.useState(null)
-      const [beforeDays, setBeforeDays] = React.useState(30)
+      // The opening preview sends no `beforeDays`, so the host applies the one
+      // threshold every other surface counts with (`ARCHIVE_AFTER_DAYS`). The
+      // dialog then shows the number the host reports back. A literal 30 here
+      // was a fourth copy of that default, and the copies had already drifted
+      // apart by a day. `null` until the first plan says.
+      const [beforeDays, setBeforeDays] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState('')
       // The frozen apply request. Cleared by a new preview or a changed pick,
@@ -4028,10 +4584,11 @@ window.__ModuleLoader__.load({
           setError('')
           setFrozen(null)
           setOutcome(null)
-          const body = await act({ type: 'prune', dryRun: true, beforeDays: days, key: projectKey })
+          const body = await act({ type: 'prune', dryRun: true, ...(days ? { beforeDays: days } : {}), key: projectKey })
           setBusy(false)
           if (body?.ok) {
             setPlan(body)
+            setBeforeDays(body.beforeDays)
             setPicked(new Set((body.candidates ?? []).map((row) => row.date)))
           } else {
             setError(describeCode(body?.code ?? 'failed'))
@@ -4041,7 +4598,7 @@ window.__ModuleLoader__.load({
       )
 
       React.useEffect(() => {
-        load(beforeDays)
+        load(null)
       }, [])
 
       const candidates = plan?.candidates ?? []
@@ -4096,7 +4653,9 @@ window.__ModuleLoader__.load({
           type: 'prune',
           dryRun: false,
           planId: plan?.planId,
-          beforeDays,
+          // The days the plan was built with, not whatever the input holds
+          // now: the plan is bound to the set those days selected.
+          beforeDays: plan.beforeDays,
           dates: pickedRows.map((row) => row.date),
           operationId: newOperationId(),
           key: projectKey,
@@ -4132,11 +4691,14 @@ window.__ModuleLoader__.load({
               style: { width: '80px' },
               type: 'number',
               min: 1,
-              value: beforeDays,
+              // Disabled until the opening plan names the default, so the
+              // field never shows an empty box or a number of its own.
+              disabled: beforeDays === null || busy,
+              value: beforeDays ?? '',
               onChange: (event) => setBeforeDays(Number(event.target.value) || 1),
             }),
             h('span', { className: 'wbm-meta' }, t('rail.dayUnit')),
-            h('button', { type: 'button', className: 'wbm-btn', onClick: () => load(beforeDays), disabled: busy }, t('prune.replan')),
+            h('button', { type: 'button', className: 'wbm-btn', onClick: () => load(beforeDays), disabled: busy || beforeDays === null }, t('prune.replan')),
           ),
           error ? h('div', { className: 'wbm-banner warn' }, error) : null,
           outcome?.kind === 'unresolved'
@@ -4513,8 +5075,14 @@ window.__ModuleLoader__.load({
         runtime,
         ZH,
         EN,
+        MESSAGES,
         humanBytes,
-        ratio,
+        humanUnits,
+        entryCount,
+        fillOf,
+        injectionState,
+        injectionTipLines,
+        tipIdOf,
         filterEntries,
         highlightParts,
         lineDiff,

@@ -8,7 +8,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, { beforeEach } from 'node:test'
@@ -45,7 +45,7 @@ async function loadClient() {
 }
 
 const client = await loadClient()
-const { MemoryWorkspace, PruneDialog, HistoryDialog, DraftDialog } = client.__internals
+const { MemoryWorkspace, MemoryProjectTab, PruneDialog, HistoryDialog, DraftDialog } = client.__internals
 
 /** Expand nested function components (icons) so text is readable. */
 function expand(node) {
@@ -67,6 +67,8 @@ const projectContent = {
   target: 'project-memory',
   path: 'C:\\repo\\.workbuddy\\memory\\MEMORY.md',
   bytes: projectMemory.length,
+  chars: projectMemory.length,
+  partial: false,
   revision: 'rev-project',
   entries: 3,
   truncated: false,
@@ -84,6 +86,8 @@ const dailyContent = {
   date: '2026-11-09',
   path: 'C:\\repo\\.workbuddy\\memory\\2026-11-09.md',
   bytes: 20,
+  chars: 20,
+  partial: false,
   revision: 'rev-daily',
   entries: 1,
   truncated: false,
@@ -91,6 +95,36 @@ const dailyContent = {
   sections: [],
   writable: false,
 }
+
+/** A project row's injection judgment, in the shape the catalog reports. */
+const judged = (status, extra = {}) => ({
+  status,
+  mode: /complete|core-over-budget|truncated|omitted/.test(status) ? 'layered' : null,
+  fallback: null,
+  reason: null,
+  overLimit: /^(core-over-budget|truncated|omitted)$/.test(status),
+  dropped: 0,
+  budget: 1400,
+  need: 900,
+  used: 900,
+  ...extra,
+})
+
+/**
+ * A project store whose file is injected whole because its structure forced
+ * a fallback — `layering` and `injection` as the real server sends them,
+ * i.e. agreeing with each other. (A legacy `layering` beside a `complete`
+ * judgment is a state the host cannot produce.)
+ *
+ * @param {object} layering - the `layering` summary.
+ * @param {object} [extra] - overrides for the store object.
+ */
+const legacyStore = (layering, extra = {}) => ({
+  ...stateFor().stores.project,
+  layering,
+  injection: judged('truncated', { mode: 'whole', fallback: 'legacy', reason: layering.reason ?? 'missing_core', budget: 10000, need: layering.coreChars, used: Math.min(layering.coreChars, 10000) }),
+  ...extra,
+})
 
 function stateFor(overrides = {}) {
   const state = {
@@ -102,6 +136,8 @@ function stateFor(overrides = {}) {
     writeEnabled: true,
     allowWriteActions: true,
     limits: { project: 10000, user: 4000, profile: 2000, rules: 2000 },
+    inject: { enabled: true, mode: 'layered', project: true, coreBudget: 4000 },
+    archiveAfterDays: 30,
     dataFolderName: '.workbuddy',
     home: { path: 'C:\\Users\\me\\.workbuddy', source: 'env', detail: 'WORKBUDDY_CONFIG_DIR' },
     projects: [
@@ -121,6 +157,7 @@ function stateFor(overrides = {}) {
         mtime: 1,
         latestDaily: '2026-11-09',
         oldestDailyAgeDays: 1,
+        injection: judged('complete', { need: 900, used: 900 }),
         overLimit: false,
         stale: false,
         status: 'ok',
@@ -134,19 +171,23 @@ function stateFor(overrides = {}) {
         current: false,
         hasMemory: false,
         daily: 1,
-        entries: 0,
+        entries: null,
         bytes: 0,
-        chars: 0,
+        chars: null,
         revision: null,
         mtime: null,
         latestDaily: '2026-11-08',
         oldestDailyAgeDays: 2,
+        injection: judged('missing'),
         overLimit: false,
         stale: false,
         status: 'daily-only',
       },
     ],
-    totals: { projects: 2, withMemory: 1, entries: 3, dailyFiles: 2, overLimit: 0, stale: 0 },
+    totals: { projects: 2, withMemory: 1, entries: 3, dailyFiles: 2, overLimit: 0, stale: 0, missing: 0, unmeasurable: 0 },
+    attention: [],
+    attentionTotal: 0,
+    attentionMore: { 'over-limit': 0, stale: 0, missing: 0, unmeasurable: 0 },
     stores: {
       project: {
         target: 'project-memory',
@@ -159,6 +200,7 @@ function stateFor(overrides = {}) {
         writable: true,
         entries: 3,
         revision: 'rev-project',
+        injection: judged('complete', { need: 900, used: 900 }),
         daily: [{ name: '2026-11-09.md', date: '2026-11-09', bytes: 40, ageDays: 1 }],
       },
       user: {
@@ -176,8 +218,28 @@ function stateFor(overrides = {}) {
     },
     backups: { count: 3, latest: 1 },
     operations: { total: 4, conflicts: 1, lastConflictAt: 1, lastCommitAt: 2 },
+    // The selected (or, with nothing selected, the current) project's row in
+    // full, resolved by key against every known project. The real server
+    // sends it, and the panel prefers it to the list row — the two are the
+    // same row and never disagree. Tests that change the current project's
+    // row go through `withProject()` so they do not disagree either.
+    project: null,
   }
   return { ...state, ...overrides }
+}
+
+/**
+ * Change the current project's row the way the server would: in the list and
+ * in the selected `project` at once.
+ *
+ * @param {object} state - a state from `stateFor()`.
+ * @param {object} patch - fields to set on the current project's row.
+ */
+function withProject(state, patch) {
+  const row = { ...state.projects[0], ...patch }
+  state.projects[0] = row
+  state.project = row
+  return state
 }
 
 /** Install a fetch that answers state/content/revisions and records actions. */
@@ -285,7 +347,10 @@ test('selecting a project opens its MEMORY.md and renders sections', async () =>
     assert.match(body, /## 环境/)
     assert.match(body, /Node 22/)
     assert.match(body, /## 待办/)
-    assert.match(body, /rev-project/)
+    // The revision is a write token, not a header fact: it shows where it is
+    // compared (the conflict dialog), nowhere else.
+    assert.doesNotMatch(body, /\brev \S{4,}/, 'no raw revision in a header')
+    assert.match(body, /3 条 · \d+ 码元/, 'the file header counts entries and length in the limit unit')
   } finally {
     restore()
   }
@@ -447,16 +512,22 @@ test('the project panel resolves the workspace from the viewed session', async (
 })
 
 test('an over-limit project is called out in the summary chips', async () => {
+  // Pinned to the old wording ("已超注入限额, next turn truncates") because
+  // that sentence was true of no mode. The alert still leads the overview,
+  // and it now says what the prompt actually did.
   const state = stateFor()
-  state.projects[0] = { ...state.projects[0], overLimit: true, chars: 12000, status: 'over-limit' }
+  withProject(state, { overLimit: true, chars: 12000, status: 'over-limit', injection: judged('core-over-budget', { dropped: 4, need: 2400, used: 1375 }) })
   state.totals = { ...state.totals, overLimit: 1 }
+  state.attention = [{ key: 'proj-a', name: 'repo', title: 'repo', hasMemory: true, latestDaily: '2026-11-09', oldestDailyAgeDays: 1, injection: state.projects[0].injection, reasons: ['over-limit'] }]
+  state.attentionTotal = 1
   installFetch({ state })
   const restore = installTimers()
   try {
     const tree = await runtime.settle(MemoryOverviewPanel, {})
     const body = text(expand(tree))
     assert.match(body, /超限 1/)
-    assert.match(body, /已超注入限额/)
+    assert.match(body, /核心超预算 · 4 条未注入/)
+    assert.doesNotMatch(body, /下一轮注入会截断/)
   } finally {
     restore()
   }
@@ -704,7 +775,8 @@ test('undo restores the file the write happened in, not the file on screen', asy
     const userRow = walk(tree).find((node) => node.type === 'button' && text(node).includes('用户 MEMORY.md'))
     assert.ok(userRow, 'the rail lists the user file')
     tree = await runtime.fire(userRow, 'onClick', MemoryOverviewPanel, {})
-    assert.match(text(expand(tree)), /rev-user/, 'the panel now shows the other file')
+    // The file's path line is the marker now: the revision left the header.
+    assert.match(text(expand(tree)), /Users\\me\\\.workbuddy\\MEMORY\.md/, 'the panel now shows the other file')
 
     const undo = walk(tree).find((node) => node.type === 'button' && text(node) === '撤销')
     assert.ok(undo, 'undo is still offered within its window')
@@ -1378,7 +1450,7 @@ test('an unsplit file says it is injected whole, and offers the one action that 
     state: stateFor({
       stores: {
         ...stateFor().stores,
-        project: { ...stateFor().stores.project, layering: { mode: 'legacy', reason: 'missing_core', coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 } },
+        project: legacyStore({ mode: 'legacy', reason: 'missing_core', coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 }),
       },
     }),
   })
@@ -1404,10 +1476,7 @@ test('a refused core names the section and the line the reader has to open', asy
     state: stateFor({
       stores: {
         ...stateFor().stores,
-        project: {
-          ...stateFor().stores.project,
-          layering: { mode: 'legacy', reason: 'invalid_core', problem: { section: '常驻记忆', line: 12 }, coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 },
-        },
+        project: legacyStore({ mode: 'legacy', reason: 'invalid_core', problem: { section: '常驻记忆', line: 12 }, coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 }),
       },
     }),
   })
@@ -1427,10 +1496,7 @@ test('two core sections are both addressed', async () => {
     state: stateFor({
       stores: {
         ...stateFor().stores,
-        project: {
-          ...stateFor().stores.project,
-          layering: { mode: 'legacy', reason: 'ambiguous_core', problem: { section: '常驻记忆', line: 3, lines: [3, 19] }, coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 },
-        },
+        project: legacyStore({ mode: 'legacy', reason: 'ambiguous_core', problem: { section: '常驻记忆', line: 3, lines: [3, 19] }, coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 }),
       },
     }),
   })
@@ -1479,7 +1545,7 @@ test('the copy button puts the split prompt on the clipboard, and survives a hos
     state: stateFor({
       stores: {
         ...stateFor().stores,
-        project: { ...stateFor().stores.project, layering: { mode: 'legacy', reason: 'missing_core', coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 } },
+        project: legacyStore({ mode: 'legacy', reason: 'missing_core', coreEntries: 0, topics: 0, coreChars: 900, topicChars: 0 }),
       },
     }),
   })
@@ -1631,6 +1697,662 @@ test('a daily note can be given a section from the panel', async () => {
     assert.equal(add.section, '进展', 'the section reaches the store instead of being dropped')
     assert.equal(add.text, '新条目')
   } finally {
+    restore()
+  }
+})
+
+// ── the panel reads the prompt's own judgment (row.injection) ─────────────
+
+/** A project row as the catalog now reports one, with its injection judgment. */
+const injectionOf = (status, extra = {}) => ({
+  status,
+  mode: /core-over-budget|complete/.test(status) ? 'layered' : null,
+  fallback: null,
+  reason: null,
+  overLimit: status === 'core-over-budget' || status === 'truncated' || status === 'omitted',
+  dropped: 0,
+  budget: 1400,
+  need: 1200,
+  used: 1200,
+  ...extra,
+})
+
+test('a large split file with a small core is not called over the limit', async () => {
+  // Acceptance 1 from the panel's side: 12,000 units of file, all of the core
+  // injected. Every surface used to say "over the injection limit".
+  const state = stateFor()
+  withProject(state, { chars: 12000, overLimit: false, injection: injectionOf('complete'), status: 'ok' })
+  installFetch({ state })
+  const restore = installTimers()
+  try {
+    const tree = expand(await runtime.settle(MemoryOverviewPanel, {}))
+    const body = text(tree)
+    assert.doesNotMatch(body, /超限 [1-9]/)
+    assert.doesNotMatch(body, /已超注入限额|超注入限额|下一轮注入会截断/)
+    assert.doesNotMatch(body, /核心超预算/)
+  } finally {
+    restore()
+  }
+})
+
+test('a core that lost entries is the one thing called out, with its count, on every surface', async () => {
+  // Acceptance 2: the state, the count and the wording come from the row.
+  const state = stateFor()
+  state.projects[0] = {
+    ...state.projects[0],
+    chars: 9000,
+    overLimit: true,
+    status: 'over-limit',
+    injection: injectionOf('core-over-budget', { dropped: 3, need: 2100, used: 1375 }),
+  }
+  state.totals = { ...state.totals, overLimit: 1 }
+  state.attention = [{ key: 'proj-a', name: 'repo', title: 'repo', hasMemory: true, latestDaily: '2026-11-09', oldestDailyAgeDays: 1, injection: state.projects[0].injection, reasons: ['over-limit'] }]
+  state.attentionTotal = 1
+  state.attentionMore = { 'over-limit': 0, stale: 0, missing: 0, unmeasurable: 0 }
+  const calls = installFetch({ state })
+  const restore = installTimers()
+  try {
+    const tree = await runtime.settle(MemoryOverviewPanel, {})
+    const body = text(expand(tree))
+    assert.match(body, /超限 1/)
+    assert.match(body, /核心超预算 · 3 条未注入/, 'the overview names the real cause and count')
+    assert.doesNotMatch(body, /已超注入限额|下一轮注入会截断/, 'it no longer promises a truncation that will not happen')
+
+    const open = walk(expand(tree)).find((node) => node.type === 'button' && text(node) === '查看')
+    assert.ok(open, 'the attention row offers to open the project')
+    const opened = await runtime.fire(open, 'onClick', MemoryWorkspace, OVERVIEW)
+    const detail = text(expand(opened))
+    assert.match(detail, /核心超预算 · 3 条未注入/, 'the project header carries the same state')
+    assert.doesNotMatch(detail, /下一轮注入会截断|超过注入限额/)
+    assert.ok(calls.gets.some((url) => url.includes('project=proj-a')), 'and the project was fetched by key')
+  } finally {
+    restore()
+  }
+})
+
+test('a project that fell back to whole-file injection and was cut says "whole file, truncated"', async () => {
+  const state = stateFor()
+  state.projects[0] = {
+    ...state.projects[0],
+    chars: 12000,
+    overLimit: true,
+    status: 'over-limit',
+    injection: injectionOf('truncated', { mode: 'whole', fallback: 'legacy', reason: 'missing_core', budget: 10000, need: 12000, used: 10000 }),
+  }
+  state.totals = { ...state.totals, overLimit: 1 }
+  state.attention = [{ key: 'proj-a', name: 'repo', title: 'repo', hasMemory: true, latestDaily: '2026-11-09', oldestDailyAgeDays: 1, injection: state.projects[0].injection, reasons: ['over-limit'] }]
+  state.attentionTotal = 1
+  installFetch({ state })
+  const restore = installTimers()
+  try {
+    const body = text(expand(await runtime.settle(MemoryOverviewPanel, {})))
+    assert.match(body, /超限 1/)
+    assert.match(body, /整份截断/, 'the wording names what actually happens to this file')
+    assert.doesNotMatch(body, /核心超预算/)
+  } finally {
+    restore()
+  }
+})
+
+test('disabled, empty, unmeasurable and not-created are four different things', async () => {
+  const state = stateFor()
+  withProject(state, { injection: judged('disabled') })
+  state.projects[1] = { ...state.projects[1], hasMemory: true, bytes: 4, injection: judged('empty') }
+  const restore = installTimers()
+  try {
+    // The project tab shows the session's project, so its header is where the
+    // state of that project belongs.
+    installFetch({ state })
+    const project = text(expand(await runtime.settle(MemoryProjectPanel, PROJECT)))
+    assert.match(project, /注入已关闭/)
+    assert.doesNotMatch(project, /已用 \d+%/, 'no percentage for a source that injects nothing')
+    assert.doesNotMatch(project, /已用 0%/)
+
+    // The second project, reached from the overview rail, has a blank file.
+    installFetch({ state })
+    runtime.reset()
+    let tree = await runtime.settle(MemoryOverviewPanel, OVERVIEW)
+    const other = walk(tree).find((node) => node.type === 'button' && String(node.props?.className ?? '').includes('wbm-project') && text(node).includes('other'))
+    assert.ok(other, 'the overview rail lists the second project')
+    tree = await runtime.fire(other, 'onClick', MemoryWorkspace, OVERVIEW)
+    const empty = text(expand(tree))
+    assert.match(empty, /文件为空/)
+    assert.doesNotMatch(empty, /超限/, 'nothing is lost from an empty file, so nothing is over any limit')
+    assert.doesNotMatch(empty, /未创建/, 'it does have a file')
+    assert.doesNotMatch(empty, /已用 \d+%/)
+  } finally {
+    restore()
+  }
+})
+
+test('a project without MEMORY.md is "not created", not "0 entries, 0% used"', async () => {
+  // Reached from the overview rail, which lists every project; the project
+  // tab follows the session's own project and only shows a picker when it
+  // has none.
+  const state = stateFor()
+  installFetch({ state })
+  const restore = installTimers()
+  try {
+    let tree = await runtime.settle(MemoryOverviewPanel, OVERVIEW)
+    const other = walk(tree).find((node) => node.type === 'button' && String(node.props?.className ?? '').includes('wbm-project') && text(node).includes('other'))
+    assert.ok(other, 'the overview rail lists the second project')
+    tree = await runtime.fire(other, 'onClick', MemoryWorkspace, OVERVIEW)
+    const body = text(expand(tree))
+    assert.match(body, /未创建/)
+    assert.doesNotMatch(body, /已用 \d+%/)
+    assert.doesNotMatch(body, /MEMORY 0 条/)
+  } finally {
+    restore()
+  }
+})
+
+test('the file header measures the file in the limit unit and never prints "KB%"', async () => {
+  const restore = installTimers()
+  try {
+    const doc = { ...projectContent, bytes: 18635, chars: 6200, partial: false }
+    installFetch({ content: () => doc })
+    let tree = await runtime.settle(MemoryProjectPanel, PROJECT)
+    let body = text(expand(tree))
+    assert.doesNotMatch(body, /KB%|MB%/, 'the byte string no longer lands in the percent slot')
+    assert.match(body, /6200 码元/)
+    assert.match(body, /3 条 · 6200 码元/)
+
+    // A prefix of a large file: the length is unknown, so none is shown.
+    installFetch({ content: () => ({ ...doc, chars: null, partial: true, truncated: true, revision: null, entries: 1 }) })
+    runtime.reset()
+    tree = await runtime.settle(MemoryProjectPanel, PROJECT)
+    const fileHeader = text(expand(walk(tree).find((node) => String(node.props?.className ?? '').includes('wbm-doc-title'))))
+    assert.match(fileHeader, /已显示 1 条/, 'and the entry count says it is only what is shown')
+    assert.doesNotMatch(fileHeader, /码元/, 'no length is claimed for a file only partly read')
+    assert.doesNotMatch(fileHeader, /0 码元/, 'and never 0: unmeasured is not zero')
+
+    // Whole file read, display cut: length known, rows are a prefix. Large
+    // lengths are abbreviated the way the design mock shows them (`6.2k`).
+    installFetch({ content: () => ({ ...doc, chars: 900000, partial: true, truncated: true, revision: null, entries: 900 }) })
+    runtime.reset()
+    tree = await runtime.settle(MemoryProjectPanel, PROJECT)
+    body = text(expand(tree))
+    assert.match(body, /已显示 900 条 · 900k 码元/)
+  } finally {
+    restore()
+  }
+})
+
+test('the revision leaves the headers (the conflict dialog still shows it: see the conflict test above)', async () => {
+  // The revision is a write token. It is compared in the conflict dialog —
+  // which shows both sides, asserted in "a conflict keeps the draft…" — and
+  // belongs nowhere else. This guards the "nowhere else": the pattern matches
+  // any `rev <token>`, hex or not, so it would catch the old header chip
+  // ("rev rev-project") as well as a real hash.
+  const state = stateFor()
+  installFetch({ state })
+  const restore = installTimers()
+  try {
+    const tree = await openProject()
+    const body = text(expand(tree))
+    assert.doesNotMatch(body, /\brev \S{4,}/, 'no raw revision in a header')
+  } finally {
+    restore()
+  }
+})
+
+test('the archive dialog opens on the threshold /state reported', async () => {
+  // Driven like the prune test above: this is the dialog's own contract. The
+  // opening preview names no `beforeDays`, so the host applies the one
+  // threshold every other surface counts with, and reports it back.
+  const actions = []
+  const props = {
+    projectKey: 'proj-a',
+    act: async (payload) => {
+      actions.push(payload)
+      return { ok: true, dryRun: true, planId: 'p', beforeDays: 30, candidates: [] }
+    },
+    onClose: () => {},
+    flash: () => {},
+    reload: async () => {},
+  }
+  const restore = installTimers()
+  try {
+    const tree = await runtime.settle(PruneDialog, props)
+    const plan = actions.find((action) => action.type === 'prune')
+    assert.ok(plan, 'the dialog planned first')
+    assert.equal(plan.beforeDays, undefined, 'the opening preview leaves the days to the host default')
+    const body = text(expand(tree))
+    assert.match(body, /早于/, 'the dialog shows the number it used')
+    assert.match(body, /30 天以前没有日期文件/, 'and that number is the one the host reported')
+
+    // A person changing the days is the one case a number is sent.
+    const input = walk(tree).find((node) => node.type === 'input' && node.props.type === 'number')
+    assert.equal(input.props.disabled, false, 'the field is live once the default is known')
+    let next = await runtime.fire(input, 'onChange', PruneDialog, props, { value: '45' })
+    const recompute = walk(next).find((node) => node.type === 'button' && text(node) === '重新出计划')
+    await runtime.fire(recompute, 'onClick', PruneDialog, props)
+    assert.equal(actions.at(-1).beforeDays, 45, 'an explicit choice is sent as given')
+  } finally {
+    restore()
+  }
+})
+
+// ── P1: layout ───────────────────────────────────────────────────────────
+
+test('the first frame claims no counts, and an empty machine says so', async () => {
+  // Before /state arrives the header used to render "项目 0 / 有记忆 0 / 条目 0".
+  const restore = installTimers()
+  try {
+    // /state never answers, so the panel is stuck on its first frame.
+    const waiting = installFetch({ state: stateFor() })
+    globalThis.fetch = async () => new Promise(() => {})
+    void waiting
+    let tree = await runtime.settle(MemoryOverviewPanel, {})
+    let body = text(expand(tree))
+    assert.doesNotMatch(body, /项目 0|条目 0|已创建记忆文件/, 'no zero counts before the first state')
+    assert.match(body, /读取中/, 'a loading state instead')
+
+    // Loaded, and the machine knows no projects at all.
+    const empty = stateFor({ projects: [], projectsTotal: 0, attention: [], attentionTotal: 0, totals: { projects: 0, withMemory: 0, entries: 0, dailyFiles: 0, overLimit: 0, stale: 0, missing: 0, unmeasurable: 0 } })
+    installFetch({ state: empty })
+    runtime.reset()
+    tree = await runtime.settle(MemoryOverviewPanel, {})
+    body = text(expand(tree))
+    assert.match(body, /暂无项目/, 'the empty state is named')
+    assert.doesNotMatch(body, /项目 0/, 'and it is not a row of zeros')
+    assert.match(body, /用户 MEMORY\.md/, 'the user memory entry is still reachable')
+  } finally {
+    restore()
+  }
+})
+
+test('the overview breadcrumb follows the open project and offers one way back', async () => {
+  const restore = installTimers()
+  try {
+    installFetch()
+    let tree = await runtime.settle(MemoryOverviewPanel, {})
+    assert.match(text(expand(tree)), /全部项目/, 'nothing open: the breadcrumb is the scope')
+    tree = await openProject()
+    const body = text(expand(tree))
+    assert.match(body, /全部项目 › repo/, 'with a project open it names it')
+    assert.equal((body.match(/返回全部项目|全部项目/g) ?? []).length >= 1, true)
+    // Exactly one control goes back, and it is labelled as going back.
+    const back = walk(tree).filter((node) => node.type === 'button' && /^(返回全部项目|全部项目)$/.test(text(node)))
+    assert.equal(back.length, 1, `one back control, got ${back.length}`)
+    tree = await runtime.fire(back[0], 'onClick', MemoryWorkspace, OVERVIEW)
+    assert.doesNotMatch(text(expand(tree)), / › /, 'back on the overview')
+  } finally {
+    restore()
+  }
+})
+
+test('the narrow tab shortens the alert and the numbers live in a hover hint', async () => {
+  const state = stateFor()
+  withProject(state, { overLimit: true, status: 'over-limit', injection: judged('core-over-budget', { dropped: 3, need: 2100, used: 1375 }) })
+  const restore = installTimers()
+  try {
+    installFetch({ state })
+    // The right-sidebar tab: compact wording.
+    // The tab follows its own session; give it one.
+    const tab = { tab: true, sessionId: 's', useSessions: (selector) => selector({ byId: { s: { id: 's', cwd: 'C:\\repo', retainedBy: { mainView: 1 } } } }), useWorkspaces: (selector) => selector({ items: [] }) }
+    const tabProps = { mode: 'project', layout: 'wide', ...tab }
+    let tree = await runtime.settle(MemoryWorkspace, tabProps)
+    let body = text(expand(tree))
+    assert.match(body, /核心 3 条未注入/, 'short form in the tab')
+    assert.doesNotMatch(body, /核心超预算 · 3 条未注入/, 'not the long form')
+
+    // The explanation is a hover hint, not a disclosure: reading it must not
+    // move the header or the list under it.
+    const chip = walk(tree).find((node) => String(node.props?.className ?? '').includes('wbm-chip-tip'))
+    assert.ok(chip, 'the state chip is the hint trigger')
+    assert.equal(chip.type, 'span', 'a hint, not a disclosure')
+    assert.equal(chip.props.tabIndex, 0, 'reachable from the keyboard')
+    const isTip = (node) => node.type === 'div' && String(node.props?.className ?? '') === 'wbm-tip'
+    const tip = walk(tree).find(isTip)
+    assert.ok(tip, 'the header renders the hint')
+    assert.equal(tip.props.id, chip.props['aria-describedby'], 'the chip points at it')
+    assert.equal(tip.props.id, 'wbm-tip-tab-proj-a', 'the id says which surface renders it, so two panels cannot collide')
+    assert.equal(tip.props.role, 'tooltip')
+    assert.match(text(expand(tip)), /完整核心块需要 2100 码元，预算 1400 码元，本次注入 1375 码元/, 'the numbers are inside')
+    assert.equal(walk(tree).filter((node) => node.type === 'details' || node.type === 'summary').length, 0, 'no disclosure is left')
+
+    // Escape puts the hint away without moving focus by hand.
+    let blurred = 0
+    await runtime.fire(chip, 'onKeyDown', MemoryWorkspace, tabProps, { key: 'Escape', currentTarget: { blur: () => { blurred += 1 } } })
+    assert.equal(blurred, 1, 'Escape blurs the chip')
+
+    // The wide panel uses the long form, and the header owns exactly one hint.
+    runtime.reset()
+    installFetch({ state })
+    tree = await runtime.settle(MemoryOverviewPanel, {})
+    tree = await openProject()
+    assert.match(text(expand(tree)), /核心超预算 · 3 条未注入/, 'long form where there is room')
+    assert.equal(walk(tree).filter(isTip).length, 1, 'one hint per header')
+    assert.equal(walk(tree).find(isTip).props.id, 'wbm-tip-panel-proj-a', 'the main panel and the tab never share an id')
+  } finally {
+    restore()
+  }
+})
+
+test('the hint is revealed by hover or focus, and covers the list instead of moving it', () => {
+  // CSS cannot run under node, so this pins the two things the interaction is
+  // made of: the selectors that reveal the hint, and the fact that the box is
+  // out of flow (an in-flow hint would push the list down, which is exactly
+  // what the disclosure it replaced did).
+  const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+  assert.match(source, /\.wbm-header:has\(\.wbm-chip-tip:hover\) \.wbm-tip/, 'hover reveals it')
+  assert.match(source, /\.wbm-header:has\(\.wbm-chip-tip:focus\) \.wbm-tip/, 'focus reveals it (keyboard and touch)')
+  assert.match(source, /\.wbm-header \{[^}]*position: relative/, 'the hint is positioned against the header')
+  assert.match(source, /\.wbm-tip \{[^}]*position: absolute/, 'out of flow')
+  assert.match(source, /\.wbm-tip \{[^}]*opacity: 0/, 'hidden until it is asked for')
+  assert.match(source, /\.wbm-tip \{[^}]*pointer-events: none/, 'a hidden hint does not swallow clicks meant for the list')
+  assert.doesNotMatch(source, /wbm-explain/, 'the disclosure it replaced is gone')
+})
+
+test('no surface prints a raw revision, a KB% or a next-turn promise any more', async () => {
+  const state = stateFor()
+  withProject(state, { overLimit: true, status: 'over-limit', injection: judged('truncated', { mode: 'whole', fallback: 'legacy', reason: 'missing_core', budget: 10000, need: 12000, used: 10000 }) })
+  state.attention = [{ key: 'proj-a', name: 'repo', title: 'repo', hasMemory: true, latestDaily: '2026-11-09', oldestDailyAgeDays: 1, injection: state.projects[0].injection, reasons: ['over-limit'] }]
+  state.attentionTotal = 1
+  const restore = installTimers()
+  try {
+    installFetch({ state })
+    const overview = text(expand(await runtime.settle(MemoryOverviewPanel, {})))
+    installFetch({ state })
+    runtime.reset()
+    const opened = text(expand(await openProject()))
+    for (const [name, body] of [['overview', overview], ['project', opened]]) {
+      assert.doesNotMatch(body, /\brev \S{4,}/, `${name}: raw revision`)
+      assert.doesNotMatch(body, /KB%|MB%|B%/, `${name}: bytes in a percent slot`)
+      assert.doesNotMatch(body, /下一轮注入会截断|已超注入限额|超注入限额/, `${name}: a promise about the next turn`)
+    }
+  } finally {
+    restore()
+  }
+})
+
+test('no dictionary entry is left behind with nothing showing it', () => {
+  // Copy that nothing renders is worse than no copy at all: it reads as a
+  // live sentence to the next reader, and two of these still promised "the
+  // next turn truncates it" after the panel stopped saying so anywhere.
+  const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+  const zh = source.slice(source.indexOf('const ZH = {'), source.indexOf('const EN = {'))
+  const keys = [...zh.matchAll(/^\s*'([a-z][a-zA-Z0-9]*\.[a-zA-Z0-9_.-]+)':/gm)].map((match) => match[1])
+  // A key counts as live if the *code* mentions it, after the dictionaries —
+  // its own definition does not count as a use. Keys reached by a computed
+  // name (`t(`layer.legacyReason.${reason}`)`, `describeCode`'s table) are
+  // not literals, so "mentions" is any quoted occurrence, which those go
+  // through too, and the two families below are whole-prefix live.
+  const code = source.slice(source.indexOf('function bindCopy'))
+  const mentioned = new Set([...code.matchAll(/'([a-z][a-zA-Z0-9]*\.[a-zA-Z0-9_.-]+)'/g)].map((match) => match[1]))
+  const prefixes = ['layer.legacyReason.', 'inject.why.']
+  const dead = [...new Set(keys)].filter((key) => !mentioned.has(key) && !prefixes.some((prefix) => key.startsWith(prefix))).sort()
+  // 21 keys were already orphaned before the panel-tag work (including two
+  // `code.*` keys that `MESSAGES` deliberately routes elsewhere); removing
+  // them is not this change's to make. What must hold is that the set never
+  // grows.
+  const preExisting = [
+    'code.read_only_target', 'code.unknown_project',
+    'common.retry', 'dialog.confirmDelete', 'dialog.confirmDeleteSection', 'dialog.conflictBody', 'dialog.pruneBody',
+    'dialog.sourceBody', 'doc.addEntry', 'doc.searchInDoc', 'doc.sectionBody', 'doc.sectionHeading', 'doc.sourceMode',
+    'file.empty', 'file.noMemory', 'file.noMemoryHint', 'panel.allProjects', 'rail.userMemory', 'settings.home',
+    'settings.panelWriteHint', 'settings.revisionLine',
+  ]
+  assert.deepEqual(dead, preExisting, 'dictionary keys nothing renders (the pre-existing orphans, and no new ones)')
+})
+
+test('a project count that includes gone directories says so', async () => {
+  // P2: "项目 12" looked healthy while three of the twelve no longer existed
+  // on disk. The count is still right — they are known projects — but the
+  // tooltip now says how many of them are gone.
+  const state = stateFor()
+  state.totals = { ...state.totals, projects: 12, missing: 3 }
+  const restore = installTimers()
+  try {
+    installFetch({ state })
+    const tree = await runtime.settle(MemoryOverviewPanel, {})
+    const chip = walk(tree).find((node) => String(node.props?.className ?? '').includes('wbm-chip-quiet'))
+    assert.ok(chip, 'the summary chip is on screen')
+    assert.match(String(chip.props.title), /3 个的目录已不存在/, 'the tooltip names the gone directories')
+  } finally {
+    restore()
+  }
+})
+
+test('after "show all", a poll does not shrink the attention list back to the preview', async () => {
+  // The panel polls /state every few seconds, without `attention=all`. A
+  // list expanded by hand was cut back to the preview on the next poll —
+  // three seconds after the click — with nothing to say it had happened.
+  const N = 12
+  const state = stateFor()
+  state.attentionTotal = N
+  state.attentionMore = { 'over-limit': N - 8, stale: 0, missing: 0, unmeasurable: 0 }
+  const row = (i) => ({ key: `k${i}`, name: `p${i}`, title: `p${i}`, hasMemory: true, latestDaily: null, injection: judged('core-over-budget', { dropped: 1 }), reasons: ['over-limit'] })
+  const calls = installFetch({
+    state,
+    content: () => projectContent,
+  })
+  // Override the state answer: the host sends the preview unless asked for all.
+  const base = globalThis.fetch
+  globalThis.fetch = async (url, init = {}) => {
+    if (init.method === 'POST') return base(url, init)
+    const href = String(url)
+    calls.gets.push(href)
+    // Exactly what the host does: the preview unless the request asks for all.
+    const body = href.includes('/content') ? projectContent : { ...state, attention: Array.from({ length: href.includes('attention=all') ? N : 8 }, (_, i) => row(i)) }
+    return { ok: true, status: 200, json: async () => body }
+  }
+  const restore = installTimers()
+  try {
+    let tree = await runtime.settle(MemoryOverviewPanel, OVERVIEW)
+    // Only the attention rows: "view" also appears once, for the user profile.
+    const count = () => {
+      let inAttention = false
+      let seen = 0
+      for (const node of walk(tree)) {
+        if (node.type === 'div' && String(node.props?.className ?? '').includes('wbm-h2') && text(node) === '需要关注') inAttention = true
+        else if (node.type === 'div' && String(node.props?.className ?? '').includes('wbm-h2')) inAttention = false
+        else if (inAttention && node.type === 'button' && text(node) === '查看') seen += 1
+      }
+      return seen
+    }
+    assert.equal(count(), 8, 'the preview is bounded')
+    const showAll = walk(tree).find((node) => node.type === 'button' && text(node) === '查看全部')
+    assert.ok(showAll, 'and offers the rest')
+    tree = await runtime.fire(showAll, 'onClick', MemoryWorkspace, OVERVIEW)
+    assert.equal(count(), N, 'the expanded list arrived')
+    assert.ok(calls.gets.some((url) => url.includes('attention=all')), 'fetched by the explicit request')
+
+    // The next poll: the same component, polled again.
+    const poll = walk(tree).find((node) => node.type === 'button' && node.props?.title === '刷新')
+    assert.ok(poll, 'the refresh control is on screen')
+    tree = await runtime.fire(poll, 'onClick', MemoryWorkspace, OVERVIEW)
+    assert.equal(count(), N, 'a poll does not shrink the expanded list')
+    assert.doesNotMatch(text(expand(tree)), /只显示前 8 个/, 'and does not claim only 8 are shown')
+  } finally {
+    globalThis.fetch = base
+    restore()
+  }
+})
+
+test('a preview poll that was already in flight when "show all" was clicked cannot shrink the list', async () => {
+  // The sequence a person can hit: a poll leaves, "show all" is clicked, the
+  // poll's answer (the preview) arrives last. It used to overwrite the
+  // expanded list and leave it at eight until the next poll — the same
+  // shrink, now with a narrower window.
+  const N = 12
+  const state = stateFor()
+  state.attentionTotal = N
+  state.attentionMore = { 'over-limit': N - 8, stale: 0, missing: 0, unmeasurable: 0 }
+  const row = (i) => ({ key: `k${i}`, name: `p${i}`, title: `p${i}`, hasMemory: true, latestDaily: null, injection: judged('core-over-budget', { dropped: 1 }), reasons: ['over-limit'] })
+  const calls = installFetch({ state, content: () => projectContent })
+  const base = globalThis.fetch
+  let held = null
+  globalThis.fetch = async (url, init = {}) => {
+    if (init.method === 'POST') return base(url, init)
+    const href = String(url)
+    calls.gets.push(href)
+    const body = href.includes('/content') ? projectContent : { ...state, attention: Array.from({ length: href.includes('attention=all') ? N : 8 }, (_, i) => row(i)) }
+    // Hold one request until the test releases it.
+    if (held && held.armed) {
+      held.armed = false
+      await held.promise
+    }
+    return { ok: true, status: 200, json: async () => body }
+  }
+  const restore = installTimers()
+  const count = (tree) => {
+    let inAttention = false
+    let seen = 0
+    for (const node of walk(tree)) {
+      if (node.type === 'div' && String(node.props?.className ?? '').includes('wbm-h2')) inAttention = text(node) === '需要关注'
+      else if (inAttention && node.type === 'button' && text(node) === '查看') seen += 1
+    }
+    return seen
+  }
+  try {
+    let tree = await runtime.settle(MemoryOverviewPanel, OVERVIEW)
+    assert.equal(count(tree), 8)
+
+    // A preview poll leaves and is held…
+    let release
+    held = { armed: true, promise: new Promise((resolve) => { release = resolve }) }
+    const poll = walk(tree).find((node) => node.type === 'button' && node.props?.title === '刷新')
+    const inFlight = runtime.fire(poll, 'onClick', MemoryWorkspace, OVERVIEW)
+    // …then "show all" is clicked and answered…
+    const showAll = walk(tree).find((node) => node.type === 'button' && text(node) === '查看全部')
+    tree = await runtime.fire(showAll, 'onClick', MemoryWorkspace, OVERVIEW)
+    assert.equal(count(tree), N, 'the expanded list arrived')
+    // …and the held preview lands last.
+    release()
+    tree = await inFlight
+    assert.equal(count(tree), N, 'the stale preview answer is dropped, not applied')
+  } finally {
+    globalThis.fetch = base
+    restore()
+  }
+})
+
+test('an unmeasured file never shows "0 entries" anywhere', async () => {
+  // A MEMORY.md past the read cap exists but nobody has counted its entries.
+  // The rule "a number nobody measured is not zero" was applied to the
+  // length only; the entry count still came through as 0 — "MEMORY 0 条 ·
+  // 无法测量" in the header, "big 0 条" in the rail and in recent activity.
+  const state = stateFor()
+  withProject(state, { entries: null, chars: null, bytes: 3 * 1024 * 1024, injection: judged('unmeasurable', { reason: 'too_large' }), status: 'unreadable' })
+  state.stores.project = { ...state.stores.project, entries: null, chars: null, injection: state.projects[0].injection }
+  state.totals = { ...state.totals, entries: null, unmeasurable: 1 }
+  state.attention = [{ key: 'proj-a', name: 'repo', title: 'repo', hasMemory: true, latestDaily: '2026-11-09', oldestDailyAgeDays: 1, injection: state.projects[0].injection, reasons: ['unmeasurable'] }]
+  state.attentionTotal = 1
+  state.attentionMore = { 'over-limit': 0, stale: 0, missing: 0, unmeasurable: 0 }
+  const restore = installTimers()
+  try {
+    // Project tab: the header of the project itself.
+    installFetch({ state })
+    let tree = await runtime.settle(MemoryProjectPanel, PROJECT)
+    let body = text(expand(tree))
+    assert.doesNotMatch(body, /0 条/, 'an unmeasured file has no entry count, not a count of zero')
+    assert.match(body, /无法测量/, 'and says it cannot be measured')
+    assert.doesNotMatch(body, /条目0/, 'the stat card does not show 0 either')
+
+    // Overview: the rail row, the attention row and the summary line.
+    installFetch({ state })
+    runtime.reset()
+    tree = await runtime.settle(MemoryOverviewPanel, OVERVIEW)
+    body = text(expand(tree))
+    assert.doesNotMatch(body, /repo\s*0 条/, 'the rail row')
+    assert.doesNotMatch(body, /已创建记忆文件 · 0 条/, 'the summary line does not claim zero entries')
+    assert.match(body, /MEMORY\.md 无法按完整内容判断/, 'the attention row names the reason')
+  } finally {
+    restore()
+  }
+})
+
+test('the "injected whole" banner appears only on a real structural fallback', async () => {
+  // The banner says "this file is injected whole: N characters reach the
+  // prompt every turn". That is true in exactly one case: layered mode, and
+  // the file failed the split for a structural reason. Everywhere else it
+  // contradicted the chip right beside it.
+  const legacy = { mode: 'legacy', reason: 'missing_core', coreEntries: 0, topics: 0, coreChars: 10481, topicChars: 0 }
+  const banner = /仍整份注入/
+  const restore = installTimers()
+  try {
+    // 1. Source switched off: nothing is injected, so nothing is "injected whole".
+    let state = stateFor({ stores: { ...stateFor().stores, project: { ...stateFor().stores.project, layering: legacy, injection: judged('disabled') } } })
+    withProject(state, { injection: judged('disabled') })
+    installFetch({ state })
+    let body = text(expand(await openProject()))
+    assert.doesNotMatch(body, banner, 'source off: no banner')
+    assert.match(body, /注入已关闭/)
+
+    // 2. Full mode: every file is injected whole by design. The banner's one
+    //    action — "split it" — changes nothing there, so it is not offered.
+    state = stateFor({ stores: { ...stateFor().stores, project: { ...stateFor().stores.project, layering: legacy, injection: judged('complete', { mode: 'whole', fallback: null, reason: null, budget: 10000 }) } } })
+    state.inject = { enabled: true, mode: 'full', project: true, coreBudget: 4000 }
+    withProject(state, { injection: state.stores.project.injection })
+    installFetch({ state })
+    runtime.reset()
+    body = text(expand(await openProject()))
+    assert.doesNotMatch(body, banner, 'full mode: no banner')
+
+    // 3. Layered mode, real fallback: this is the one case it is for.
+    state = stateFor({ stores: { ...stateFor().stores, project: { ...stateFor().stores.project, layering: legacy, injection: judged('truncated', { mode: 'whole', fallback: 'legacy', reason: 'missing_core', budget: 10000, need: 10481, used: 10000 }) } } })
+    withProject(state, { overLimit: true, injection: state.stores.project.injection })
+    installFetch({ state })
+    runtime.reset()
+    body = text(expand(await openProject()))
+    assert.match(body, banner, 'layered + structural fallback: the banner is for this')
+    assert.match(body, /没有找到「常驻记忆」小节/)
+    // And it states the size the way the rest of the panel does now.
+    assert.doesNotMatch(body, /10481 字符每轮都进上下文/, 'it does not quote the whole length as what reaches the prompt')
+  } finally {
+    restore()
+  }
+})
+
+test('a flagged project outside the displayed list opens by key, described only by state.project', async () => {
+  // Acceptance 7, the panel half. The overview lists the first 50 projects;
+  // the attention preview is not limited to them. Opening the 51st works
+  // because `/state?project=<key>` answers with that project's row at the top
+  // level, and the panel prefers `state.project` to the list. No test drove
+  // that path: every fixture's project was also in `projects`.
+  const N = 60
+  const state = stateFor({
+    projects: Array.from({ length: 50 }, (_, index) => ({ key: `p${index}`, path: `C:\\p${index}`, name: `p${index}`, title: `p${index}`, source: 'workspace', current: false, hasMemory: true, daily: 0, entries: 1, bytes: 9, chars: 100, revision: 'r', latestDaily: null, oldestDailyAgeDays: null, injection: judged('complete', { need: 23, used: 23 }), overLimit: false, stale: false, status: 'ok' })),
+    projectsTotal: N,
+    projectsTruncated: true,
+    project: null,
+    totals: { projects: N, withMemory: N, entries: N, entriesUncounted: 0, dailyFiles: 0, overLimit: 1, stale: 0, missing: 0, unmeasurable: 0 },
+  })
+  // The 51st: over budget, and not among the 50 rows above.
+  const outside = { key: 'p50', path: 'C:\\p50', name: 'p50', title: 'p50', source: 'workspace', current: false, hasMemory: true, daily: 0, entries: 6, bytes: 9, chars: 9000, revision: 'r', latestDaily: null, oldestDailyAgeDays: null, injection: judged('core-over-budget', { dropped: 3, need: 2100, used: 1375 }), overLimit: true, stale: false, status: 'over-limit' }
+  state.attention = [{ key: outside.key, name: outside.name, title: outside.title, hasMemory: true, latestDaily: null, injection: outside.injection, reasons: ['over-limit'] }]
+  state.attentionTotal = 1
+  state.attentionMore = { 'over-limit': 0, stale: 0, missing: 0, unmeasurable: 0 }
+  assert.equal(state.projects.some((row) => row.key === outside.key), false, 'the flagged project is not in the list')
+
+  // The server resolves a `?project=` request against every known project.
+  const base = globalThis.fetch
+  const urls = []
+  const calls = installFetch({ state })
+  globalThis.fetch = async (url, init = {}) => {
+    const href = String(url)
+    urls.push(href)
+    if (init.method === 'POST') return base(url, init)
+    if (href.includes('/content')) return { ok: true, status: 200, json: async () => projectContent }
+    const key = /[?&]project=([^&]+)/.exec(href)?.[1]
+    return { ok: true, status: 200, json: async () => (key === outside.key ? { ...state, project: outside } : state) }
+  }
+  const restore = installTimers()
+  try {
+    let tree = await runtime.settle(MemoryOverviewPanel, OVERVIEW)
+    assert.match(text(expand(tree)), /超限 1/)
+    const view = walk(tree).find((node) => node.type === 'button' && text(node) === '查看')
+    assert.ok(view, 'the attention row offers to open it')
+    tree = await runtime.fire(view, 'onClick', MemoryWorkspace, OVERVIEW)
+    assert.ok(urls.some((href) => href.includes(`project=${outside.key}`)), 'opened by key')
+    const body = text(expand(tree))
+    assert.match(body, /全部项目 › p50/, 'the breadcrumb names the out-of-list project')
+    assert.match(body, /核心超预算 · 3 条未注入/, 'and its header carries its state')
+    assert.match(body, /6 条/, 'its entry count, from state.project — it is in no list')
+  } finally {
+    globalThis.fetch = base
     restore()
   }
 })
