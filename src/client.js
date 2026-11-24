@@ -334,9 +334,7 @@ window.__ModuleLoader__.load({
       'settings.sessionAction': '会话头按钮',
       'settings.sessionActionHint': '在会话头放一个记忆按钮，用来打开右栏页签。',
       'settings.refreshMs': '刷新间隔（毫秒）',
-      'settings.refreshMsHint': '面板轮询 /state 的间隔，默认 3000。',
-      'settings.maxProjects': '最多展示项目',
-      'settings.maxProjectsHint': '汇总最多拉取多少个工作区，默认 50。',
+      'settings.refreshMsHint': '面板轮询 /state 的间隔，默认 60000（60 秒）。',
       'settings.revisionLine': 'revision {revision} · {state} · {override}',
       'settings.writable': '可写',
       'settings.overridden': '有本机覆盖',
@@ -372,7 +370,6 @@ window.__ModuleLoader__.load({
       'count.chipOverLimit': '超限 {n}',
       'count.chipPending': '待归档 {n}',
       'count.allProjects': '全部项目 {n}',
-      'count.truncatedProjects': '只显示前 {n} 个，可在设置里调大「最多展示项目」',
       'count.bytes': '字节',
       'count.latestDaily': '最新日期 {date}',
 
@@ -738,9 +735,7 @@ window.__ModuleLoader__.load({
       'settings.sessionAction': "Session header button",
       'settings.sessionActionHint': "Put a memory button in the session header that opens the right-sidebar tab.",
       'settings.refreshMs': "Refresh interval (ms)",
-      'settings.refreshMsHint': "How often the panel polls /state. Default 3000.",
-      'settings.maxProjects': "Max projects shown",
-      'settings.maxProjectsHint': "How many workspaces the overview pulls. Default 50.",
+      'settings.refreshMsHint': "How often the panel polls /state. Default 60000 (60 s).",
       'settings.revisionLine': "revision {revision} · {state} · {override}",
       'settings.writable': "writable",
       'settings.overridden': "locally overridden",
@@ -770,7 +765,6 @@ window.__ModuleLoader__.load({
       'count.chipOverLimit': "Over limit {n}",
       'count.chipPending': "To archive {n}",
       'count.allProjects': "All projects {n}",
-      'count.truncatedProjects': "Showing the first {n}; raise \"Max projects shown\" in settings",
       'count.bytes': "Bytes",
       'count.latestDaily': "Latest {date}",
       'attention.stale': "{date} has not been archived for {days} days",
@@ -1619,20 +1613,11 @@ window.__ModuleLoader__.load({
             h(NumberField, {
               label: t('settings.refreshMs'),
               hint: t('settings.refreshMsHint'),
-              value: ui.refreshMs ?? 3000,
+              value: ui.refreshMs ?? 60000,
               min: 500,
               max: 60000,
               disabled: !writable,
               onCommit: (next) => commit('ui.refreshMs', next),
-            }),
-            h(NumberField, {
-              label: t('settings.maxProjects'),
-              hint: t('settings.maxProjectsHint'),
-              value: ui.maxProjects ?? 50,
-              min: 1,
-              max: 500,
-              disabled: !writable,
-              onCommit: (next) => commit('ui.maxProjects', next),
             }),
           ),
         ),
@@ -2044,8 +2029,7 @@ window.__ModuleLoader__.load({
       globalPanel: true,
       projectTab: true,
       sessionAction: true,
-      refreshMs: 3000,
-      maxProjects: 50,
+      refreshMs: 60000,
     }
 
     function flagsFrom(value) {
@@ -2055,8 +2039,7 @@ window.__ModuleLoader__.load({
         globalPanel: ui.globalPanel !== false,
         projectTab: ui.projectTab !== false,
         sessionAction: ui.sessionAction !== false,
-        refreshMs: Math.min(Math.max(Number(ui.refreshMs) || 3000, 500), 60000),
-        maxProjects: Math.min(Math.max(Number(ui.maxProjects) || 50, 1), 500),
+        refreshMs: Math.min(Math.max(Number(ui.refreshMs) || 60000, 500), 60000),
       }
     }
 
@@ -2878,9 +2861,9 @@ window.__ModuleLoader__.load({
       /**
        * Open a flagged project from "needs attention".
        *
-       * The flagged project is often *not* in `state.projects`: the list stops
-       * at the display bound, and the attention preview does not. So it is
-       * addressed by key alone, and every read resolves it server-side.
+       * The attention row is addressed by key, and every read resolves it
+       * server-side, so opening it does not depend on which panel row was
+       * rendered last.
        *
        * @param {object} row - an attention item: `key`, `name`, `hasMemory`,
        *   `latestDaily`, and its `injection`.
@@ -3300,9 +3283,6 @@ window.__ModuleLoader__.load({
               : state
                 ? null
                 : h('div', { className: 'wbm-rail-group' }, t('common.loading')),
-            state?.projectsTruncated
-              ? h('div', { className: 'wbm-note' }, t('count.truncatedProjects', { n: state.projects?.length ?? 0 }))
-              : null,
             projectTree(),
             h('div', { className: 'wbm-rail-group' }, t('rail.global')),
             globalRows(),

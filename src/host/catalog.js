@@ -455,21 +455,21 @@ export function createProjectCatalog({ cfg, recent, registry, t = createTranslat
   /**
    * Every known project, current first, then most recently active.
    *
-   * The totals and the attention preview are taken over *all* the rows, before
-   * the display bound is applied. Summing the rows returned instead made the
-   * overview contradict itself past `ui.maxProjects`: "60 projects, 1 over
-   * limit" beside a "needs attention" list that could not contain the one.
+   * All rows are returned: the panel's rail is the place a person searches and
+   * switches projects, so hiding rows behind a display bound made a project
+   * past the bound unfindable from the rail. The per-file parse is cached by
+   * file identity, so a warm pass only stats each project and lists its daily
+   * folder — hundreds of projects stay in the tens of milliseconds range.
    *
    * @param {object} input
    * @param {string} input.home - WorkBuddy home.
    * @param {string} input.dataFolderName - per-workspace memory folder name.
    * @param {string|null} [input.current] - the live session cwd.
-   * @param {number} [input.limit] - display bound.
    * @param {number|'all'} [input.attention] - how many flagged projects the
    *   preview carries; `'all'` for the whole list.
-   * @returns {{ rows: object[], truncated: boolean, total: number, totals: object, attention: object[], attentionTotal: number, attentionMore: Record<string, number> }}
+   * @returns {{ rows: object[], total: number, totals: object, attention: object[], attentionTotal: number, attentionMore: Record<string, number> }}
    */
-  function list({ home, dataFolderName, current = recent?.cwd ?? null, limit = cfg.ui.maxProjects, attention }) {
+  function list({ home, dataFolderName, current = recent?.cwd ?? null, attention }) {
     // A new pass: nothing read from here on is eligible for eviction until
     // the next one (see `remember`).
     pass += 1
@@ -480,8 +480,7 @@ export function createProjectCatalog({ cfg, recent, registry, t = createTranslat
       if (byActive !== 0) return byActive
       return a.name.localeCompare(b.name)
     })
-    const bound = Math.max(1, Number(limit) || cfg.ui.maxProjects)
-    return { rows: rows.slice(0, bound), truncated: rows.length > bound, total: rows.length, ...overviewOf(rows, attention) }
+    return { rows, total: rows.length, ...overviewOf(rows, attention) }
   }
 
   /**

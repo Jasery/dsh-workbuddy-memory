@@ -44,6 +44,7 @@ test('a real schema validation keeps the values a person set', () => {
   assert.equal(cfg.inject.mode, 'layered')
   assert.equal(cfg.inject.coreBudget, 4000)
   assert.equal(cfg.write.ensureLayout, true)
+  assert.equal(cfg.ui.refreshMs, 60000)
 })
 
 test('a volatile whole-object reference is read before normalizing', () => {
@@ -88,11 +89,17 @@ test('the reference protocol is the write symbol, not just a getter', () => {
   assert.equal(cfg.readOnly, false)
 })
 
+test('a removed ui.maxProjects key is ignored, not resurrected', () => {
+  const cfg = normalizeConfig(validated({ ui: { maxProjects: 100 } }))
+  assert.equal('maxProjects' in cfg.ui, false)
+})
+
 test('layered injection and lazy first-write defaults are normalized', () => {
   const cfg = normalizeConfig({})
   assert.equal(cfg.inject.mode, 'layered')
   assert.equal(cfg.inject.coreBudget, 4000)
   assert.equal(cfg.write.ensureLayout, true)
+  assert.equal(cfg.ui.refreshMs, 60000)
   assert.equal(normalizeConfig({ inject: { mode: 'full', coreBudget: 9000 } }).inject.coreBudget, 9000)
   assert.equal(normalizeConfig({ inject: { mode: 'bad', coreBudget: 100 } }).inject.mode, 'layered')
   assert.equal(normalizeConfig({ inject: { mode: 'full', coreBudget: 100 } }).inject.coreBudget, 4000)

@@ -462,23 +462,24 @@ function manyProjects(root, count, over = []) {
   return seen
 }
 
-test('state totals cover every project, and one past the display bound can still be opened', async () => {
-  // Acceptance 7: 60 projects, a display bound of 50, and the only over-budget
-  // project is the 51st by activity. The totals used to be summed over the 50
-  // rows returned, and the attention list could not hold that one at all.
+test('state returns every project, totals cover them all, and any project opens by key', async () => {
+  // The rail is the project switcher, so every workspace has to be in
+  // `projects`. Totals and attention are computed from that same complete
+  // list; opening a flagged project by key still has to work.
   const root = mkdtempSync(join(tmpdir(), 'wbm-routes-many-'))
   const seen = manyProjects(root, 60, [9])
-  const { call } = await harness({ recent: { cwd: null, seen }, config: { ui: { maxProjects: 50 } }, catalog: true })
+  const { call } = await harness({ recent: { cwd: null, seen }, catalog: true })
 
   const state = JSON.parse((await call('/workbuddy-memory/state')).body)
-  assert.equal(state.projects.length, 50, 'the display bound still holds')
+  assert.equal(state.projects.length, 60, 'every project is listed')
   assert.equal(state.projectsTotal, 60)
-  assert.equal(state.projects.some((row) => row.name === 'p09'), false)
+  assert.equal(state.projects.some((row) => row.name === 'p09'), true)
+  assert.equal('projectsTruncated' in state, false, 'there is no display bound to report')
   assert.equal(state.totals.projects, 60)
   assert.equal(state.totals.withMemory, 60)
   assert.equal(state.totals.overLimit, 1, 'one project lost core entries')
   assert.equal(state.attentionTotal, 1)
-  assert.equal(state.attention[0].name, 'p09', 'the preview is not limited to the listed rows')
+  assert.equal(state.attention[0].name, 'p09', 'the preview carries the flagged project')
   assert.equal(state.attention[0].injection.status, 'core-over-budget')
   assert.equal(state.project, null, 'nothing is selected')
 
@@ -486,7 +487,7 @@ test('state totals cover every project, and one past the display bound can still
   const opened = JSON.parse((await call(`/workbuddy-memory/state?project=${key}`)).body)
   assert.equal(opened.project.name, 'p09', 'the selected project resolves on its own')
   assert.equal(opened.project.overLimit, true)
-  assert.equal(opened.projects.some((row) => row.key === key), false, 'and the list is unchanged by selecting it')
+  assert.equal(opened.projects.some((row) => row.key === key), true, 'and the list still holds it')
   assert.equal(opened.stores.project.injection.status, 'core-over-budget', 'the store view and the row agree')
   assert.equal(opened.stores.project.layering.mode, 'layered')
 

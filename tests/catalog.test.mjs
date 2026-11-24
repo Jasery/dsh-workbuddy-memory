@@ -220,32 +220,33 @@ const daysAgo = (days) => {
   return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-')
 }
 
-test('totals count every project, not only the rows returned', () => {
-  // Acceptance 7: 60 projects, a display bound of 50, and the one project
-  // that is over budget is the 51st by activity — past the bound.
+test('every project is returned, and totals cover all of them', () => {
+  // The rail is the only project switcher. A project must not disappear from
+  // it because the list is long: hundreds of workspaces are the supported
+  // scale, so every row is returned and every total is computed from them.
   const ws = workspace()
-  ws.cfg.ui.maxProjects = 50
-  for (let index = 0; index < 60; index += 1) {
+  const count = 300
+  for (let index = 0; index < count; index += 1) {
     const memory = index === 9 ? OVER_SHARE : '# M\n\n## 常驻记忆\n- one\n'
-    ws.add(`p${String(index).padStart(2, '0')}`, memory, index === 9 ? [daysAgo(31)] : [])
+    ws.add(`p${String(index).padStart(3, '0')}`, memory, index === 9 ? [daysAgo(31)] : [])
   }
   const page = ws.open().list()
 
-  assert.equal(page.rows.length, 50)
-  assert.equal(page.total, 60)
-  assert.equal(page.truncated, true)
-  assert.equal(page.rows.some((row) => row.name === 'p09'), false, 'the 51st project is not in the list')
+  assert.equal(page.rows.length, count)
+  assert.equal(page.total, count)
+  assert.equal('truncated' in page, false, 'there is no display bound to report')
+  assert.equal(page.rows.some((row) => row.name === 'p009'), true, 'the flagged project stays in the list')
 
-  assert.equal(page.totals.projects, 60, 'every project, not the 50 shown')
-  assert.equal(page.totals.withMemory, 60)
-  assert.equal(page.totals.entries, 59 + 6, 'every entry of every file')
+  assert.equal(page.totals.projects, count)
+  assert.equal(page.totals.withMemory, count)
+  assert.equal(page.totals.entries, count - 1 + 6, 'every entry of every file')
   assert.equal(page.totals.overLimit, 1, 'counted once for the one project that lost core entries')
   assert.equal(page.totals.stale, 1)
 
   assert.equal(page.attentionTotal, 1)
   assert.equal(page.attention.length, 1)
   const [item] = page.attention
-  assert.equal(item.name, 'p09')
+  assert.equal(item.name, 'p009')
   assert.equal(typeof item.key, 'string')
   assert.equal(item.hasMemory, true, 'the preview carries enough to open the project')
   assert.equal(item.latestDaily, daysAgo(31))

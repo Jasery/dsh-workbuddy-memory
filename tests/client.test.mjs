@@ -566,6 +566,7 @@ test('an empty snapshot still shows the effective defaults for the limits', () =
     .filter((node) => node.type === 'input')
     .map((node) => String(node.props.value ?? ''))
   assert.ok(numbers.includes('8000'), 'the user limit falls back to the shipped 8000')
+  assert.ok(numbers.includes('60000'), 'the refresh interval falls back to 60 seconds')
   // `distillAbove: 0` means "twice the limit", so the field shows 16000 — the
   // threshold actually in force. Showing the raw 0 would read as "off".
   assert.ok(numbers.includes('16000'), `the threshold shows its effective value, got ${JSON.stringify(numbers)}`)
