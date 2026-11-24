@@ -2,6 +2,22 @@
 
 English | [中文](CHANGELOG.zh.md)
 
+## 0.2.7 — 2026-11-24
+
+- **The panel now polls once a minute instead of every three seconds.** Polling
+  only exists while the panel is mounted: switching tabs, collapsing the right
+  sidebar or closing the panel tears the timer down with the component, and a
+  hidden browser page skips the request. The interval is still adjustable in
+  settings (500–60000 ms).
+- **The "Max projects shown" setting is gone; every project is listed.** The rail
+  is the only place to search and switch projects, so cutting the list at 50 made
+  the 51st project both invisible and unsearchable. The catalog already measured
+  every project, so removing the slice adds no backend scan; on a local SSD 300
+  projects cost about 55 ms / 204 KiB per warm poll and 600 about 112 ms /
+  408 KiB, which the 60-second default turns into negligible load. A leftover
+  `ui.maxProjects` in a profile is ignored, not an error.
+- `/state` no longer returns `projectsTruncated`; `projectsTotal` stays.
+
 ## 0.2.6 — 2026-11-20
 
 - **Topic headings now have to say when to read them.** In layered mode the
