@@ -334,7 +334,7 @@ window.__ModuleLoader__.load({
       'settings.sessionAction': '会话头按钮',
       'settings.sessionActionHint': '在会话头放一个记忆按钮，用来打开右栏页签。',
       'settings.refreshMs': '刷新间隔（毫秒）',
-      'settings.refreshMsHint': '面板轮询 /state 的间隔，默认 3000。',
+      'settings.refreshMsHint': '面板轮询 /state 的间隔，默认 60000（60 秒）。',
       'settings.maxProjects': '最多展示项目',
       'settings.maxProjectsHint': '汇总最多拉取多少个工作区，默认 50。',
       'settings.revisionLine': 'revision {revision} · {state} · {override}',
@@ -738,7 +738,7 @@ window.__ModuleLoader__.load({
       'settings.sessionAction': "Session header button",
       'settings.sessionActionHint': "Put a memory button in the session header that opens the right-sidebar tab.",
       'settings.refreshMs': "Refresh interval (ms)",
-      'settings.refreshMsHint': "How often the panel polls /state. Default 3000.",
+      'settings.refreshMsHint': "How often the panel polls /state. Default 60000 (60 s).",
       'settings.maxProjects': "Max projects shown",
       'settings.maxProjectsHint': "How many workspaces the overview pulls. Default 50.",
       'settings.revisionLine': "revision {revision} · {state} · {override}",
@@ -1619,7 +1619,7 @@ window.__ModuleLoader__.load({
             h(NumberField, {
               label: t('settings.refreshMs'),
               hint: t('settings.refreshMsHint'),
-              value: ui.refreshMs ?? 3000,
+              value: ui.refreshMs ?? 60000,
               min: 500,
               max: 60000,
               disabled: !writable,
@@ -2044,7 +2044,7 @@ window.__ModuleLoader__.load({
       globalPanel: true,
       projectTab: true,
       sessionAction: true,
-      refreshMs: 3000,
+      refreshMs: 60000,
       maxProjects: 50,
     }
 
@@ -2055,7 +2055,7 @@ window.__ModuleLoader__.load({
         globalPanel: ui.globalPanel !== false,
         projectTab: ui.projectTab !== false,
         sessionAction: ui.sessionAction !== false,
-        refreshMs: Math.min(Math.max(Number(ui.refreshMs) || 3000, 500), 60000),
+        refreshMs: Math.min(Math.max(Number(ui.refreshMs) || 60000, 500), 60000),
         maxProjects: Math.min(Math.max(Number(ui.maxProjects) || 50, 1), 500),
       }
     }
