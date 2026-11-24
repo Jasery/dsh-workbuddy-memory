@@ -108,9 +108,8 @@ export const Config = z.object({
       projectTab: z.boolean().default(true).volatile(),
       sessionAction: z.boolean().default(true).volatile(),
       refreshMs: z.number().default(60000).volatile(),
-      maxProjects: z.number().default(50).volatile(),
     })
-    .description('Panel entries, polling and scan bounds.'),
+    .description('Panel entries and polling.'),
 
   search: z
     .object({
@@ -281,7 +280,6 @@ export function normalizeConfig(raw) {
       projectTab: bool(ui.projectTab, true),
       sessionAction: bool(ui.sessionAction, true),
       refreshMs: num(ui.refreshMs, 60000, 500, 60000),
-      maxProjects: num(ui.maxProjects, 50, 1, 500),
     },
 
     search: {

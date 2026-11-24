@@ -321,8 +321,8 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
    */
   const projectRows = (probe, attention) => {
     if (catalog?.list) {
-      const { rows, total, truncated, totals, attention: preview, attentionTotal, attentionMore } = catalog.list({ ...catalogOptions(probe), limit: cfg.ui.maxProjects, attention })
-      return { rows, total, truncated, totals, attention: preview, attentionTotal, attentionMore }
+      const { rows, total, totals, attention: preview, attentionTotal, attentionMore } = catalog.list({ ...catalogOptions(probe), attention })
+      return { rows, total, totals, attention: preview, attentionTotal, attentionMore }
     }
     const seen = recent?.seen instanceof Map ? [...recent.seen.entries()] : []
     if (recent?.cwd && !seen.some(([cwd]) => cwd === recent.cwd)) seen.push([recent.cwd, Date.now()])
@@ -346,7 +346,7 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
           daily,
         }
       })
-    return { rows, total: rows.length, truncated: false, ...overviewOf(rows, attention) }
+    return { rows, total: rows.length, ...overviewOf(rows, attention) }
   }
 
   /**
@@ -412,9 +412,8 @@ export function registerRoutes(ctx, { cfg, recent, stateDir, version, store, cat
       selected: cwd ?? null,
       projects: list.rows,
       projectsTotal: list.total,
-      projectsTruncated: list.truncated,
-      // Over every known project, not only the rows above: "60 projects, 1
-      // over limit" must not sit beside a list that cannot hold that one.
+      // Over every known project: the overview and the rail always describe
+      // the same complete list.
       totals: list.totals,
       attention: list.attention,
       attentionTotal: list.attentionTotal,

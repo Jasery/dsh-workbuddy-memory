@@ -89,6 +89,11 @@ test('the reference protocol is the write symbol, not just a getter', () => {
   assert.equal(cfg.readOnly, false)
 })
 
+test('a removed ui.maxProjects key is ignored, not resurrected', () => {
+  const cfg = normalizeConfig(validated({ ui: { maxProjects: 100 } }))
+  assert.equal('maxProjects' in cfg.ui, false)
+})
+
 test('layered injection and lazy first-write defaults are normalized', () => {
   const cfg = normalizeConfig({})
   assert.equal(cfg.inject.mode, 'layered')

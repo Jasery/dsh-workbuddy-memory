@@ -2306,26 +2306,24 @@ test('the "injected whole" banner appears only on a real structural fallback', a
   }
 })
 
-test('a flagged project outside the displayed list opens by key, described only by state.project', async () => {
-  // Acceptance 7, the panel half. The overview lists the first 50 projects;
-  // the attention preview is not limited to them. Opening the 51st works
-  // because `/state?project=<key>` answers with that project's row at the top
-  // level, and the panel prefers `state.project` to the list. No test drove
-  // that path: every fixture's project was also in `projects`.
+test('a flagged project opens by key from the attention preview, described by state.project', async () => {
+  // The attention preview is addressed by key. Opening it must not depend on
+  // the rail having rendered that row last, and the returned `state.project`
+  // is the authoritative row for the header.
   const N = 60
+  const outside = { key: 'p50', path: 'C:\\p50', name: 'p50', title: 'p50', source: 'workspace', current: false, hasMemory: true, daily: 0, entries: 6, bytes: 9, chars: 9000, revision: 'r', latestDaily: null, oldestDailyAgeDays: null, injection: judged('core-over-budget', { dropped: 3, need: 2100, used: 1375 }), overLimit: true, stale: false, status: 'over-limit' }
+  const projects = Array.from({ length: N }, (_, index) => ({ key: `p${index}`, path: `C:\\p${index}`, name: `p${index}`, title: `p${index}`, source: 'workspace', current: false, hasMemory: true, daily: 0, entries: 1, bytes: 9, chars: 100, revision: 'r', latestDaily: null, oldestDailyAgeDays: null, injection: judged('complete', { need: 23, used: 23 }), overLimit: false, stale: false, status: 'ok' }))
+  projects[50] = outside
   const state = stateFor({
-    projects: Array.from({ length: 50 }, (_, index) => ({ key: `p${index}`, path: `C:\\p${index}`, name: `p${index}`, title: `p${index}`, source: 'workspace', current: false, hasMemory: true, daily: 0, entries: 1, bytes: 9, chars: 100, revision: 'r', latestDaily: null, oldestDailyAgeDays: null, injection: judged('complete', { need: 23, used: 23 }), overLimit: false, stale: false, status: 'ok' })),
+    projects,
     projectsTotal: N,
-    projectsTruncated: true,
     project: null,
     totals: { projects: N, withMemory: N, entries: N, entriesUncounted: 0, dailyFiles: 0, overLimit: 1, stale: 0, missing: 0, unmeasurable: 0 },
   })
-  // The 51st: over budget, and not among the 50 rows above.
-  const outside = { key: 'p50', path: 'C:\\p50', name: 'p50', title: 'p50', source: 'workspace', current: false, hasMemory: true, daily: 0, entries: 6, bytes: 9, chars: 9000, revision: 'r', latestDaily: null, oldestDailyAgeDays: null, injection: judged('core-over-budget', { dropped: 3, need: 2100, used: 1375 }), overLimit: true, stale: false, status: 'over-limit' }
   state.attention = [{ key: outside.key, name: outside.name, title: outside.title, hasMemory: true, latestDaily: null, injection: outside.injection, reasons: ['over-limit'] }]
   state.attentionTotal = 1
   state.attentionMore = { 'over-limit': 0, stale: 0, missing: 0, unmeasurable: 0 }
-  assert.equal(state.projects.some((row) => row.key === outside.key), false, 'the flagged project is not in the list')
+  assert.equal(state.projects.some((row) => row.key === outside.key), true, 'the flagged project is in the list')
 
   // The server resolves a `?project=` request against every known project.
   const base = globalThis.fetch
@@ -2348,9 +2346,9 @@ test('a flagged project outside the displayed list opens by key, described only 
     tree = await runtime.fire(view, 'onClick', MemoryWorkspace, OVERVIEW)
     assert.ok(urls.some((href) => href.includes(`project=${outside.key}`)), 'opened by key')
     const body = text(expand(tree))
-    assert.match(body, /全部项目 › p50/, 'the breadcrumb names the out-of-list project')
+    assert.match(body, /全部项目 › p50/, 'the breadcrumb names the project')
     assert.match(body, /核心超预算 · 3 条未注入/, 'and its header carries its state')
-    assert.match(body, /6 条/, 'its entry count, from state.project — it is in no list')
+    assert.match(body, /6 条/, 'its entry count, from state.project')
   } finally {
     globalThis.fetch = base
     restore()
